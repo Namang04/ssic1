@@ -7,11 +7,9 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
-<!-- Firebase -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js";
-  import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore.js";
-
+  import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, getDoc } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore.js";
   const firebaseConfig = {
     apiKey: "AIzaSyChPpLsxkEc_rXBEcYK6rc-fVcBw0M0dFw",
     authDomain: "steppingstone-32aaf.firebaseapp.com",
@@ -20,7 +18,6 @@
     messagingSenderId: "769826230279",
     appId: "1:769826230279:web:2c7981b0787b7d70859aa2"
   };
-
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
   window.__db = db;
@@ -29,6 +26,7 @@
   window.__fbSetDoc = setDoc;
   window.__fbDeleteDoc = deleteDoc;
   window.__fbOnSnapshot = onSnapshot;
+  window.__fbGetDoc = getDoc;
   window.__fbReady = true;
   window.dispatchEvent(new Event("fbready"));
 </script>
@@ -62,13 +60,48 @@ const SCHOOL = {
   },
 };
 
-const USERS = {
-  admin:        {password:"admin123",role:"admin",  name:"Rajvansh (Director)",  classes:null,subjects:null},
-  math_teacher: {password:"math123", role:"teacher",name:"Mr. Rajesh Sharma",    classes:["Class 9","Class 10","Class 11","Class 12"],subjects:["Mathematics"]},
-  sci_teacher:  {password:"sci123",  role:"teacher",name:"Mrs. Sunita Verma",    classes:["Class 6","Class 7","Class 8"],subjects:["Science","Mathematics"]},
-  eng_teacher:  {password:"eng123",  role:"teacher",name:"Mr. Anil Pandey",      classes:["Class 6","Class 7","Class 8","Class 9","Class 10"],subjects:["English","Hindi"]},
-  parent_tanvi: {password:"p123",    role:"parent", name:"Parent – Tanvi Shukla",student:"Tanvi Shukla",cls:"Class 10"},
-  parent_aarav: {password:"p123",    role:"parent", name:"Parent – Aarav Sharma",student:"Aarav Sharma",cls:"Class 6"},
+// Default users — stored in Firebase so teachers can change credentials
+const DEFAULT_USERS = {
+  admin:         {password:"Stepping@admin",   role:"admin",   name:"Rajvansh (Director)", classes:null, subjects:null},
+  maths6:        {password:"Stepping@maths",   role:"teacher", name:"Maths Teacher (Class 6)",          classes:["Class 6"],  subjects:["Mathematics"]},
+  maths7:        {password:"Stepping@maths",   role:"teacher", name:"Maths Teacher (Class 7)",          classes:["Class 7"],  subjects:["Mathematics"]},
+  maths8:        {password:"Stepping@maths",   role:"teacher", name:"Maths Teacher (Class 8)",          classes:["Class 8"],  subjects:["Mathematics"]},
+  maths9:        {password:"Stepping@maths",   role:"teacher", name:"Maths Teacher (Class 9)",          classes:["Class 9"],  subjects:["Mathematics"]},
+  maths10:       {password:"Stepping@maths",   role:"teacher", name:"Maths Teacher (Class 10)",         classes:["Class 10"],subjects:["Mathematics"]},
+  maths11:       {password:"Stepping@maths",   role:"teacher", name:"Maths Teacher (Class 11)",         classes:["Class 11"],subjects:["Mathematics"]},
+  maths12:       {password:"Stepping@maths",   role:"teacher", name:"Maths Teacher (Class 12)",         classes:["Class 12"],subjects:["Mathematics"]},
+  science6:      {password:"Stepping@science", role:"teacher", name:"Science Teacher (Class 6)",        classes:["Class 6"],  subjects:["Science"]},
+  science7:      {password:"Stepping@science", role:"teacher", name:"Science Teacher (Class 7)",        classes:["Class 7"],  subjects:["Science"]},
+  science8:      {password:"Stepping@science", role:"teacher", name:"Science Teacher (Class 8)",        classes:["Class 8"],  subjects:["Science"]},
+  science9:      {password:"Stepping@science", role:"teacher", name:"Science Teacher (Class 9)",        classes:["Class 9"],  subjects:["Science"]},
+  science10:     {password:"Stepping@science", role:"teacher", name:"Science Teacher (Class 10)",       classes:["Class 10"],subjects:["Science"]},
+  physics11:     {password:"Stepping@physics", role:"teacher", name:"Physics Teacher (Class 11)",       classes:["Class 11"],subjects:["Physics"]},
+  physics12:     {password:"Stepping@physics", role:"teacher", name:"Physics Teacher (Class 12)",       classes:["Class 12"],subjects:["Physics"]},
+  chemistry11:   {password:"Stepping@chemistry",role:"teacher",name:"Chemistry Teacher (Class 11)",     classes:["Class 11"],subjects:["Chemistry"]},
+  chemistry12:   {password:"Stepping@chemistry",role:"teacher",name:"Chemistry Teacher (Class 12)",     classes:["Class 12"],subjects:["Chemistry"]},
+  biology11:     {password:"Stepping@biology", role:"teacher", name:"Biology Teacher (Class 11)",       classes:["Class 11"],subjects:["Biology"]},
+  biology12:     {password:"Stepping@biology", role:"teacher", name:"Biology Teacher (Class 12)",       classes:["Class 12"],subjects:["Biology"]},
+  english6:      {password:"Stepping@english", role:"teacher", name:"English Teacher (Class 6)",        classes:["Class 6"],  subjects:["English"]},
+  english7:      {password:"Stepping@english", role:"teacher", name:"English Teacher (Class 7)",        classes:["Class 7"],  subjects:["English"]},
+  english8:      {password:"Stepping@english", role:"teacher", name:"English Teacher (Class 8)",        classes:["Class 8"],  subjects:["English"]},
+  english9:      {password:"Stepping@english", role:"teacher", name:"English Teacher (Class 9)",        classes:["Class 9"],  subjects:["English"]},
+  english10:     {password:"Stepping@english", role:"teacher", name:"English Teacher (Class 10)",       classes:["Class 10"],subjects:["English"]},
+  english11:     {password:"Stepping@english", role:"teacher", name:"English Teacher (Class 11)",       classes:["Class 11"],subjects:["English"]},
+  english12:     {password:"Stepping@english", role:"teacher", name:"English Teacher (Class 12)",       classes:["Class 12"],subjects:["English"]},
+  hindi6:        {password:"Stepping@hindi",   role:"teacher", name:"Hindi Teacher (Class 6)",          classes:["Class 6"],  subjects:["Hindi"]},
+  hindi7:        {password:"Stepping@hindi",   role:"teacher", name:"Hindi Teacher (Class 7)",          classes:["Class 7"],  subjects:["Hindi"]},
+  hindi8:        {password:"Stepping@hindi",   role:"teacher", name:"Hindi Teacher (Class 8)",          classes:["Class 8"],  subjects:["Hindi"]},
+  hindi9:        {password:"Stepping@hindi",   role:"teacher", name:"Hindi Teacher (Class 9)",          classes:["Class 9"],  subjects:["Hindi"]},
+  hindi10:       {password:"Stepping@hindi",   role:"teacher", name:"Hindi Teacher (Class 10)",         classes:["Class 10"],subjects:["Hindi"]},
+  hindi11:       {password:"Stepping@hindi",   role:"teacher", name:"Hindi Teacher (Class 11)",         classes:["Class 11"],subjects:["Hindi"]},
+  hindi12:       {password:"Stepping@hindi",   role:"teacher", name:"Hindi Teacher (Class 12)",         classes:["Class 12"],subjects:["Hindi"]},
+  socscience6:   {password:"Stepping@socscience",role:"teacher",name:"Social Science Teacher (Class 6)",  classes:["Class 6"],  subjects:["Social Science"]},
+  socscience7:   {password:"Stepping@socscience",role:"teacher",name:"Social Science Teacher (Class 7)",  classes:["Class 7"],  subjects:["Social Science"]},
+  socscience8:   {password:"Stepping@socscience",role:"teacher",name:"Social Science Teacher (Class 8)",  classes:["Class 8"],  subjects:["Social Science"]},
+  socscience9:   {password:"Stepping@socscience",role:"teacher",name:"Social Science Teacher (Class 9)",  classes:["Class 9"],  subjects:["Social Science"]},
+  socscience10:  {password:"Stepping@socscience",role:"teacher",name:"Social Science Teacher (Class 10)", classes:["Class 10"],subjects:["Social Science"]},
+  sanskrit9:     {password:"Stepping@sanskrit",role:"teacher", name:"Sanskrit Teacher (Class 9)",        classes:["Class 9"],  subjects:["Sanskrit"]},
+  sanskrit10:    {password:"Stepping@sanskrit",role:"teacher", name:"Sanskrit Teacher (Class 10)",       classes:["Class 10"], subjects:["Sanskrit"]},
 };
 
 const pct = (m,t) => t ? Math.round((m/t)*100) : 0;
@@ -86,7 +119,6 @@ function useFirestore(collName) {
   const [data, setData] = useState({});
   const [loading, setLoading] = useState(true);
   const unsubRef = useRef(null);
-
   useEffect(() => {
     const setup = () => {
       if(!window.__db) return;
@@ -102,17 +134,14 @@ function useFirestore(collName) {
     else window.addEventListener("fbready", setup, {once:true});
     return () => { if(unsubRef.current) unsubRef.current(); };
   }, [collName]);
-
   const set = useCallback(async (id, val) => {
     if(!window.__db) return;
     await window.__fbSetDoc(window.__fbDoc(window.__db, collName, safeId(id)), val);
   }, [collName]);
-
   const del = useCallback(async (id) => {
     if(!window.__db) return;
     await window.__fbDeleteDoc(window.__fbDoc(window.__db, collName, safeId(id)));
   }, [collName]);
-
   return { data, loading, set, del };
 }
 
@@ -127,9 +156,9 @@ const Lbl = ({c}) => <div style={{fontSize:10,fontWeight:700,color:"#64748b",tex
 const Card = ({children,style={}}) => <div style={{background:"#fff",borderRadius:14,border:"1.5px solid #e2e8f0",overflow:"hidden",...style}}>{children}</div>;
 const GBadge = ({p}) => { const g=gradeOf(p); return <span style={{background:g.bg,color:g.c,borderRadius:6,padding:"2px 9px",fontSize:11,fontWeight:700,fontFamily:"JetBrains Mono,monospace"}}>{g.l} · {p}%</span>; };
 const Bar = ({p}) => { const g=gradeOf(p); return <div style={{height:6,background:"#e2e8f0",borderRadius:99}}><div style={{width:`${p}%`,height:"100%",background:g.c,borderRadius:99,transition:"width .4s"}}/></div>; };
-const Btn = ({children,onClick,v="pri",style={}}) => {
-  const s={pri:{background:"#1a2e6c",color:"#fff",border:"none"},ghost:{background:"#f8fafc",color:"#64748b",border:"1.5px solid #e2e8f0"},ok:{background:"#dcfce7",color:"#16a34a",border:"none"},del:{background:"#fee2e2",color:"#dc2626",border:"none"}};
-  return <button onClick={onClick} style={{...s[v],padding:"9px 20px",borderRadius:9,fontSize:13,fontWeight:600,cursor:"pointer",...style}}>{children}</button>;
+const Btn = ({children,onClick,v="pri",style={},disabled=false}) => {
+  const s={pri:{background:"#1a2e6c",color:"#fff",border:"none"},ghost:{background:"#f8fafc",color:"#64748b",border:"1.5px solid #e2e8f0"},ok:{background:"#dcfce7",color:"#16a34a",border:"none"},del:{background:"#fee2e2",color:"#dc2626",border:"none"},warn:{background:"#fef3c7",color:"#d97706",border:"none"}};
+  return <button onClick={onClick} disabled={disabled} style={{...s[v],padding:"9px 20px",borderRadius:9,fontSize:13,fontWeight:600,cursor:disabled?"not-allowed":"pointer",opacity:disabled?0.5:1,...style}}>{children}</button>;
 };
 const StatCard = ({label,val,icon,color="#1a2e6c",sub}) => (
   <div style={{background:"#fff",borderRadius:14,border:"1.5px solid #e2e8f0",padding:"18px 20px",borderTop:`3px solid ${color}`}}>
@@ -146,14 +175,33 @@ const Empty = ({icon,title,sub}) => (
   </div>
 );
 const Spinner = () => <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:60,color:"#64748b",fontSize:13,gap:10}}><div style={{width:20,height:20,border:"2.5px solid #e2e8f0",borderTop:"2.5px solid #1a2e6c",borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>Syncing with cloud…</div>;
+const Input = ({label,value,onChange,type="text",placeholder=""}) => (
+  <div style={{marginBottom:14}}>
+    <Lbl c={label}/>
+    <input type={type} value={value} placeholder={placeholder} onChange={e=>onChange(e.target.value)}
+      style={{width:"100%",padding:"10px 14px",borderRadius:9,border:"1.5px solid #e2e8f0",fontSize:13,outline:"none"}}/>
+  </div>
+);
 
-function Login({onLogin}) {
-  const [u,setU]=useState(""); const [p,setP]=useState(""); const [err,setErr]=useState("");
+// ── LOGIN ──
+function Login({onLogin, usersDB}) {
+  const [u,setU]=useState("");
+  const [p,setP]=useState("");
+  const [err,setErr]=useState("");
+
   const go = () => {
-    const user = USERS[u.trim().toLowerCase()];
-    if(user&&user.password===p) onLogin({username:u.trim().toLowerCase(),...user});
-    else setErr("Invalid username or password.");
+    const uKey = u.trim().toLowerCase();
+    // Check Firebase users first, fall back to defaults
+    const fbUser = usersDB.data[uKey];
+    const defUser = DEFAULT_USERS[uKey];
+    const userData = fbUser || defUser;
+    if(userData && userData.password === p) {
+      onLogin({username: uKey, ...userData});
+    } else {
+      setErr("Invalid username or password.");
+    }
   };
+
   return (
     <div style={{minHeight:"100vh",background:"linear-gradient(150deg,#1a2e6c 0%,#1d4ed8 60%,#b8860b 100%)",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
       <div className="fi" style={{width:"100%",maxWidth:420}}>
@@ -164,31 +212,74 @@ function Login({onLogin}) {
         </div>
         <div style={{background:"#fff",borderRadius:20,padding:36,boxShadow:"0 24px 60px rgba(0,0,0,.3)"}}>
           <div style={{fontSize:18,fontWeight:700,color:"#1a2e6c",marginBottom:4}}>Sign In</div>
-          <div style={{fontSize:12,color:"#64748b",marginBottom:24}}>Teacher & Parent Portal</div>
-          {[{lbl:"Username",val:u,set:setU,type:"text",ph:"e.g. admin"},{lbl:"Password",val:p,set:setP,type:"password",ph:"••••••••"}].map(f=>(
-            <div key={f.lbl} style={{marginBottom:14}}>
-              <Lbl c={f.lbl}/>
-              <input type={f.type} value={f.val} placeholder={f.ph} onChange={e=>f.set(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()}
-                style={{width:"100%",padding:"10px 14px",borderRadius:10,border:"1.5px solid #e2e8f0",fontSize:14,outline:"none"}}/>
-            </div>
-          ))}
+          <div style={{fontSize:12,color:"#64748b",marginBottom:24}}>Enter your username and password</div>
+          <Input label="Username" value={u} onChange={setU} placeholder="e.g. maths6"/>
+          <Input label="Password" value={p} onChange={setP} type="password" placeholder="••••••••"/>
           {err&&<div style={{fontSize:12,color:"#dc2626",background:"#fee2e2",borderRadius:8,padding:"8px 12px",marginBottom:12}}>{err}</div>}
           <button onClick={go} style={{width:"100%",background:"#1a2e6c",color:"#fff",border:"none",borderRadius:10,padding:13,fontSize:14,fontWeight:700,cursor:"pointer",marginTop:4}}>Sign In →</button>
-          <div style={{marginTop:22,borderTop:"1px solid #e2e8f0",paddingTop:18}}>
-            <Lbl c="Demo — click to fill"/>
-            {[{l:"Director (Admin)",u:"admin",p:"admin123"},{l:"Math Teacher",u:"math_teacher",p:"math123"},{l:"Parent (Tanvi)",u:"parent_tanvi",p:"p123"}].map(c=>(
-              <div key={c.u} onClick={()=>{setU(c.u);setP(c.p);}} style={{display:"flex",justifyContent:"space-between",background:"#f8fafc",borderRadius:8,padding:"8px 12px",marginTop:8,cursor:"pointer",border:"1.5px solid #e2e8f0"}}>
-                <span style={{fontSize:12,fontWeight:600,color:"#1e293b"}}>{c.l}</span>
-                <span style={{fontSize:11,color:"#64748b",fontFamily:"monospace"}}>{c.u}</span>
-              </div>
-            ))}
-          </div>
         </div>
       </div>
     </div>
   );
 }
 
+// ── CHANGE CREDENTIALS ──
+function ChangeCredentials({user, usersDB, onUpdate}) {
+  const [name, setName] = useState(user.name);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState("");
+
+  const handleSave = async () => {
+    setErr("");
+    if(!currentPassword) { setErr("Enter your current password to confirm."); return; }
+    const stored = usersDB.data[user.username] || DEFAULT_USERS[user.username];
+    if(stored.password !== currentPassword) { setErr("Current password is incorrect."); return; }
+    if(newPassword && newPassword !== confirmPassword) { setErr("New passwords do not match."); return; }
+    if(newPassword && newPassword.length < 6) { setErr("Password must be at least 6 characters."); return; }
+    const updated = {
+      ...stored,
+      name: name || stored.name,
+      password: newPassword || stored.password,
+    };
+    await usersDB.set(user.username, updated);
+    onUpdate({...user, name: updated.name, password: updated.password});
+    setSaved(true);
+    setNewPassword(""); setConfirmPassword(""); setCurrentPassword("");
+    setTimeout(() => setSaved(false), 3000);
+  };
+
+  return (
+    <div className="fi" style={{display:"flex",flexDirection:"column",gap:18}}>
+      <Card style={{padding:24}}>
+        <div style={{fontWeight:700,fontSize:15,color:"#1a2e6c",marginBottom:4}}>🔐 Account Settings</div>
+        <div style={{fontSize:13,color:"#64748b",marginBottom:24}}>Update your display name and password. Changes take effect immediately.</div>
+
+        <div style={{background:"#f0f9ff",border:"1.5px solid #bae6fd",borderRadius:10,padding:"12px 16px",marginBottom:20}}>
+          <div style={{fontSize:11,fontWeight:700,color:"#0369a1",textTransform:"uppercase",letterSpacing:1,marginBottom:4}}>Your Account</div>
+          <div style={{fontSize:14,fontWeight:600,color:"#1e293b"}}>{user.username}</div>
+          <div style={{fontSize:12,color:"#64748b",textTransform:"capitalize"}}>{user.role} · {user.classes?.join(", ")||"All Classes"}</div>
+        </div>
+
+        <Input label="Display Name" value={name} onChange={setName} placeholder="Your full name"/>
+        <Input label="New Password (leave blank to keep current)" value={newPassword} onChange={setNewPassword} type="password" placeholder="Min 6 characters"/>
+        <Input label="Confirm New Password" value={confirmPassword} onChange={setConfirmPassword} type="password" placeholder="Re-enter new password"/>
+
+        <div style={{borderTop:"1.5px solid #f1f5f9",paddingTop:16,marginTop:4}}>
+          <Input label="Current Password (required to save)" value={currentPassword} onChange={setCurrentPassword} type="password" placeholder="Enter current password to confirm"/>
+        </div>
+
+        {err&&<div style={{fontSize:12,color:"#dc2626",background:"#fee2e2",borderRadius:8,padding:"8px 12px",marginBottom:12}}>{err}</div>}
+        {saved&&<div style={{fontSize:12,color:"#16a34a",background:"#dcfce7",borderRadius:8,padding:"8px 12px",marginBottom:12}}>✓ Changes saved successfully!</div>}
+        <Btn onClick={handleSave} style={{width:"100%",padding:"12px"}}>Save Changes</Btn>
+      </Card>
+    </div>
+  );
+}
+
+// ── MANAGE STUDENTS ──
 function ManageStudents({studentsDB}) {
   const {data,loading,set}=studentsDB;
   const [cls,setCls]=useState(SCHOOL.classes[0]);
@@ -205,14 +296,14 @@ function ManageStudents({studentsDB}) {
     <div className="fi" style={{display:"flex",flexDirection:"column",gap:18}}>
       <Card style={{padding:22}}>
         <div style={{fontWeight:700,fontSize:15,color:"#1a2e6c",marginBottom:2}}>👨‍🎓 Manage Students</div>
-        <div style={{fontSize:13,color:"#64748b",marginBottom:20}}>Add students class by class. Saves to cloud — all teachers see the same list.</div>
+        <div style={{fontSize:13,color:"#64748b",marginBottom:20}}>Add students class by class. Saves to cloud instantly.</div>
         <div style={{marginBottom:18}}><Lbl c="Select Class"/><Sel value={cls} onChange={v=>{setCls(v);setEditIdx(null);}} options={SCHOOL.classes}/></div>
         <Lbl c={`Add Student to ${cls}`}/>
         <div style={{display:"flex",gap:10,marginTop:8,marginBottom:6}}>
           <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()} placeholder="Type full name and press Enter…" style={{flex:1,padding:"10px 14px",borderRadius:9,border:"1.5px solid #e2e8f0",fontSize:13,outline:"none"}}/>
           <Btn onClick={add}>+ Add</Btn>
         </div>
-        <div style={{fontSize:11,color:"#94a3b8",marginBottom:20}}>Press Enter after each name.</div>
+        <div style={{fontSize:11,color:"#94a3b8",marginBottom:20}}>Press Enter after each name to add quickly.</div>
         {students.length===0?(
           <div style={{background:"#f8fafc",border:"2px dashed #e2e8f0",borderRadius:10,padding:28,textAlign:"center",color:"#94a3b8",fontSize:13}}>No students in {cls} yet.</div>
         ):(
@@ -275,7 +366,7 @@ function ManageTopics({topicsDB}) {
     <div className="fi" style={{display:"flex",flexDirection:"column",gap:18}}>
       <Card style={{padding:22}}>
         <div style={{fontWeight:700,fontSize:15,color:"#1a2e6c",marginBottom:2}}>📝 Manage Topics</div>
-        <div style={{fontSize:13,color:"#64748b",marginBottom:20}}>Set topics per class & subject. Separate multiple with commas.</div>
+        <div style={{fontSize:13,color:"#64748b",marginBottom:20}}>Set topics per class and subject. Separate multiple with commas.</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:18}}>
           <div><Lbl c="Class"/><Sel value={cls} onChange={setCls} options={SCHOOL.classes}/></div>
           <div><Lbl c="Subject"/><Sel value={subj} onChange={setSubj} options={SCHOOL.subjects[cls]||[]}/></div>
@@ -286,7 +377,7 @@ function ManageTopics({topicsDB}) {
           <Btn onClick={add}>+ Add</Btn>
         </div>
         {topics.length===0?(
-          <div style={{background:"#f8fafc",border:"2px dashed #e2e8f0",borderRadius:10,padding:24,textAlign:"center",color:"#94a3b8",fontSize:13}}>No topics yet.</div>
+          <div style={{background:"#f8fafc",border:"2px dashed #e2e8f0",borderRadius:10,padding:24,textAlign:"center",color:"#94a3b8",fontSize:13}}>No topics yet. Type above and press Enter.</div>
         ):(
           <>
             <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:14}}>
@@ -556,7 +647,7 @@ function ParentView({user,testsDB}) {
   );
 }
 
-function AdminPanel({testsDB,studentsDB}) {
+function AdminPanel({testsDB,studentsDB,usersDB}) {
   const all=Object.entries(testsDB.data).sort((a,b)=>(b[1].at||"").localeCompare(a[1].at||""));
   const totalStudents=Object.values(studentsDB.data).reduce((a,b)=>a+(b?.list||[]).length,0);
   if(testsDB.loading)return <Spinner/>;
@@ -595,17 +686,23 @@ function App() {
   const testsDB=useFirestore("tests");
   const topicsDB=useFirestore("topics");
   const studentsDB=useFirestore("students");
+  const usersDB=useFirestore("users");
 
-  if(!user) return <Login onLogin={u=>{setUser(u);setTab(u.role==="parent"?"parent":"students");}}/>;
-  const isParent=user.role==="parent",isAdmin=user.role==="admin";
-  const tabs=isParent?[{id:"parent",label:"My Child's Report",icon:"👨‍👩‍👦"}]:[
+  const handleUpdateUser = (updated) => setUser(updated);
+
+  if(!user) return <Login onLogin={u=>{setUser(u);setTab(u.role==="parent"?"parent":"students");}} usersDB={usersDB}/>;
+
+  const isParent=user.role==="parent", isAdmin=user.role==="admin";
+  const tabs=isParent?[{id:"parent",label:"My Child's Report",icon:"👨‍👩‍👦"},{id:"account",label:"Account",icon:"🔐"}]:[
     {id:"students",label:"Students",icon:"👨‍🎓"},
     {id:"topics",label:"Topics",icon:"📝"},
     {id:"enter",label:"Enter Marks",icon:"✏️"},
     {id:"class",label:"Class Progress",icon:"📊"},
     {id:"student",label:"Student Report",icon:"👤"},
     ...(isAdmin?[{id:"admin",label:"Admin",icon:"⚙️"}]:[]),
+    {id:"account",label:"Account",icon:"🔐"},
   ];
+
   return (
     <div style={{minHeight:"100vh",background:"#eef1f6"}}>
       <div style={{background:"#1a2e6c",color:"#fff",padding:"0 28px",height:58,display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:"3px solid #2563eb",position:"sticky",top:0,zIndex:100,boxShadow:"0 4px 20px rgba(0,0,0,.25)"}}>
@@ -631,8 +728,9 @@ function App() {
         {tab==="enter"&&!isParent&&<EnterMarks user={user} testsDB={testsDB} topicsDB={topicsDB} studentsDB={studentsDB}/>}
         {tab==="class"&&!isParent&&<ClassProgress user={user} testsDB={testsDB} studentsDB={studentsDB}/>}
         {tab==="student"&&!isParent&&<StudentReport user={user} testsDB={testsDB} studentsDB={studentsDB}/>}
-        {tab==="admin"&&isAdmin&&<AdminPanel testsDB={testsDB} studentsDB={studentsDB}/>}
+        {tab==="admin"&&isAdmin&&<AdminPanel testsDB={testsDB} studentsDB={studentsDB} usersDB={usersDB}/>}
         {tab==="parent"&&isParent&&<ParentView user={user} testsDB={testsDB}/>}
+        {tab==="account"&&<ChangeCredentials user={user} usersDB={usersDB} onUpdate={handleUpdateUser}/>}
       </div>
     </div>
   );
