@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Stepping Stone Inter College – Test Tracker</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<!-- Firebase -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js";
+  import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyChPpLsxkEc_rXBEcYK6rc-fVcBw0M0dFw",
+    authDomain: "steppingstone-32aaf.firebaseapp.com",
+    projectId: "steppingstone-32aaf",
+    storageBucket: "steppingstone-32aaf.firebasestorage.app",
+    messagingSenderId: "769826230279",
+    appId: "1:769826230279:web:2c7981b0787b7d70859aa2"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+  window.__db = db;
+  window.__fbCollection = collection;
+  window.__fbDoc = doc;
+  window.__fbSetDoc = setDoc;
+  window.__fbDeleteDoc = deleteDoc;
+  window.__fbOnSnapshot = onSnapshot;
+  window.__fbReady = true;
+  window.dispatchEvent(new Event("fbready"));
+</script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#eef1f6;font-family:'Sora',sans-serif}
+select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24'%3E%3Cpath fill='%2364748b' d='M7 10l5 5 5-5z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;padding-right:28px!important}
+input[type=number]::-webkit-inner-spin-button{opacity:.4}
+@keyframes fi{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}.fi{animation:fi .25s ease forwards}
+@keyframes spin{to{transform:rotate(360deg)}}
+::-webkit-scrollbar{width:5px}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:99px}
+</style>
+</head>
+<body>
+<div id="root"><div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#64748b;font-family:Sora,sans-serif;font-size:14px;gap:10px"><div style="width:20px;height:20px;border:2.5px solid #e2e8f0;border-top:2.5px solid #1a2e6c;border-radius:50%;animation:spin 0.8s linear infinite"></div>Loading…</div></div>
+<script type="text/babel">
+const LOGO = "data:image/png;base64,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";
+const { useState, useMemo, useEffect, useCallback, useRef } = React;
+
+const SCHOOL = {
+  classes: ["Class 6","Class 7","Class 8","Class 9","Class 10","Class 11","Class 12"],
+  subjects: {
+    "Class 6":["Mathematics","Science","English","Hindi","Social Science"],
+    "Class 7":["Mathematics","Science","English","Hindi","Social Science"],
+    "Class 8":["Mathematics","Science","English","Hindi","Social Science"],
+    "Class 9":["Mathematics","Science","English","Hindi","Social Science","Sanskrit"],
+    "Class 10":["Mathematics","Science","English","Hindi","Social Science","Sanskrit"],
+    "Class 11":["Mathematics","Physics","Chemistry","Biology","English","Hindi"],
+    "Class 12":["Mathematics","Physics","Chemistry","Biology","English","Hindi"],
+  },
+};
+
+const USERS = {
+  admin:        {password:"admin123",role:"admin",  name:"Rajvansh (Director)",  classes:null,subjects:null},
+  math_teacher: {password:"math123", role:"teacher",name:"Mr. Rajesh Sharma",    classes:["Class 9","Class 10","Class 11","Class 12"],subjects:["Mathematics"]},
+  sci_teacher:  {password:"sci123",  role:"teacher",name:"Mrs. Sunita Verma",    classes:["Class 6","Class 7","Class 8"],subjects:["Science","Mathematics"]},
+  eng_teacher:  {password:"eng123",  role:"teacher",name:"Mr. Anil Pandey",      classes:["Class 6","Class 7","Class 8","Class 9","Class 10"],subjects:["English","Hindi"]},
+  parent_tanvi: {password:"p123",    role:"parent", name:"Parent – Tanvi Shukla",student:"Tanvi Shukla",cls:"Class 10"},
+  parent_aarav: {password:"p123",    role:"parent", name:"Parent – Aarav Sharma",student:"Aarav Sharma",cls:"Class 6"},
+};
+
+const pct = (m,t) => t ? Math.round((m/t)*100) : 0;
+const gradeOf = p => {
+  if(p>=90) return{l:"A+",c:"#16a34a",bg:"#dcfce7"};
+  if(p>=80) return{l:"A", c:"#2563eb",bg:"#dbeafe"};
+  if(p>=70) return{l:"B+",c:"#7c3aed",bg:"#ede9fe"};
+  if(p>=60) return{l:"B", c:"#d97706",bg:"#fef3c7"};
+  if(p>=40) return{l:"C", c:"#ea580c",bg:"#ffedd5"};
+  return          {l:"D", c:"#dc2626",bg:"#fee2e2"};
+};
+const safeId = s => s.replace(/[^a-zA-Z0-9]/g,"_");
+
+function useFirestore(collName) {
+  const [data, setData] = useState({});
+  const [loading, setLoading] = useState(true);
+  const unsubRef = useRef(null);
+
+  useEffect(() => {
+    const setup = () => {
+      if(!window.__db) return;
+      if(unsubRef.current) unsubRef.current();
+      unsubRef.current = window.__fbOnSnapshot(window.__fbCollection(window.__db, collName), snap => {
+        const d = {};
+        snap.forEach(dc => { d[dc.id] = dc.data(); });
+        setData(d);
+        setLoading(false);
+      });
+    };
+    if(window.__fbReady) setup();
+    else window.addEventListener("fbready", setup, {once:true});
+    return () => { if(unsubRef.current) unsubRef.current(); };
+  }, [collName]);
+
+  const set = useCallback(async (id, val) => {
+    if(!window.__db) return;
+    await window.__fbSetDoc(window.__fbDoc(window.__db, collName, safeId(id)), val);
+  }, [collName]);
+
+  const del = useCallback(async (id) => {
+    if(!window.__db) return;
+    await window.__fbDeleteDoc(window.__fbDoc(window.__db, collName, safeId(id)));
+  }, [collName]);
+
+  return { data, loading, set, del };
+}
+
+// UI Atoms
+const Sel = ({value,onChange,options,style={}}) => (
+  <select value={value} onChange={e=>onChange(e.target.value)}
+    style={{width:"100%",padding:"9px 28px 9px 12px",borderRadius:9,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:13,color:"#1e293b",outline:"none",cursor:"pointer",...style}}>
+    {options.map(o=><option key={o.v??o} value={o.v??o}>{o.l??o}</option>)}
+  </select>
+);
+const Lbl = ({c}) => <div style={{fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:1.5,marginBottom:5}}>{c}</div>;
+const Card = ({children,style={}}) => <div style={{background:"#fff",borderRadius:14,border:"1.5px solid #e2e8f0",overflow:"hidden",...style}}>{children}</div>;
+const GBadge = ({p}) => { const g=gradeOf(p); return <span style={{background:g.bg,color:g.c,borderRadius:6,padding:"2px 9px",fontSize:11,fontWeight:700,fontFamily:"JetBrains Mono,monospace"}}>{g.l} · {p}%</span>; };
+const Bar = ({p}) => { const g=gradeOf(p); return <div style={{height:6,background:"#e2e8f0",borderRadius:99}}><div style={{width:`${p}%`,height:"100%",background:g.c,borderRadius:99,transition:"width .4s"}}/></div>; };
+const Btn = ({children,onClick,v="pri",style={}}) => {
+  const s={pri:{background:"#1a2e6c",color:"#fff",border:"none"},ghost:{background:"#f8fafc",color:"#64748b",border:"1.5px solid #e2e8f0"},ok:{background:"#dcfce7",color:"#16a34a",border:"none"},del:{background:"#fee2e2",color:"#dc2626",border:"none"}};
+  return <button onClick={onClick} style={{...s[v],padding:"9px 20px",borderRadius:9,fontSize:13,fontWeight:600,cursor:"pointer",...style}}>{children}</button>;
+};
+const StatCard = ({label,val,icon,color="#1a2e6c",sub}) => (
+  <div style={{background:"#fff",borderRadius:14,border:"1.5px solid #e2e8f0",padding:"18px 20px",borderTop:`3px solid ${color}`}}>
+    <div style={{display:"flex",justifyContent:"space-between"}}><span style={{fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:1.5}}>{label}</span><span style={{fontSize:18}}>{icon}</span></div>
+    <div style={{fontSize:28,fontWeight:800,color,fontFamily:"JetBrains Mono,monospace",marginTop:6,lineHeight:1}}>{val}</div>
+    {sub&&<div style={{fontSize:11,color:"#64748b",marginTop:4}}>{sub}</div>}
+  </div>
+);
+const Empty = ({icon,title,sub}) => (
+  <div style={{background:"#fff",border:"2px dashed #e2e8f0",borderRadius:14,padding:60,textAlign:"center",color:"#94a3b8"}}>
+    <div style={{fontSize:32,marginBottom:10}}>{icon}</div>
+    <div style={{fontWeight:600,fontSize:15,color:"#1e293b",marginBottom:6}}>{title}</div>
+    <div style={{fontSize:13}}>{sub}</div>
+  </div>
+);
+const Spinner = () => <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:60,color:"#64748b",fontSize:13,gap:10}}><div style={{width:20,height:20,border:"2.5px solid #e2e8f0",borderTop:"2.5px solid #1a2e6c",borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>Syncing with cloud…</div>;
+
+function Login({onLogin}) {
+  const [u,setU]=useState(""); const [p,setP]=useState(""); const [err,setErr]=useState("");
+  const go = () => {
+    const user = USERS[u.trim().toLowerCase()];
+    if(user&&user.password===p) onLogin({username:u.trim().toLowerCase(),...user});
+    else setErr("Invalid username or password.");
+  };
+  return (
+    <div style={{minHeight:"100vh",background:"linear-gradient(150deg,#1a2e6c 0%,#1d4ed8 60%,#b8860b 100%)",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div className="fi" style={{width:"100%",maxWidth:420}}>
+        <div style={{textAlign:"center",marginBottom:32}}>
+          <img src={LOGO} alt="logo" style={{width:90,height:90,objectFit:"contain",marginBottom:10}}/>
+          <div style={{fontSize:22,fontWeight:800,color:"#fff"}}>Stepping Stone Inter College</div>
+          <div style={{fontSize:12,color:"rgba(255,255,255,.5)",marginTop:4,letterSpacing:1.5}}>GORAKHPUR · WEEKLY TEST TRACKER</div>
+        </div>
+        <div style={{background:"#fff",borderRadius:20,padding:36,boxShadow:"0 24px 60px rgba(0,0,0,.3)"}}>
+          <div style={{fontSize:18,fontWeight:700,color:"#1a2e6c",marginBottom:4}}>Sign In</div>
+          <div style={{fontSize:12,color:"#64748b",marginBottom:24}}>Teacher & Parent Portal</div>
+          {[{lbl:"Username",val:u,set:setU,type:"text",ph:"e.g. admin"},{lbl:"Password",val:p,set:setP,type:"password",ph:"••••••••"}].map(f=>(
+            <div key={f.lbl} style={{marginBottom:14}}>
+              <Lbl c={f.lbl}/>
+              <input type={f.type} value={f.val} placeholder={f.ph} onChange={e=>f.set(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()}
+                style={{width:"100%",padding:"10px 14px",borderRadius:10,border:"1.5px solid #e2e8f0",fontSize:14,outline:"none"}}/>
+            </div>
+          ))}
+          {err&&<div style={{fontSize:12,color:"#dc2626",background:"#fee2e2",borderRadius:8,padding:"8px 12px",marginBottom:12}}>{err}</div>}
+          <button onClick={go} style={{width:"100%",background:"#1a2e6c",color:"#fff",border:"none",borderRadius:10,padding:13,fontSize:14,fontWeight:700,cursor:"pointer",marginTop:4}}>Sign In →</button>
+          <div style={{marginTop:22,borderTop:"1px solid #e2e8f0",paddingTop:18}}>
+            <Lbl c="Demo — click to fill"/>
+            {[{l:"Director (Admin)",u:"admin",p:"admin123"},{l:"Math Teacher",u:"math_teacher",p:"math123"},{l:"Parent (Tanvi)",u:"parent_tanvi",p:"p123"}].map(c=>(
+              <div key={c.u} onClick={()=>{setU(c.u);setP(c.p);}} style={{display:"flex",justifyContent:"space-between",background:"#f8fafc",borderRadius:8,padding:"8px 12px",marginTop:8,cursor:"pointer",border:"1.5px solid #e2e8f0"}}>
+                <span style={{fontSize:12,fontWeight:600,color:"#1e293b"}}>{c.l}</span>
+                <span style={{fontSize:11,color:"#64748b",fontFamily:"monospace"}}>{c.u}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ManageStudents({studentsDB}) {
+  const {data,loading,set}=studentsDB;
+  const [cls,setCls]=useState(SCHOOL.classes[0]);
+  const [input,setInput]=useState("");
+  const [editIdx,setEditIdx]=useState(null);
+  const [editVal,setEditVal]=useState("");
+  const students=data[safeId(cls)]?.list||[];
+  const save=async(list)=>await set(cls,{cls,list,updatedAt:new Date().toISOString()});
+  const add=async()=>{const name=input.trim();if(!name)return;if(students.includes(name)){setInput("");return;}await save([...students,name]);setInput("");};
+  const remove=async(name)=>{if(!window.confirm(`Remove ${name}?`))return;await save(students.filter(s=>s!==name));};
+  const saveEdit=async(idx)=>{const name=editVal.trim();if(!name)return;const u=[...students];u[idx]=name;await save(u);setEditIdx(null);setEditVal("");};
+  if(loading)return <Spinner/>;
+  return (
+    <div className="fi" style={{display:"flex",flexDirection:"column",gap:18}}>
+      <Card style={{padding:22}}>
+        <div style={{fontWeight:700,fontSize:15,color:"#1a2e6c",marginBottom:2}}>👨‍🎓 Manage Students</div>
+        <div style={{fontSize:13,color:"#64748b",marginBottom:20}}>Add students class by class. Saves to cloud — all teachers see the same list.</div>
+        <div style={{marginBottom:18}}><Lbl c="Select Class"/><Sel value={cls} onChange={v=>{setCls(v);setEditIdx(null);}} options={SCHOOL.classes}/></div>
+        <Lbl c={`Add Student to ${cls}`}/>
+        <div style={{display:"flex",gap:10,marginTop:8,marginBottom:6}}>
+          <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()} placeholder="Type full name and press Enter…" style={{flex:1,padding:"10px 14px",borderRadius:9,border:"1.5px solid #e2e8f0",fontSize:13,outline:"none"}}/>
+          <Btn onClick={add}>+ Add</Btn>
+        </div>
+        <div style={{fontSize:11,color:"#94a3b8",marginBottom:20}}>Press Enter after each name.</div>
+        {students.length===0?(
+          <div style={{background:"#f8fafc",border:"2px dashed #e2e8f0",borderRadius:10,padding:28,textAlign:"center",color:"#94a3b8",fontSize:13}}>No students in {cls} yet.</div>
+        ):(
+          <div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <Lbl c={`${cls} — ${students.length} students`}/>
+              <Btn onClick={()=>{if(window.confirm(`Clear all from ${cls}?`))save([]);}} v="del" style={{padding:"4px 12px",fontSize:11}}>Clear All</Btn>
+            </div>
+            <div style={{border:"1.5px solid #e2e8f0",borderRadius:10,overflow:"hidden"}}>
+              {students.map((s,i)=>(
+                <div key={s} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderBottom:i<students.length-1?"1px solid #f1f5f9":"none",background:i%2===0?"#fff":"#fafbfd"}}>
+                  <div style={{width:24,height:24,borderRadius:"50%",background:"#eff6ff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:"#1a2e6c",flexShrink:0}}>{i+1}</div>
+                  {editIdx===i?(
+                    <><input value={editVal} onChange={e=>setEditVal(e.target.value)} onKeyDown={e=>e.key==="Enter"&&saveEdit(i)} style={{flex:1,padding:"6px 10px",borderRadius:7,border:"1.5px solid #1a2e6c",fontSize:13,outline:"none"}} autoFocus/>
+                    <Btn onClick={()=>saveEdit(i)} v="ok" style={{padding:"5px 12px",fontSize:12}}>Save</Btn>
+                    <Btn onClick={()=>setEditIdx(null)} v="ghost" style={{padding:"5px 12px",fontSize:12}}>Cancel</Btn></>
+                  ):(
+                    <><div style={{flex:1,fontSize:13,fontWeight:500,color:"#1e293b"}}>{s}</div>
+                    <button onClick={()=>{setEditIdx(i);setEditVal(s);}} style={{background:"none",border:"none",cursor:"pointer",color:"#64748b",fontSize:12,padding:"4px 8px"}}>✏️</button>
+                    <button onClick={()=>remove(s)} style={{background:"none",border:"none",cursor:"pointer",color:"#dc2626",fontSize:12,padding:"4px 8px"}}>✕</button></>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </Card>
+      <Card style={{padding:22}}>
+        <div style={{fontWeight:700,fontSize:14,color:"#1a2e6c",marginBottom:14}}>All Classes Summary</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
+          {SCHOOL.classes.map(c=>{const count=(data[safeId(c)]?.list||[]).length;return(
+            <div key={c} onClick={()=>setCls(c)} style={{background:cls===c?"#eff6ff":"#f8fafc",border:`1.5px solid ${cls===c?"#bfdbfe":"#e2e8f0"}`,borderRadius:10,padding:"12px 14px",cursor:"pointer"}}>
+              <div style={{fontSize:11,fontWeight:700,color:cls===c?"#1a2e6c":"#64748b"}}>{c}</div>
+              <div style={{fontSize:22,fontWeight:800,color:cls===c?"#1a2e6c":"#94a3b8",fontFamily:"monospace",marginTop:4}}>{count}</div>
+              <div style={{fontSize:10,color:"#94a3b8"}}>students</div>
+            </div>
+          );})}
+        </div>
+        <div style={{marginTop:14,padding:"10px 14px",background:"#f0fdf4",borderRadius:9,border:"1.5px solid #bbf7d0",display:"flex",justifyContent:"space-between"}}>
+          <span style={{fontSize:13,fontWeight:600,color:"#166534"}}>Total Students</span>
+          <span style={{fontSize:13,fontWeight:800,color:"#166534",fontFamily:"monospace"}}>{Object.values(data).reduce((a,b)=>a+(b?.list||[]).length,0)}</span>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function ManageTopics({topicsDB}) {
+  const {data,loading,set}=topicsDB;
+  const [cls,setCls]=useState(SCHOOL.classes[0]);
+  const [subj,setSubj]=useState(SCHOOL.subjects[SCHOOL.classes[0]][0]);
+  const [input,setInput]=useState("");
+  useEffect(()=>setSubj(SCHOOL.subjects[cls][0]),[cls]);
+  const key=`${cls}__${subj}`;
+  const topics=data[safeId(key)]?.list||[];
+  const add=async()=>{const t=input.trim();if(!t)return;const arr=[...new Set([...topics,...t.split(",").map(x=>x.trim()).filter(Boolean)])];await set(key,{key,list:arr});setInput("");};
+  const remove=async(t)=>await set(key,{key,list:topics.filter(x=>x!==t)});
+  if(loading)return <Spinner/>;
+  return (
+    <div className="fi" style={{display:"flex",flexDirection:"column",gap:18}}>
+      <Card style={{padding:22}}>
+        <div style={{fontWeight:700,fontSize:15,color:"#1a2e6c",marginBottom:2}}>📝 Manage Topics</div>
+        <div style={{fontSize:13,color:"#64748b",marginBottom:20}}>Set topics per class & subject. Separate multiple with commas.</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:18}}>
+          <div><Lbl c="Class"/><Sel value={cls} onChange={setCls} options={SCHOOL.classes}/></div>
+          <div><Lbl c="Subject"/><Sel value={subj} onChange={setSubj} options={SCHOOL.subjects[cls]||[]}/></div>
+        </div>
+        <Lbl c={`Topics for ${cls} — ${subj}`}/>
+        <div style={{display:"flex",gap:10,marginTop:8,marginBottom:16}}>
+          <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()} placeholder="e.g. Algebra, Geometry, Trigonometry" style={{flex:1,padding:"10px 14px",borderRadius:9,border:"1.5px solid #e2e8f0",fontSize:13,outline:"none"}}/>
+          <Btn onClick={add}>+ Add</Btn>
+        </div>
+        {topics.length===0?(
+          <div style={{background:"#f8fafc",border:"2px dashed #e2e8f0",borderRadius:10,padding:24,textAlign:"center",color:"#94a3b8",fontSize:13}}>No topics yet.</div>
+        ):(
+          <>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:14}}>
+              {topics.map(t=>(
+                <div key={t} style={{display:"flex",alignItems:"center",gap:5,background:"#eff6ff",border:"1.5px solid #bfdbfe",borderRadius:99,padding:"5px 6px 5px 13px"}}>
+                  <span style={{fontSize:13,color:"#1e40af",fontWeight:600}}>{t}</span>
+                  <button onClick={()=>remove(t)} style={{background:"#bfdbfe",border:"none",cursor:"pointer",color:"#1e40af",fontSize:13,lineHeight:1,padding:"2px 6px",borderRadius:"50%",fontWeight:700}}>×</button>
+                </div>
+              ))}
+            </div>
+            <Btn onClick={()=>set(key,{key,list:[]})} v="del" style={{padding:"6px 14px",fontSize:12}}>Clear All</Btn>
+          </>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function EnterMarks({user,testsDB,topicsDB,studentsDB}) {
+  const aC=user.role==="admin"?SCHOOL.classes:(user.classes||SCHOOL.classes);
+  const [cls,setCls]=useState(aC[0]);
+  const aS=useMemo(()=>{const all=SCHOOL.subjects[cls]||[];return user.role==="admin"?all:all.filter(s=>(user.subjects||[]).includes(s));},[cls,user]);
+  const [subj,setSubj]=useState(aS[0]||"");
+  const [week,setWeek]=useState(1);
+  const [total,setTotal]=useState(20);
+  const [selTopics,setSelTopics]=useState([]);
+  const [rows,setRows]=useState({});
+  const [saved,setSaved]=useState(false);
+  useEffect(()=>setSubj(aS[0]||""),[cls]);
+  const testKey=`${cls}__${subj}__week${week}`;
+  const existing=testsDB.data[safeId(testKey)];
+  useEffect(()=>{if(existing){setTotal(existing.total);setSelTopics(existing.topics||[]);setRows(existing.rows||{});}else{setRows({});setSelTopics([]);}},[testKey,existing?.at]);
+  const students=studentsDB.data[safeId(cls)]?.list||[];
+  const availableTopics=topicsDB.data[safeId(`${cls}__${subj}`)]?.list||[];
+  const toggleTopic=t=>setSelTopics(p=>p.includes(t)?p.filter(x=>x!==t):[...p,t]);
+  const setMark=(s,v)=>setRows(p=>({...p,[s]:v}));
+  const handleSave=async()=>{await testsDB.set(testKey,{cls,subj,week,total,topics:selTopics,rows,by:user.name,at:new Date().toISOString()});setSaved(true);setTimeout(()=>setSaved(false),2500);};
+  const filled=students.filter(s=>rows[s]!==undefined&&rows[s]!=="").length;
+  const avg=filled?Math.round(students.filter(s=>rows[s]!==undefined&&rows[s]!=="").reduce((a,s)=>a+pct(Number(rows[s]),total),0)/filled):0;
+  if(testsDB.loading||studentsDB.loading||topicsDB.loading)return <Spinner/>;
+  return (
+    <div className="fi" style={{display:"flex",flexDirection:"column",gap:18}}>
+      <Card style={{padding:20}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14}}>
+          {[{lbl:"Class",v:cls,opts:aC,fn:v=>setCls(v)},{lbl:"Subject",v:subj,opts:aS,fn:setSubj},
+            {lbl:"Week",v:week,opts:Array.from({length:30},(_,i)=>({v:i+1,l:`Week ${i+1}`})),fn:v=>setWeek(Number(v))},
+            {lbl:"Total Marks",v:total,opts:[10,15,20,25,30,40,50,100].map(v=>({v,l:`${v} marks`})),fn:v=>setTotal(Number(v))}
+          ].map(f=><div key={f.lbl}><Lbl c={f.lbl}/><Sel value={f.v} onChange={f.fn} options={f.opts}/></div>)}
+        </div>
+      </Card>
+      <Card style={{padding:20}}>
+        <Lbl c="Topics Tested"/>
+        {availableTopics.length===0?(
+          <div style={{background:"#fff7ed",border:"1.5px solid #fed7aa",borderRadius:9,padding:"12px 16px",marginTop:8,fontSize:13,color:"#92400e"}}>⚠️ No topics set for <strong>{cls} — {subj}</strong>. Go to Manage Topics tab first.</div>
+        ):(
+          <>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8,marginTop:8}}>
+              {availableTopics.map(t=><button key={t} onClick={()=>toggleTopic(t)} style={{padding:"6px 14px",borderRadius:99,border:"1.5px solid",borderColor:selTopics.includes(t)?"#1a2e6c":"#e2e8f0",background:selTopics.includes(t)?"#1a2e6c":"#f8fafc",color:selTopics.includes(t)?"#fff":"#64748b",fontSize:12,fontWeight:600,cursor:"pointer",transition:"all .15s"}}>{t}</button>)}
+            </div>
+            {selTopics.length>0&&<div style={{marginTop:10,fontSize:12,color:"#64748b"}}>Selected: <strong style={{color:"#1a2e6c"}}>{selTopics.join(", ")}</strong></div>}
+          </>
+        )}
+      </Card>
+      {students.length===0?<Empty icon="👨‍🎓" title={`No students in ${cls} yet`} sub="Go to Manage Students tab first."/>:(
+        <Card>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 160px 90px 70px",background:"#f8fafc",borderBottom:"1.5px solid #e2e8f0",padding:"10px 20px",gap:12}}>
+            {["Student",`Marks (out of ${total})`,"Pct","Grade"].map(h=><div key={h} style={{fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:1.2}}>{h}</div>)}
+          </div>
+          {students.map((s,i)=>{
+            const m=rows[s];const has=m!==undefined&&m!=="";const p=has?pct(Number(m),total):null;const g=p!==null?gradeOf(p):null;
+            return(<div key={s} style={{display:"grid",gridTemplateColumns:"1fr 160px 90px 70px",padding:"10px 20px",alignItems:"center",gap:12,borderBottom:i<students.length-1?"1px solid #f1f5f9":"none",background:i%2===0?"#fff":"#fafbfd"}}>
+              <div style={{fontWeight:500,fontSize:13,color:"#1e293b"}}>{s}</div>
+              <input type="number" min={0} max={total} value={m??""} placeholder="Enter" onChange={e=>setMark(s,e.target.value)} style={{width:120,padding:"7px 12px",borderRadius:8,border:"1.5px solid #e2e8f0",fontSize:13,fontFamily:"monospace",outline:"none",background:"#f8fafc",textAlign:"center"}}/>
+              <div style={{fontFamily:"monospace",fontSize:13,fontWeight:700,color:g?.c||"#cbd5e1"}}>{p!==null?p+"%":"—"}</div>
+              <div>{g?<span style={{background:g.bg,color:g.c,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700}}>{g.l}</span>:<span style={{color:"#cbd5e1",fontSize:12}}>—</span>}</div>
+            </div>);
+          })}
+        </Card>
+      )}
+      {students.length>0&&(
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontSize:12,color:"#64748b"}}>{filled}/{students.length} filled{filled>0&&<span style={{color:"#1a2e6c",fontWeight:600,marginLeft:8}}>· Avg: {avg}%</span>}</div>
+          <Btn onClick={handleSave} v={saved?"ok":"pri"} style={{padding:"11px 28px",fontSize:14}}>{saved?"✓ Saved to Cloud!":"Save Test Results"}</Btn>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ClassProgress({user,testsDB,studentsDB}) {
+  const aC=user.role==="admin"?SCHOOL.classes:(user.classes||SCHOOL.classes);
+  const [cls,setCls]=useState(aC[0]);
+  const aS=useMemo(()=>{const all=SCHOOL.subjects[cls]||[];return user.role==="admin"?all:all.filter(s=>(user.subjects||[]).includes(s));},[cls,user]);
+  const [subj,setSubj]=useState(aS[0]||"");
+  useEffect(()=>setSubj(aS[0]||""),[cls]);
+  const students=studentsDB.data[safeId(cls)]?.list||[];
+  const rTests=useMemo(()=>Object.values(testsDB.data).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week),[testsDB.data,cls,subj]);
+  const stats=useMemo(()=>students.map(s=>{const sc=rTests.map(t=>({week:t.week,p:pct(Number(t.rows?.[s]??0),t.total)}));const avg=sc.length?Math.round(sc.reduce((a,b)=>a+b.p,0)/sc.length):null;const trend=sc.length>=2?sc[sc.length-1].p-sc[0].p:0;return{name:s,sc,avg,trend};}),[students,rTests]);
+  const classAvg=useMemo(()=>{const all=stats.flatMap(s=>s.sc.map(x=>x.p));return all.length?Math.round(all.reduce((a,b)=>a+b,0)/all.length):null;},[stats]);
+  const problemTopics=useMemo(()=>{const m={};rTests.forEach(t=>{const fc=students.filter(s=>pct(Number(t.rows?.[s]??0),t.total)<50).length;if(fc>=students.length*.4)(t.topics||[]).forEach(tp=>{m[tp]=(m[tp]||0)+1;});});return Object.entries(m).sort((a,b)=>b[1]-a[1]);},[rTests,students]);
+  if(testsDB.loading||studentsDB.loading)return <Spinner/>;
+  return (
+    <div className="fi" style={{display:"flex",flexDirection:"column",gap:18}}>
+      <Card style={{padding:18}}>
+        <div style={{display:"flex",gap:14,alignItems:"flex-end"}}>
+          <div style={{flex:1}}><Lbl c="Class"/><Sel value={cls} onChange={setCls} options={aC}/></div>
+          <div style={{flex:1}}><Lbl c="Subject"/><Sel value={subj} onChange={setSubj} options={aS}/></div>
+          <Btn onClick={()=>window.print()} v="ghost">🖨️ Print</Btn>
+        </div>
+      </Card>
+      {rTests.length===0?<Empty icon="📝" title={`No data for ${cls} · ${subj}`} sub="Enter marks first."/>:(
+        <>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14}}>
+            <StatCard label="Tests Recorded" val={rTests.length} icon="📋" color="#1a2e6c" sub={`Latest: Week ${rTests[rTests.length-1]?.week}`}/>
+            <StatCard label="Class Average" val={classAvg!==null?classAvg+"%":"—"} icon="📊" color={classAvg!==null?gradeOf(classAvg).c:"#64748b"} sub="Across all tests"/>
+            <StatCard label="Top Scorer" val={[...stats].filter(s=>s.avg!==null).sort((a,b)=>b.avg-a.avg)[0]?.avg+"%"||"—"} icon="🏆" color="#d97706" sub={[...stats].filter(s=>s.avg!==null).sort((a,b)=>b.avg-a.avg)[0]?.name?.split(" ")[0]}/>
+            <StatCard label="Problem Topics" val={problemTopics.length} icon="⚠️" color={problemTopics.length>0?"#dc2626":"#16a34a"} sub={problemTopics.length>0?"Need revision":"All clear"}/>
+          </div>
+          <Card>
+            <div style={{padding:"14px 20px",borderBottom:"1.5px solid #e2e8f0",background:"#f8fafc",display:"flex",justifyContent:"space-between"}}>
+              <div style={{fontWeight:700,fontSize:14,color:"#1a2e6c"}}>Performance — {cls} · {subj}</div>
+              <div style={{fontSize:11,color:"#64748b"}}>{rTests.length} weeks · {students.length} students</div>
+            </div>
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse"}}>
+                <thead><tr style={{background:"#f8fafc"}}>
+                  <th style={{padding:"10px 20px",textAlign:"left",fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase",whiteSpace:"nowrap"}}>Student</th>
+                  {rTests.map(t=><th key={t.week} style={{padding:"10px 12px",textAlign:"center",fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase"}}>W{t.week}</th>)}
+                  <th style={{padding:"10px 16px",textAlign:"center",fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase"}}>Avg</th>
+                  <th style={{padding:"10px 16px",textAlign:"center",fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase"}}>Trend</th>
+                </tr></thead>
+                <tbody>
+                  {[...stats].sort((a,b)=>(b.avg??-1)-(a.avg??-1)).map((ss,i)=>(
+                    <tr key={ss.name} style={{borderTop:"1px solid #f1f5f9",background:i%2===0?"#fff":"#fafbfd"}}>
+                      <td style={{padding:"10px 20px",fontWeight:500,fontSize:13,color:"#1e293b",whiteSpace:"nowrap"}}>{ss.name}</td>
+                      {ss.sc.map((sc,idx)=>{const g=gradeOf(sc.p);return<td key={idx} style={{padding:"10px 12px",textAlign:"center"}}><span style={{fontFamily:"monospace",fontSize:12,fontWeight:700,color:g.c}}>{sc.p}%</span></td>;})}
+                      <td style={{padding:"10px 16px",textAlign:"center"}}>{ss.avg!==null?<GBadge p={ss.avg}/>:<span style={{color:"#cbd5e1"}}>—</span>}</td>
+                      <td style={{padding:"10px 16px",textAlign:"center",fontSize:12,fontWeight:700,color:ss.trend>5?"#16a34a":ss.trend<-5?"#dc2626":"#64748b"}}>{ss.trend>5?`↑ +${ss.trend}%`:ss.trend<-5?`↓ ${ss.trend}%`:"→ Stable"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+          {problemTopics.length>0&&(
+            <Card style={{padding:20}}>
+              <div style={{fontWeight:700,fontSize:14,color:"#1a2e6c",marginBottom:14}}>⚠️ Problem Topics</div>
+              {problemTopics.map(([tp,cnt])=>(
+                <div key={tp} style={{background:"#fff7ed",border:"1.5px solid #fed7aa",borderRadius:10,padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                  <div><div style={{fontWeight:700,color:"#c2410c",fontSize:14}}>📚 {tp}</div><div style={{fontSize:12,color:"#9a3412",marginTop:2}}>Flagged in {cnt} test{cnt>1?"s":""}</div></div>
+                  <span style={{background:"#c2410c",color:"#fff",borderRadius:7,padding:"4px 12px",fontSize:11,fontWeight:700}}>REVIEW</span>
+                </div>
+              ))}
+            </Card>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function StudentReport({user,testsDB,studentsDB}) {
+  const aC=user.role==="admin"?SCHOOL.classes:(user.classes||SCHOOL.classes);
+  const [cls,setCls]=useState(aC[0]);
+  const students=studentsDB.data[safeId(cls)]?.list||[];
+  const [student,setStudent]=useState(students[0]||"");
+  useEffect(()=>setStudent((studentsDB.data[safeId(cls)]?.list||[])[0]||""),[cls,studentsDB.data]);
+  const subjects=SCHOOL.subjects[cls]||[];
+  const sd=useMemo(()=>subjects.map(subj=>{
+    const rel=Object.values(testsDB.data).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week);
+    const sc=rel.map(t=>({week:t.week,p:pct(Number(t.rows?.[student]??0),t.total),topics:t.topics||[]}));
+    const avg=sc.length?Math.round(sc.reduce((a,b)=>a+b.p,0)/sc.length):null;
+    const trend=sc.length>=2?sc[sc.length-1].p-sc[0].p:null;
+    const weak=[...new Set(sc.filter(x=>x.p<50).flatMap(x=>x.topics))];
+    return{subj,sc,avg,trend,weak};
+  }),[cls,student,testsDB.data,subjects]);
+  const overall=useMemo(()=>{const a=sd.filter(x=>x.avg!==null).map(x=>x.avg);return a.length?Math.round(a.reduce((x,y)=>x+y,0)/a.length):null;},[sd]);
+  if(testsDB.loading||studentsDB.loading)return <Spinner/>;
+  return (
+    <div className="fi" style={{display:"flex",flexDirection:"column",gap:18}}>
+      <Card style={{padding:18}}>
+        <div style={{display:"flex",gap:14,alignItems:"flex-end"}}>
+          <div style={{flex:1}}><Lbl c="Class"/><Sel value={cls} onChange={setCls} options={aC}/></div>
+          <div style={{flex:2}}><Lbl c="Student"/>
+            {students.length===0?<div style={{padding:"9px 14px",borderRadius:9,border:"1.5px solid #e2e8f0",background:"#f8fafc",fontSize:13,color:"#94a3b8"}}>No students in {cls}</div>
+            :<Sel value={student} onChange={setStudent} options={students}/>}
+          </div>
+          <Btn onClick={()=>window.print()} v="ghost">🖨️ Print</Btn>
+        </div>
+      </Card>
+      {overall!==null&&(
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14}}>
+          <StatCard label="Overall Average" val={overall+"%"} icon="📊" color={gradeOf(overall).c} sub={gradeOf(overall).l+" Grade"}/>
+          <StatCard label="Best Subject" val={[...sd].filter(s=>s.avg!==null).sort((a,b)=>b.avg-a.avg)[0]?.subj.split(" ")[0]||"—"} icon="⭐" color="#d97706" sub={[...sd].filter(s=>s.avg!==null).sort((a,b)=>b.avg-a.avg)[0]?.avg+"%"}/>
+          <StatCard label="Needs Work" val={[...sd].filter(s=>s.avg!==null).sort((a,b)=>a.avg-b.avg)[0]?.subj.split(" ")[0]||"—"} icon="📌" color="#dc2626" sub={[...sd].filter(s=>s.avg!==null).sort((a,b)=>a.avg-b.avg)[0]?.avg+"%"}/>
+        </div>
+      )}
+      <Card>
+        <div style={{padding:"14px 20px",borderBottom:"1.5px solid #e2e8f0",background:"#f8fafc"}}>
+          <div style={{fontWeight:700,fontSize:14,color:"#1a2e6c"}}>Subject Report — {student||"Select student"} · {cls}</div>
+        </div>
+        {sd.map((s,i)=>(
+          <div key={s.subj} style={{padding:"16px 20px",borderBottom:i<sd.length-1?"1px solid #f1f5f9":"none",background:i%2===0?"#fff":"#fafbfd"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:s.avg!==null?10:0}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:14,color:"#1e293b"}}>{s.subj}</div>
+                {s.weak.length>0&&<div style={{fontSize:11,color:"#dc2626",marginTop:3}}>⚠ Revise: {s.weak.join(", ")}</div>}
+              </div>
+              <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
+                {s.sc.map(sc=>{const g=gradeOf(sc.p);return<div key={sc.week} style={{textAlign:"center"}}><div style={{fontSize:9,color:"#94a3b8"}}>W{sc.week}</div><div style={{fontSize:12,fontWeight:700,color:g.c,fontFamily:"monospace"}}>{sc.p}%</div></div>;})}
+                {s.avg!==null?<GBadge p={s.avg}/>:<span style={{fontSize:12,color:"#cbd5e1"}}>No data</span>}
+                {s.trend!==null&&<span style={{fontSize:12,fontWeight:700,color:s.trend>0?"#16a34a":s.trend<-5?"#dc2626":"#64748b"}}>{s.trend>0?`↑+${s.trend}%`:s.trend<-5?`↓${s.trend}%`:"→"}</span>}
+              </div>
+            </div>
+            {s.avg!==null&&<Bar p={s.avg}/>}
+          </div>
+        ))}
+      </Card>
+    </div>
+  );
+}
+
+function ParentView({user,testsDB}) {
+  const {student,cls}=user;
+  const subjects=SCHOOL.subjects[cls]||[];
+  const sd=useMemo(()=>subjects.map(subj=>{
+    const rel=Object.values(testsDB.data).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week);
+    const sc=rel.map(t=>({week:t.week,p:pct(Number(t.rows?.[student]??0),t.total),topics:t.topics||[]}));
+    const avg=sc.length?Math.round(sc.reduce((a,b)=>a+b.p,0)/sc.length):null;
+    const trend=sc.length>=2?sc[sc.length-1].p-sc[0].p:null;
+    const weak=[...new Set(sc.filter(x=>x.p<50).flatMap(x=>x.topics))];
+    return{subj,sc,avg,trend,weak};
+  }),[student,cls,testsDB.data,subjects]);
+  const overall=useMemo(()=>{const a=sd.filter(x=>x.avg!==null).map(x=>x.avg);return a.length?Math.round(a.reduce((x,y)=>x+y,0)/a.length):null;},[sd]);
+  if(testsDB.loading)return <Spinner/>;
+  return (
+    <div className="fi" style={{display:"flex",flexDirection:"column",gap:18}}>
+      <div style={{background:"linear-gradient(135deg,#1a2e6c,#1d4ed8)",borderRadius:16,padding:"28px",color:"#fff"}}>
+        <div style={{fontSize:11,color:"rgba(255,255,255,.5)",letterSpacing:2,textTransform:"uppercase"}}>Welcome</div>
+        <div style={{fontSize:22,fontWeight:800,marginTop:4}}>{user.name}</div>
+        <div style={{fontSize:13,color:"rgba(255,255,255,.6)",marginTop:6}}>Report for <strong style={{color:"#fff"}}>{student}</strong> · {cls}</div>
+        {overall!==null&&<div style={{marginTop:16,display:"inline-flex",alignItems:"center",gap:12,background:"rgba(255,255,255,.12)",borderRadius:10,padding:"10px 18px"}}>
+          <div style={{fontSize:10,color:"rgba(255,255,255,.6)",textTransform:"uppercase",letterSpacing:1}}>Overall</div>
+          <div style={{fontSize:26,fontWeight:800,fontFamily:"monospace",color:gradeOf(overall).c}}>{overall}%</div>
+          <div style={{fontSize:18,fontWeight:700}}>{gradeOf(overall).l}</div>
+        </div>}
+      </div>
+      {sd.filter(s=>s.sc.length>0).length===0?<Empty icon="📋" title="No results yet" sub="Results appear once teachers enter marks."/>:(
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+          {sd.filter(s=>s.sc.length>0).map(s=>(
+            <Card key={s.subj} style={{padding:20}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+                <div><div style={{fontWeight:700,fontSize:15,color:"#1e293b"}}>{s.subj}</div><div style={{fontSize:11,color:"#64748b",marginTop:2}}>{s.sc.length} test{s.sc.length>1?"s":""}</div></div>
+                {s.avg!==null&&<GBadge p={s.avg}/>}
+              </div>
+              {s.avg!==null&&<div style={{marginBottom:12}}><Bar p={s.avg}/></div>}
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {s.sc.map(sc=>{const g=gradeOf(sc.p);return<div key={sc.week} style={{background:g.bg,borderRadius:8,padding:"6px 10px",textAlign:"center"}}><div style={{fontSize:9,color:g.c,fontWeight:700}}>Wk {sc.week}</div><div style={{fontSize:14,fontWeight:800,color:g.c,fontFamily:"monospace"}}>{sc.p}%</div></div>;})}
+              </div>
+              {s.weak.length>0&&<div style={{marginTop:12,background:"#fff7ed",borderRadius:8,padding:"8px 12px"}}><div style={{fontSize:11,color:"#c2410c",fontWeight:600}}>Revise: {s.weak.join(", ")}</div></div>}
+              {s.trend!==null&&<div style={{marginTop:8,fontSize:12,color:"#64748b"}}>Progress: <strong style={{color:s.trend>0?"#16a34a":s.trend<-5?"#dc2626":"#64748b"}}>{s.trend>0?`Improving ↑ +${s.trend}%`:s.trend<-5?`Declining ↓ ${s.trend}%`:"Stable →"}</strong></div>}
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AdminPanel({testsDB,studentsDB}) {
+  const all=Object.entries(testsDB.data).sort((a,b)=>(b[1].at||"").localeCompare(a[1].at||""));
+  const totalStudents=Object.values(studentsDB.data).reduce((a,b)=>a+(b?.list||[]).length,0);
+  if(testsDB.loading)return <Spinner/>;
+  return (
+    <div className="fi" style={{display:"flex",flexDirection:"column",gap:18}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14}}>
+        <StatCard label="Total Students" val={totalStudents} icon="👨‍🎓" color="#1a2e6c"/>
+        <StatCard label="Tests Saved" val={all.length} icon="📋" color="#1d4ed8"/>
+        <StatCard label="Classes Active" val={[...new Set(all.map(([,t])=>t.cls))].length} icon="🏫" color="#7c3aed"/>
+        <StatCard label="Subjects Covered" val={[...new Set(all.map(([,t])=>t.subj))].length} icon="📚" color="#d97706"/>
+      </div>
+      <Card>
+        <div style={{padding:"14px 20px",borderBottom:"1.5px solid #e2e8f0",background:"#f8fafc"}}><div style={{fontWeight:700,fontSize:14,color:"#1a2e6c"}}>All Saved Tests</div></div>
+        {all.length===0?<div style={{padding:40,textAlign:"center",color:"#94a3b8",fontSize:13}}>No tests saved yet.</div>:
+          all.map(([key,t],i)=>(
+            <div key={key} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 20px",borderBottom:i<all.length-1?"1px solid #f1f5f9":"none",background:i%2===0?"#fff":"#fafbfd"}}>
+              <div>
+                <div style={{fontWeight:600,fontSize:13,color:"#1e293b"}}>{t.cls} · {t.subj} · Week {t.week}</div>
+                <div style={{fontSize:11,color:"#64748b",marginTop:2}}>By {t.by||"—"} · {t.total} marks · {t.topics?.join(", ")||"No topics"}</div>
+              </div>
+              <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                <div style={{fontSize:11,color:"#64748b"}}>{Object.keys(t.rows||{}).length} students</div>
+                <Btn onClick={()=>testsDB.del(key)} v="del" style={{padding:"6px 14px",fontSize:12}}>Delete</Btn>
+              </div>
+            </div>
+          ))
+        }
+      </Card>
+    </div>
+  );
+}
+
+function App() {
+  const [user,setUser]=useState(null);
+  const [tab,setTab]=useState("students");
+  const testsDB=useFirestore("tests");
+  const topicsDB=useFirestore("topics");
+  const studentsDB=useFirestore("students");
+
+  if(!user) return <Login onLogin={u=>{setUser(u);setTab(u.role==="parent"?"parent":"students");}}/>;
+  const isParent=user.role==="parent",isAdmin=user.role==="admin";
+  const tabs=isParent?[{id:"parent",label:"My Child's Report",icon:"👨‍👩‍👦"}]:[
+    {id:"students",label:"Students",icon:"👨‍🎓"},
+    {id:"topics",label:"Topics",icon:"📝"},
+    {id:"enter",label:"Enter Marks",icon:"✏️"},
+    {id:"class",label:"Class Progress",icon:"📊"},
+    {id:"student",label:"Student Report",icon:"👤"},
+    ...(isAdmin?[{id:"admin",label:"Admin",icon:"⚙️"}]:[]),
+  ];
+  return (
+    <div style={{minHeight:"100vh",background:"#eef1f6"}}>
+      <div style={{background:"#1a2e6c",color:"#fff",padding:"0 28px",height:58,display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:"3px solid #2563eb",position:"sticky",top:0,zIndex:100,boxShadow:"0 4px 20px rgba(0,0,0,.25)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <img src={LOGO} alt="logo" style={{width:36,height:36,objectFit:"contain"}}/>
+          <div><div style={{fontSize:13,fontWeight:800}}>Stepping Stone Inter College</div><div style={{fontSize:10,color:"rgba(255,255,255,.45)",letterSpacing:1}}>Weekly Test Tracker</div></div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:14}}>
+          <div style={{textAlign:"right"}}><div style={{fontSize:12,fontWeight:600}}>{user.name}</div><div style={{fontSize:10,color:"rgba(255,255,255,.45)",textTransform:"capitalize"}}>{user.role}</div></div>
+          <button onClick={()=>{setUser(null);setTab("students");}} style={{background:"rgba(255,255,255,.1)",color:"#fff",border:"1px solid rgba(255,255,255,.2)",borderRadius:8,padding:"6px 14px",fontSize:12,cursor:"pointer",fontWeight:600}}>Sign Out</button>
+        </div>
+      </div>
+      <div style={{background:"#fff",borderBottom:"1.5px solid #e2e8f0",display:"flex",padding:"0 28px",position:"sticky",top:58,zIndex:99,overflowX:"auto"}}>
+        {tabs.map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)} style={{padding:"14px 18px",border:"none",background:"none",fontSize:13,fontWeight:600,color:tab===t.id?"#1a2e6c":"#64748b",borderBottom:tab===t.id?"2.5px solid #1a2e6c":"2.5px solid transparent",cursor:"pointer",display:"flex",alignItems:"center",gap:6,transition:"all .15s",whiteSpace:"nowrap"}}>
+            <span>{t.icon}</span>{t.label}
+          </button>
+        ))}
+      </div>
+      <div style={{maxWidth:1040,margin:"24px auto",padding:"0 20px 60px"}}>
+        {tab==="students"&&!isParent&&<ManageStudents studentsDB={studentsDB}/>}
+        {tab==="topics"&&!isParent&&<ManageTopics topicsDB={topicsDB}/>}
+        {tab==="enter"&&!isParent&&<EnterMarks user={user} testsDB={testsDB} topicsDB={topicsDB} studentsDB={studentsDB}/>}
+        {tab==="class"&&!isParent&&<ClassProgress user={user} testsDB={testsDB} studentsDB={studentsDB}/>}
+        {tab==="student"&&!isParent&&<StudentReport user={user} testsDB={testsDB} studentsDB={studentsDB}/>}
+        {tab==="admin"&&isAdmin&&<AdminPanel testsDB={testsDB} studentsDB={studentsDB}/>}
+        {tab==="parent"&&isParent&&<ParentView user={user} testsDB={testsDB}/>}
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App/>);
+</script>
+</body>
+</html>
