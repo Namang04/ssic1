@@ -722,7 +722,7 @@ function App() {
           </button>
         ))}
       </div>
-      <div style={{maxWidth:1040,margin:"24px auto",padding:"0 20px 60px"}}>
+      <div style={{maxWidth:1040,margin:"24px auto",padding:"0 20px 0px"}}>
         {tab==="students"&&!isParent&&<ManageStudents studentsDB={studentsDB}/>}
         {tab==="topics"&&!isParent&&<ManageTopics topicsDB={topicsDB}/>}
         {tab==="enter"&&!isParent&&<EnterMarks user={user} testsDB={testsDB} topicsDB={topicsDB} studentsDB={studentsDB}/>}
@@ -731,6 +731,20 @@ function App() {
         {tab==="admin"&&isAdmin&&<AdminPanel testsDB={testsDB} studentsDB={studentsDB} usersDB={usersDB}/>}
         {tab==="parent"&&isParent&&<ParentView user={user} testsDB={testsDB}/>}
         {tab==="account"&&<ChangeCredentials user={user} usersDB={usersDB} onUpdate={handleUpdateUser}/>}
+      </div>
+      <div style={{borderTop:"1px solid #e2e8f0",marginTop:40,padding:"20px 28px",display:"flex",alignItems:"center",justifyContent:"space-between",background:"#fff"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <img src={LOGO} alt="logo" style={{width:28,height:28,objectFit:"contain",opacity:0.7}}/>
+          <div>
+            <div style={{fontSize:11,color:"#94a3b8"}}>Stepping Stone Inter College, Gorakhpur</div>
+            <div style={{fontSize:10,color:"#cbd5e1",marginTop:1}}>Weekly Test Tracker</div>
+          </div>
+        </div>
+        <div style={{textAlign:"right"}}>
+          <div style={{fontSize:11,color:"#94a3b8"}}>Designed &amp; Built by</div>
+          <div style={{fontSize:13,fontWeight:700,color:"#1a2e6c"}}>Rajvansh Gupta</div>
+          <div style={{fontSize:10,color:"#94a3b8",textTransform:"uppercase",letterSpacing:0.5}}>Director, Stepping Stone</div>
+        </div>
       </div>
     </div>
   );
