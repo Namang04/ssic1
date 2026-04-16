@@ -50,8 +50,6 @@ const LOGO="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAHgAAAB4CAYAAAA5ZDbSAA
 const {useState,useMemo,useEffect,useCallback,useRef}=React;
 
 const SCHOOL={
-  sections:["A","B"],
-  totalRolls:60,
   classes:["Class 6","Class 7","Class 8","Class 9","Class 10","Class 11","Class 12"],
   subjects:{"Class 6":["Mathematics","Science","English","Hindi","Social Science"],"Class 7":["Mathematics","Science","English","Hindi","Social Science"],"Class 8":["Mathematics","Science","English","Hindi","Social Science"],"Class 9":["Mathematics","Science","English","Hindi","Social Science","Sanskrit"],"Class 10":["Mathematics","Science","English","Hindi","Social Science","Sanskrit"],"Class 11":["Mathematics","Physics","Chemistry","Biology","English","Hindi"],"Class 12":["Mathematics","Physics","Chemistry","Biology","English","Hindi"]},
 };
@@ -97,6 +95,7 @@ const DEFAULT_USERS={
   socscience10:{password:"Stepping@socscience",role:"teacher",name:"Social Science Teacher (Class 10)",classes:["Class 10"],subjects:["Social Science"]},
   sanskrit9:{password:"Stepping@sanskrit",role:"teacher",name:"Sanskrit Teacher (Class 9)",classes:["Class 9"],subjects:["Sanskrit"]},
   sanskrit10:{password:"Stepping@sanskrit",role:"teacher",name:"Sanskrit Teacher (Class 10)",classes:["Class 10"],subjects:["Sanskrit"]},
+  vp:{password:"Stepping@vp",role:"admin",name:"Vice Principal",classes:null,subjects:null},
 };
 
 const pct=(m,t)=>t?Math.round((m/t)*100):0;
@@ -109,7 +108,6 @@ const gradeOf=p=>{
   return{l:"D",c:"#dc2626",bg:"#fee2e2"};
 };
 const safeId=s=>s.replace(/[^a-zA-Z0-9]/g,"_");
-const studentId=(cls,sec,roll)=>safeId(`${cls}_${sec}_${roll}`);
 const today=()=>new Date().toISOString().split("T")[0];
 const fmtDate=d=>{if(!d)return"—";const[y,m,dy]=d.split("-");return`${dy}/${m}/${y}`;};
 const fmtTime=iso=>{if(!iso)return"";const d=new Date(iso);return d.toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"});};
@@ -175,109 +173,129 @@ const Inp=({label,value,onChange,type="text",placeholder="",error=""})=>(
 const Badge=({label,color,bg})=><span style={{background:bg,color,borderRadius:6,padding:"2px 9px",fontSize:11,fontWeight:700}}>{label}</span>;
 
 // ── LOGIN ──
-function Login({onLogin,usersDB,studentsDB}){
-  const[mode,setMode]=useState("choose");
+function Login({onLogin,usersDB}){
   const[u,setU]=useState("");const[p,setP]=useState("");const[err,setErr]=useState("");
-  const[sCls,setsCls]=useState(SCHOOL.classes[0]);const[sSec,setsSec]=useState("A");
-  const[sRoll,setSRoll]=useState("");const[sPin,setSPin]=useState("");
-  const[regPin,setRegPin]=useState("");const[regConfirm,setRegConfirm]=useState("");
-  const[regName,setRegName]=useState("");const[regLoading,setRegLoading]=useState(false);
-
-  const goStaff=()=>{
+  const go=()=>{
     const uKey=u.trim().toLowerCase();
     const userData=usersDB.data[uKey]||DEFAULT_USERS[uKey];
     if(userData&&userData.password===p)onLogin({username:uKey,...userData});
     else setErr("Invalid username or password.");
   };
-  const goStudent=()=>{
-    if(!sRoll||!sPin){setErr("Enter roll number and PIN.");return;}
-    const sid=studentId(sCls,sSec,sRoll);
-    const existing=studentsDB.data[sid];
-    if(!existing){setErr("Not registered. Please register first.");return;}
-    if(existing.pin!==sPin){setErr("Incorrect PIN.");return;}
-    onLogin({role:"student",cls:sCls,section:sSec,roll:Number(sRoll),name:existing.name||"",sid});
-  };
-  const goRegister=async()=>{
-    setErr("");
-    if(!sRoll){setErr("Select your roll number.");return;}
-    if(!regPin||regPin.length<4){setErr("PIN must be at least 4 digits.");return;}
-    if(regPin!==regConfirm){setErr("PINs do not match.");return;}
-    const sid=studentId(sCls,sSec,sRoll);
-    setRegLoading(true);
-    if(studentsDB.data[sid]){setErr("Already registered. Please login.");setRegLoading(false);return;}
-    await studentsDB.set(sid,{cls:sCls,section:sSec,roll:Number(sRoll),pin:regPin,name:regName.trim()||"",nameSet:!!regName.trim(),createdAt:new Date().toISOString()});
-    setRegLoading(false);
-    onLogin({role:"student",cls:sCls,section:sSec,roll:Number(sRoll),name:regName.trim()||"",sid});
-  };
-  const rollOpts=Array.from({length:SCHOOL.totalRolls},(_,i)=>({v:String(i+1),l:`Roll No. ${i+1}`}));
-
   return(
     <div style={{minHeight:"100vh",background:"linear-gradient(150deg,#1a2e6c 0%,#1d4ed8 60%,#b8860b 100%)",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-      <div className="fi" style={{width:"100%",maxWidth:440}}>
-        <div style={{textAlign:"center",marginBottom:28}}>
-          <img src={LOGO} alt="logo" style={{width:80,height:80,objectFit:"contain",marginBottom:10}}/>
-          <div style={{fontSize:21,fontWeight:800,color:"#fff"}}>Stepping Stone Inter College</div>
-          <div style={{fontSize:11,color:"rgba(255,255,255,.5)",marginTop:4,letterSpacing:1.5}}>GORAKHPUR · WEEKLY TEST TRACKER</div>
+      <div className="fi" style={{width:"100%",maxWidth:420}}>
+        <div style={{textAlign:"center",marginBottom:32}}>
+          <img src={LOGO} alt="logo" style={{width:90,height:90,objectFit:"contain",marginBottom:10}}/>
+          <div style={{fontSize:22,fontWeight:800,color:"#fff"}}>Stepping Stone Inter College</div>
+          <div style={{fontSize:12,color:"rgba(255,255,255,.5)",marginTop:4,letterSpacing:1.5}}>GORAKHPUR · WEEKLY TEST TRACKER</div>
         </div>
-        {mode==="choose"&&(
-          <div style={{display:"flex",flexDirection:"column",gap:14}}>
-            <button onClick={()=>setMode("staff")} style={{background:"#fff",borderRadius:16,padding:"22px 24px",border:"none",cursor:"pointer",textAlign:"left",boxShadow:"0 8px 30px rgba(0,0,0,.2)"}}>
-              <div style={{fontSize:28,marginBottom:8}}>👩‍🏫</div>
-              <div style={{fontSize:16,fontWeight:700,color:"#1a2e6c"}}>Staff Login</div>
-              <div style={{fontSize:13,color:"#64748b",marginTop:2}}>Teachers, Admin & Parents</div>
-            </button>
-            <button onClick={()=>setMode("student")} style={{background:"rgba(255,255,255,.12)",borderRadius:16,padding:"22px 24px",border:"2px solid rgba(255,255,255,.3)",cursor:"pointer",textAlign:"left"}}>
-              <div style={{fontSize:28,marginBottom:8}}>👨‍🎓</div>
-              <div style={{fontSize:16,fontWeight:700,color:"#fff"}}>Student Login</div>
-              <div style={{fontSize:13,color:"rgba(255,255,255,.6)",marginTop:2}}>View your results and progress</div>
-            </button>
-          </div>
-        )}
-        {mode==="staff"&&(
-          <div style={{background:"#fff",borderRadius:20,padding:32,boxShadow:"0 24px 60px rgba(0,0,0,.3)"}}>
-            <button onClick={()=>{setMode("choose");setErr("");}} style={{background:"none",border:"none",cursor:"pointer",color:"#64748b",fontSize:13,marginBottom:16}}>← Back</button>
-            <div style={{fontSize:18,fontWeight:700,color:"#1a2e6c",marginBottom:4}}>Staff Sign In</div>
-            <div style={{fontSize:12,color:"#64748b",marginBottom:20}}>Teachers, Admin & Parents</div>
-            <Inp label="Username" value={u} onChange={setU} placeholder="e.g. maths6a"/>
-            <Inp label="Password" value={p} onChange={setP} type="password" placeholder="••••••••"/>
-            {err&&<div style={{fontSize:12,color:"#dc2626",background:"#fee2e2",borderRadius:8,padding:"8px 12px",marginBottom:12}}>{err}</div>}
-            <button onClick={goStaff} style={{width:"100%",background:"#1a2e6c",color:"#fff",border:"none",borderRadius:10,padding:13,fontSize:14,fontWeight:700,cursor:"pointer"}}>Sign In →</button>
-          </div>
-        )}
-        {mode==="student"&&(
-          <div style={{background:"#fff",borderRadius:20,padding:32,boxShadow:"0 24px 60px rgba(0,0,0,.3)"}}>
-            <button onClick={()=>{setMode("choose");setErr("");}} style={{background:"none",border:"none",cursor:"pointer",color:"#64748b",fontSize:13,marginBottom:16}}>← Back</button>
-            <div style={{fontSize:18,fontWeight:700,color:"#1a2e6c",marginBottom:4}}>Student Login</div>
-            <div style={{fontSize:12,color:"#64748b",marginBottom:20}}>Select your class and enter your PIN</div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 80px",gap:10,marginBottom:14}}>
-              <div><Lbl c="Class"/><Sel value={sCls} onChange={setsCls} options={SCHOOL.classes}/></div>
-              <div><Lbl c="Section"/><Sel value={sSec} onChange={setsSec} options={SCHOOL.sections}/></div>
-            </div>
-            <div style={{marginBottom:14}}><Lbl c="Roll Number"/><Sel value={sRoll} onChange={setSRoll} options={[{v:"",l:"Select Roll No"},...rollOpts]}/></div>
-            <Inp label="PIN" value={sPin} onChange={setSPin} type="password" placeholder="Your PIN"/>
-            {err&&<div style={{fontSize:12,color:"#dc2626",background:"#fee2e2",borderRadius:8,padding:"8px 12px",marginBottom:12}}>{err}</div>}
-            <button onClick={goStudent} style={{width:"100%",background:"#1a2e6c",color:"#fff",border:"none",borderRadius:10,padding:13,fontSize:14,fontWeight:700,cursor:"pointer",marginBottom:12}}>Login →</button>
-            <button onClick={()=>{setMode("student-register");setErr("");}} style={{width:"100%",background:"#f8fafc",color:"#64748b",border:"1.5px solid #e2e8f0",borderRadius:10,padding:11,fontSize:13,fontWeight:600,cursor:"pointer"}}>New Student? Register here</button>
-          </div>
-        )}
-        {mode==="student-register"&&(
-          <div style={{background:"#fff",borderRadius:20,padding:32,boxShadow:"0 24px 60px rgba(0,0,0,.3)"}}>
-            <button onClick={()=>{setMode("student");setErr("");}} style={{background:"none",border:"none",cursor:"pointer",color:"#64748b",fontSize:13,marginBottom:16}}>← Back</button>
-            <div style={{fontSize:18,fontWeight:700,color:"#1a2e6c",marginBottom:4}}>Student Registration</div>
-            <div style={{fontSize:12,color:"#64748b",marginBottom:20}}>Register once with your roll number and create a PIN</div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 80px",gap:10,marginBottom:14}}>
-              <div><Lbl c="Class"/><Sel value={sCls} onChange={setsCls} options={SCHOOL.classes}/></div>
-              <div><Lbl c="Section"/><Sel value={sSec} onChange={setsSec} options={SCHOOL.sections}/></div>
-            </div>
-            <div style={{marginBottom:14}}><Lbl c="Roll Number"/><Sel value={sRoll} onChange={setSRoll} options={[{v:"",l:"Select Roll No"},...rollOpts]}/></div>
-            <Inp label="Your Full Name" value={regName} onChange={setRegName} placeholder="Enter your full name"/>
-            <Inp label="Create PIN (min 4 digits)" value={regPin} onChange={setRegPin} type="password" placeholder="Choose a PIN"/>
-            <Inp label="Confirm PIN" value={regConfirm} onChange={setRegConfirm} type="password" placeholder="Re-enter PIN"/>
-            {err&&<div style={{fontSize:12,color:"#dc2626",background:"#fee2e2",borderRadius:8,padding:"8px 12px",marginBottom:12}}>{err}</div>}
-            <button onClick={goRegister} disabled={regLoading} style={{width:"100%",background:"#1a2e6c",color:"#fff",border:"none",borderRadius:10,padding:13,fontSize:14,fontWeight:700,cursor:"pointer"}}>{regLoading?"Registering…":"Register & Login →"}</button>
-          </div>
-        )}
+        <div style={{background:"#fff",borderRadius:20,padding:36,boxShadow:"0 24px 60px rgba(0,0,0,.3)"}}>
+          <div style={{fontSize:18,fontWeight:700,color:"#1a2e6c",marginBottom:4}}>Sign In</div>
+          <div style={{fontSize:12,color:"#64748b",marginBottom:24}}>Enter your username and password</div>
+          <Inp label="Username" value={u} onChange={setU} placeholder="e.g. maths6"/>
+          <Inp label="Password" value={p} onChange={setP} type="password" placeholder="••••••••"/>
+          {err&&<div style={{fontSize:12,color:"#dc2626",background:"#fee2e2",borderRadius:8,padding:"8px 12px",marginBottom:12}}>{err}</div>}
+          <button onClick={go} style={{width:"100%",background:"#1a2e6c",color:"#fff",border:"none",borderRadius:10,padding:13,fontSize:14,fontWeight:700,cursor:"pointer",marginTop:4}}>Sign In →</button>
+        </div>
       </div>
+    </div>
+  );
+}
+
+// ── DASHBOARD ──
+function Dashboard({user,testsDB,studentsDB,attendanceDB,setTab}){
+  const isAdmin=user.role==="admin";
+  const totalStudents=Object.values(studentsDB.data).reduce((a,b)=>a+(b?.list||[]).length,0);
+  const totalTests=Object.keys(testsDB.data).length;
+  const todayStr=today();
+  const todayAttendance=Object.values(attendanceDB.data).filter(a=>a.date===todayStr);
+  const classesMarkedToday=[...new Set(todayAttendance.map(a=>a.cls))].length;
+  const recentTests=Object.values(testsDB.data).sort((a,b)=>(b.at||"").localeCompare(a.at||"")).slice(0,5);
+  const problemTopics=useMemo(()=>{
+    const m={};
+    Object.values(testsDB.data).forEach(t=>{
+      const students=studentsDB.data[safeId(t.cls)]?.list||[];
+      if(!students.length)return;
+      const fc=students.filter(s=>pct(Number(t.rows?.[s]??0),t.total)<50).length;
+      if(fc>=students.length*.4)(t.topics||[]).forEach(tp=>{m[tp]=(m[tp]||0)+1;});
+    });
+    return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,3);
+  },[testsDB.data,studentsDB.data]);
+
+  return(
+    <div className="fi" style={{display:"flex",flexDirection:"column",gap:20}}>
+      {/* Welcome */}
+      <div style={{background:"linear-gradient(135deg,#1a2e6c,#1d4ed8)",borderRadius:16,padding:"24px 28px",color:"#fff",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div>
+          <div style={{fontSize:12,color:"rgba(255,255,255,.5)",letterSpacing:1}}>Welcome back,</div>
+          <div style={{fontSize:22,fontWeight:800,marginTop:2}}>{user.name}</div>
+          <div style={{fontSize:12,color:"rgba(255,255,255,.6)",marginTop:4}}>{new Date().toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div>
+        </div>
+        <img src={LOGO} alt="logo" style={{width:64,height:64,objectFit:"contain",opacity:0.85}}/>
+      </div>
+
+      {/* Stats */}
+      <div className="grid4" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14}}>
+        <StatCard label="Total Students" val={totalStudents} icon="👨‍🎓" color="#1a2e6c" sub="Across all classes" onClick={()=>setTab("students")}/>
+        <StatCard label="Tests Recorded" val={totalTests} icon="📋" color="#1d4ed8" sub="All subjects" onClick={()=>setTab("class")}/>
+        <StatCard label="Attendance Today" val={classesMarkedToday} icon="✅" color="#16a34a" sub={`${SCHOOL.classes.length - classesMarkedToday} classes pending`} onClick={()=>setTab("attendance")}/>
+        <StatCard label="Problem Topics" val={problemTopics.length} icon="⚠️" color={problemTopics.length>0?"#dc2626":"#16a34a"} sub="Needs revision" onClick={()=>setTab("class")}/>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+        {/* Recent Tests */}
+        <Card>
+          <div style={{padding:"14px 20px",borderBottom:"1.5px solid #e2e8f0",background:"#f8fafc",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{fontWeight:700,fontSize:14,color:"#1a2e6c"}}>📝 Recent Tests</div>
+            <button onClick={()=>setTab("class")} style={{fontSize:12,color:"#1d4ed8",background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View All →</button>
+          </div>
+          {recentTests.length===0?<div style={{padding:24,textAlign:"center",color:"#94a3b8",fontSize:13}}>No tests yet</div>:
+            recentTests.map((t,i)=>(
+              <div key={i} style={{padding:"11px 20px",borderBottom:i<recentTests.length-1?"1px solid #f1f5f9":"none",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <div style={{fontSize:13,fontWeight:600,color:"#1e293b"}}>{t.cls} · {t.subj}</div>
+                  <div style={{fontSize:11,color:"#64748b",marginTop:2}}>Week {t.week} · {t.by||"—"} · {fmtDate(t.testDate)}</div>
+                </div>
+                <div style={{fontSize:11,color:"#64748b"}}>{Object.keys(t.rows||{}).length} students</div>
+              </div>
+            ))
+          }
+        </Card>
+
+        {/* Problem Topics */}
+        <Card>
+          <div style={{padding:"14px 20px",borderBottom:"1.5px solid #e2e8f0",background:"#f8fafc"}}>
+            <div style={{fontWeight:700,fontSize:14,color:"#1a2e6c"}}>⚠️ Top Problem Topics</div>
+          </div>
+          {problemTopics.length===0?<div style={{padding:24,textAlign:"center",color:"#94a3b8",fontSize:13}}>No problem areas detected</div>:
+            problemTopics.map(([tp,cnt],i)=>(
+              <div key={tp} style={{padding:"12px 20px",borderBottom:i<problemTopics.length-1?"1px solid #f1f5f9":"none",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div style={{fontWeight:600,color:"#c2410c",fontSize:13}}>📚 {tp}</div>
+                <span style={{background:"#fee2e2",color:"#dc2626",borderRadius:6,padding:"2px 10px",fontSize:11,fontWeight:700}}>{cnt} test{cnt>1?"s":""}</span>
+              </div>
+            ))
+          }
+          {problemTopics.length===0&&<div style={{padding:"12px 20px",fontSize:13,color:"#16a34a",fontWeight:600,textAlign:"center"}}>✅ All topics performing well!</div>}
+        </Card>
+      </div>
+
+      {/* Quick Actions */}
+      <Card style={{padding:20}}>
+        <div style={{fontWeight:700,fontSize:14,color:"#1a2e6c",marginBottom:14}}>Quick Actions</div>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+          {[
+            {label:"Enter Marks",icon:"✏️",tab:"enter",color:"#1a2e6c"},
+            {label:"Attendance",icon:"✅",tab:"attendance",color:"#16a34a"},
+            {label:"Class Progress",icon:"📊",tab:"class",color:"#1d4ed8"},
+            {label:"Student Report",icon:"👤",tab:"student",color:"#7c3aed"},
+            ...(isAdmin?[{label:"Admin Panel",icon:"⚙️",tab:"admin",color:"#d97706"}]:[]),
+          ].map(a=>(
+            <button key={a.tab} onClick={()=>setTab(a.tab)} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 18px",borderRadius:10,border:`1.5px solid ${a.color}22`,background:`${a.color}11`,color:a.color,fontFamily:"Sora,sans-serif",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+              <span>{a.icon}</span>{a.label}
+            </button>
+          ))}
+        </div>
+      </Card>
     </div>
   );
 }
@@ -616,8 +634,7 @@ function ClassProgress({user,testsDB,studentsDB}){
   const rTests=useMemo(()=>Object.values(testsDB.data).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week),[testsDB.data,cls,subj]);
   const stats=useMemo(()=>students.map(s=>{const sc=rTests.map(t=>({week:t.week,p:pct(Number(t.rows?.[s]??0),t.total),date:t.testDate}));const avg=sc.length?Math.round(sc.reduce((a,b)=>a+b.p,0)/sc.length):null;const trend=sc.length>=2?sc[sc.length-1].p-sc[0].p:0;return{name:s,sc,avg,trend};}),[students,rTests]);
   const classAvg=useMemo(()=>{const all=stats.flatMap(s=>s.sc.map(x=>x.p));return all.length?Math.round(all.reduce((a,b)=>a+b,0)/all.length):null;},[stats]);
-  const rolls=Array.from({length:SCHOOL.totalRolls},(_,i)=>i+1);
-  const problemTopics=useMemo(()=>{const m={};rTests.forEach(t=>{const fc=rolls.filter(r=>pct(Number(t.rows?.[r]??0),t.total)<50).length;if(fc>=rolls.length*.4)(t.topics||[]).forEach(tp=>{m[tp]=(m[tp]||0)+1;});});return Object.entries(m).sort((a,b)=>b[1]-a[1]);},[rTests]);
+  const problemTopics=useMemo(()=>{const m={};rTests.forEach(t=>{const fc=students.filter(s=>pct(Number(t.rows?.[s]??0),t.total)<50).length;if(fc>=students.length*.4)(t.topics||[]).forEach(tp=>{m[tp]=(m[tp]||0)+1;});});return Object.entries(m).sort((a,b)=>b[1]-a[1]);},[rTests,students]);
   const printReport=()=>{
     const w=window.open("","_blank");
     const rows=[...stats].sort((a,b)=>(b.avg??-1)-(a.avg??-1));
@@ -696,51 +713,53 @@ function ClassProgress({user,testsDB,studentsDB}){
 // ── STUDENT REPORT ──
 function StudentReport({user,testsDB,studentsDB}){
   const aC=user.role==="admin"?SCHOOL.classes:(user.classes||SCHOOL.classes);
-  const aS=user.role==="admin"?SCHOOL.sections:(user.sections||SCHOOL.sections);
   const[cls,setCls]=useState(aC[0]);
-  const[sec,setSec]=useState(aS[0]);
-  const[roll,setRoll]=useState(1);
-  const sData=studentsDB.data[studentId(cls,sec,roll)];
+  const students=studentsDB.data[safeId(cls)]?.list||[];
+  const[student,setStudent]=useState(students[0]||"");
+  const[search,setSearch]=useState("");
+  useEffect(()=>setStudent((studentsDB.data[safeId(cls)]?.list||[])[0]||""),[cls,studentsDB.data]);
   const subjects=SCHOOL.subjects[cls]||[];
   const sd=useMemo(()=>subjects.map(subj=>{
-    const rel=Object.values(testsDB.data).filter(t=>t.cls===cls&&t.section===sec&&t.subj===subj).sort((a,b)=>a.week-b.week);
-    const sc=rel.map(t=>({week:t.week,p:pct(Number(t.rows?.[roll]??0),t.total),topics:t.topics||[],date:t.testDate}));
+    const rel=Object.values(testsDB.data).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week);
+    const sc=rel.map(t=>({week:t.week,p:pct(Number(t.rows?.[student]??0),t.total),topics:t.topics||[],date:t.testDate}));
     const avg=sc.length?Math.round(sc.reduce((a,b)=>a+b.p,0)/sc.length):null;
     const trend=sc.length>=2?sc[sc.length-1].p-sc[0].p:null;
     const weak=[...new Set(sc.filter(x=>x.p<50).flatMap(x=>x.topics))];
     return{subj,sc,avg,trend,weak};
-  }),[cls,sec,roll,testsDB.data,subjects]);
+  }),[cls,student,testsDB.data,subjects]);
   const overall=useMemo(()=>{const a=sd.filter(x=>x.avg!==null).map(x=>x.avg);return a.length?Math.round(a.reduce((x,y)=>x+y,0)/a.length):null;},[sd]);
+  const rollNo=students.indexOf(student)+1;
   if(testsDB.loading||studentsDB.loading)return<Spinner/>;
-  const rollOpts=Array.from({length:SCHOOL.totalRolls},(_,i)=>({v:i+1,l:`Roll ${i+1}${studentsDB.data[studentId(cls,sec,i+1)]?.name?" — "+studentsDB.data[studentId(cls,sec,i+1)].name:""}`}));
   return(
     <div className="fi" style={{display:"flex",flexDirection:"column",gap:18}}>
       <Card style={{padding:18}}>
-        <div style={{display:"flex",gap:12,alignItems:"flex-end",flexWrap:"wrap"}}>
-          <div style={{flex:1,minWidth:100}}><Lbl c="Class"/><Sel value={cls} onChange={v=>{setCls(v);setRoll(1);}} options={aC}/></div>
-          <div style={{width:90}}><Lbl c="Section"/><Sel value={sec} onChange={v=>{setSec(v);setRoll(1);}} options={aS}/></div>
-          <div style={{flex:2,minWidth:140}}><Lbl c="Roll Number"/><Sel value={roll} onChange={v=>setRoll(Number(v))} options={rollOpts}/></div>
-          <Btn onClick={()=>window.print()} v="ghost">🖨️ Print</Btn>
+        <div style={{display:"flex",gap:14,alignItems:"flex-end",flexWrap:"wrap"}}>
+          <div style={{flex:1,minWidth:120}}><Lbl c="Class"/><Sel value={cls} onChange={setCls} options={aC}/></div>
+          <div style={{flex:2,minWidth:160}}>
+            <Lbl c="Student"/>
+            {students.length===0?<div style={{padding:"9px 14px",borderRadius:9,border:"1.5px solid #e2e8f0",background:"#f8fafc",fontSize:13,color:"#94a3b8"}}>No students in {cls}</div>
+            :<Sel value={student} onChange={setStudent} options={students}/>}
+          </div>
+          <Btn onClick={()=>{const w=window.open("","_blank");w.document.write(`<html><head><title>${student}</title><style>body{font-family:Arial;padding:20px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:8px}th{background:#1a2e6c;color:#fff}h2{color:#1a2e6c}.good{color:#16a34a}.bad{color:#dc2626}</style></head><body><h2>Stepping Stone Inter College</h2><h3>${student} — ${cls} (Roll No: ${rollNo})</h3><p>Overall Average: ${overall??'—'}%</p><table><tr><th>Subject</th><th>Tests</th><th>Average</th><th>Grade</th><th>Weak Topics</th></tr>${sd.map(s=>`<tr><td>${s.subj}</td><td>${s.sc.length}</td><td class="${s.avg>=60?"good":"bad"}">${s.avg??'—'}%</td><td>${s.avg?gradeOf(s.avg).l:"—"}</td><td>${s.weak.join(", ")||"None"}</td></tr>`).join("")}</table><p style="color:#94a3b8;font-size:11px;margin-top:20px">Generated by Rajvansh Gupta, Director — Stepping Stone Inter College</p></body></html>`);w.document.close();w.print();}} v="ghost">🖨️ Print</Btn>
         </div>
-        {sData&&<div style={{marginTop:12,padding:"10px 14px",background:"#f0f9ff",borderRadius:9,border:"1.5px solid #bae6fd",fontSize:13,color:"#0369a1",fontWeight:600}}>{sData.name} · Roll {roll} · {cls} Section {sec}</div>}
       </Card>
       {overall!==null&&(
         <div className="grid3" style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14}}>
-          <StatCard label="Overall Average" val={overall+"%"} icon="📊" color={gradeOf(overall).c} sub={gradeOf(overall).l+" Grade"}/>
+          <StatCard label="Overall Average" val={overall+"%"} icon="📊" color={gradeOf(overall).c} sub={`${gradeOf(overall).l} Grade · Roll No: ${rollNo}`}/>
           <StatCard label="Best Subject" val={[...sd].filter(s=>s.avg!==null).sort((a,b)=>b.avg-a.avg)[0]?.subj.split(" ")[0]||"—"} icon="⭐" color="#d97706" sub={[...sd].filter(s=>s.avg!==null).sort((a,b)=>b.avg-a.avg)[0]?.avg+"%"}/>
           <StatCard label="Needs Work" val={[...sd].filter(s=>s.avg!==null).sort((a,b)=>a.avg-b.avg)[0]?.subj.split(" ")[0]||"—"} icon="📌" color="#dc2626" sub={[...sd].filter(s=>s.avg!==null).sort((a,b)=>a.avg-b.avg)[0]?.avg+"%"}/>
         </div>
       )}
       <Card>
         <div style={{padding:"14px 20px",borderBottom:"1.5px solid #e2e8f0",background:"#f8fafc"}}>
-          <div style={{fontWeight:700,fontSize:14,color:"#1a2e6c"}}>Subject Report — {sData?.name||`Roll ${roll}`} · {cls} {sec}</div>
+          <div style={{fontWeight:700,fontSize:14,color:"#1a2e6c"}}>Subject Report — {student||"Select student"} · {cls}{rollNo>0?` (Roll ${rollNo})`:""}</div>
         </div>
         {sd.map((s,i)=>(
           <div key={s.subj} style={{padding:"16px 20px",borderBottom:i<sd.length-1?"1px solid #f1f5f9":"none",background:i%2===0?"#fff":"#fafbfd"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:s.avg!==null?10:0,flexWrap:"wrap",gap:8}}>
               <div>
                 <div style={{fontWeight:700,fontSize:14,color:"#1e293b"}}>{s.subj}</div>
-                {s.weak.length>0&&<div style={{fontSize:11,color:"#dc2626",marginTop:3}}>⚠ Weak topics: {s.weak.join(", ")}</div>}
+                {s.weak.length>0&&<div style={{fontSize:11,color:"#dc2626",marginTop:3}}>⚠ Revise: {s.weak.join(", ")}</div>}
               </div>
               <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
                 {s.sc.map(sc=>{const g=gradeOf(sc.p);return<div key={sc.week} style={{textAlign:"center"}}><div style={{fontSize:9,color:"#94a3b8"}}>W{sc.week}</div><div style={{fontSize:9,color:"#cbd5e1"}}>{fmtDate(sc.date)}</div><div style={{fontSize:12,fontWeight:700,color:g.c,fontFamily:"monospace"}}>{sc.p}%</div></div>;})}
@@ -756,26 +775,28 @@ function StudentReport({user,testsDB,studentsDB}){
   );
 }
 
+// ── PARENT VIEW ──
 function ParentView({user,testsDB,studentsDB}){
-  const{cls,section,roll}=user;
-  const sData=studentsDB.data[studentId(cls,section,roll)];
+  const{student,cls}=user;
+  const students=studentsDB.data[safeId(cls)]?.list||[];
+  const rollNo=students.indexOf(student)+1;
   const subjects=SCHOOL.subjects[cls]||[];
   const sd=useMemo(()=>subjects.map(subj=>{
-    const rel=Object.values(testsDB.data).filter(t=>t.cls===cls&&t.section===section&&t.subj===subj).sort((a,b)=>a.week-b.week);
-    const sc=rel.map(t=>({week:t.week,p:pct(Number(t.rows?.[roll]??0),t.total),topics:t.topics||[],date:t.testDate}));
+    const rel=Object.values(testsDB.data).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week);
+    const sc=rel.map(t=>({week:t.week,p:pct(Number(t.rows?.[student]??0),t.total),topics:t.topics||[],date:t.testDate}));
     const avg=sc.length?Math.round(sc.reduce((a,b)=>a+b.p,0)/sc.length):null;
     const trend=sc.length>=2?sc[sc.length-1].p-sc[0].p:null;
     const weak=[...new Set(sc.filter(x=>x.p<50).flatMap(x=>x.topics))];
     return{subj,sc,avg,trend,weak};
-  }),[cls,section,roll,testsDB.data,subjects]);
+  }),[student,cls,testsDB.data,subjects]);
   const overall=useMemo(()=>{const a=sd.filter(x=>x.avg!==null).map(x=>x.avg);return a.length?Math.round(a.reduce((x,y)=>x+y,0)/a.length):null;},[sd]);
   if(testsDB.loading)return<Spinner/>;
   return(
     <div className="fi" style={{display:"flex",flexDirection:"column",gap:18}}>
       <div style={{background:"linear-gradient(135deg,#1a2e6c,#1d4ed8)",borderRadius:16,padding:"28px",color:"#fff"}}>
-        <div style={{fontSize:11,color:"rgba(255,255,255,.5)",letterSpacing:2,textTransform:"uppercase"}}>Parent Portal</div>
+        <div style={{fontSize:11,color:"rgba(255,255,255,.5)",letterSpacing:2,textTransform:"uppercase"}}>Welcome</div>
         <div style={{fontSize:22,fontWeight:800,marginTop:4}}>{user.name}</div>
-        <div style={{fontSize:13,color:"rgba(255,255,255,.6)",marginTop:6}}>{sData?.name||`Roll ${roll}`} · {cls} Section {section} · Roll No. {roll}</div>
+        <div style={{fontSize:13,color:"rgba(255,255,255,.6)",marginTop:6}}>Report for <strong style={{color:"#fff"}}>{student}</strong> · {cls}{rollNo>0?` · Roll No: ${rollNo}`:""}</div>
         {overall!==null&&<div style={{marginTop:16,display:"inline-flex",alignItems:"center",gap:12,background:"rgba(255,255,255,.12)",borderRadius:10,padding:"10px 18px"}}>
           <div style={{fontSize:10,color:"rgba(255,255,255,.6)",textTransform:"uppercase",letterSpacing:1}}>Overall</div>
           <div style={{fontSize:26,fontWeight:800,fontFamily:"monospace",color:gradeOf(overall).c}}>{overall}%</div>
@@ -792,10 +813,10 @@ function ParentView({user,testsDB,studentsDB}){
               </div>
               {s.avg!==null&&<div style={{marginBottom:12}}><Bar p={s.avg}/></div>}
               <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                {s.sc.map(sc=>{const g=gradeOf(sc.p);return<div key={sc.week} style={{background:g.bg,borderRadius:8,padding:"6px 10px",textAlign:"center"}}><div style={{fontSize:9,color:g.c,fontWeight:700}}>Wk {sc.week}</div><div style={{fontSize:14,fontWeight:800,color:g.c,fontFamily:"monospace"}}>{sc.p}%</div></div>;})}
+                {s.sc.map(sc=>{const g=gradeOf(sc.p);return<div key={sc.week} style={{background:g.bg,borderRadius:8,padding:"6px 10px",textAlign:"center"}}><div style={{fontSize:9,color:g.c,fontWeight:700}}>Wk {sc.week}</div><div style={{fontSize:9,color:g.c,opacity:0.7}}>{fmtDate(sc.date)}</div><div style={{fontSize:14,fontWeight:800,color:g.c,fontFamily:"monospace"}}>{sc.p}%</div></div>;})}
               </div>
-              {s.weak.length>0&&<div style={{marginTop:12,background:"#fff7ed",borderRadius:8,padding:"8px 12px"}}><div style={{fontSize:11,color:"#c2410c",fontWeight:600}}>Weak topics: {s.weak.join(", ")}</div></div>}
-              {s.trend!==null&&<div style={{marginTop:8,fontSize:12,color:"#64748b"}}>Progress: <strong style={{color:s.trend>0?"#16a34a":s.trend<-5?"#dc2626":"#64748b"}}>{s.trend>0?`Improving ↑`:s.trend<-5?`Declining ↓`:"Stable →"}</strong></div>}
+              {s.weak.length>0&&<div style={{marginTop:12,background:"#fff7ed",borderRadius:8,padding:"8px 12px"}}><div style={{fontSize:11,color:"#c2410c",fontWeight:600}}>Revise: {s.weak.join(", ")}</div></div>}
+              {s.trend!==null&&<div style={{marginTop:8,fontSize:12,color:"#64748b"}}>Progress: <strong style={{color:s.trend>0?"#16a34a":s.trend<-5?"#dc2626":"#64748b"}}>{s.trend>0?`Improving ↑ +${s.trend}%`:s.trend<-5?`Declining ↓ ${s.trend}%`:"Stable →"}</strong></div>}
             </Card>
           ))}
         </div>
@@ -983,80 +1004,89 @@ function AccountSettings({user,usersDB,onUpdate}){
   );
 }
 
-
-// ── DASHBOARD ──
-function Dashboard({user,testsDB,studentsDB,attendanceDB,setTab}){
-  const isAdmin=user.role==="admin";
-  const totalStudents=Object.keys(studentsDB.data).length;
-  const totalTests=Object.keys(testsDB.data).length;
-  const todayStr=today();
-  const classesMarkedToday=[...new Set(Object.values(attendanceDB.data).filter(a=>a.date===todayStr).map(a=>`${a.cls}${a.section}`))].length;
-  const recentTests=Object.values(testsDB.data).sort((a,b)=>(b.at||"").localeCompare(a.at||"")).slice(0,5);
-  const problemTopics=useMemo(()=>{
-    const m={};
-    Object.values(testsDB.data).forEach(t=>{
-      const rolls=Array.from({length:SCHOOL.totalRolls},(_,i)=>i+1);
-      const fc=rolls.filter(r=>pct(Number(t.rows?.[r]??0),t.total)<50).length;
-      if(fc>=rolls.length*.4)(t.topics||[]).forEach(tp=>{m[tp]=(m[tp]||0)+1;});
-    });
-    return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,3);
-  },[testsDB.data]);
+// ── ROOT APP ──
+function App(){
+  const[user,setUser]=useState(null);
+  const[tab,setTab]=useState("dashboard");
+  const testsDB=useFirestore("tests");
+  const topicsDB=useFirestore("topics");
+  const studentsDB=useFirestore("students");
+  const attendanceDB=useFirestore("attendance");
+  const usersDB=useFirestore("users");
+  const handleUpdateUser=updated=>setUser(updated);
+  if(!user)return<Login onLogin={u=>{setUser(u);setTab(u.role==="parent"?"parent":"dashboard");}} usersDB={usersDB}/>;
+  const isParent=user.role==="parent",isAdmin=user.role==="admin";
+  const tabs=isParent?[
+    {id:"parent",label:"My Child",icon:"👨‍👩‍👦"},
+    {id:"account",label:"Account",icon:"🔐"},
+  ]:[
+    {id:"dashboard",label:"Dashboard",icon:"🏠"},
+    {id:"students",label:"Students",icon:"👨‍🎓"},
+    {id:"topics",label:"Topics",icon:"📝"},
+    {id:"attendance",label:"Attendance",icon:"✅"},
+    {id:"enter",label:"Enter Marks",icon:"✏️"},
+    {id:"class",label:"Progress",icon:"📊"},
+    {id:"student",label:"Report",icon:"👤"},
+    ...(isAdmin?[{id:"admin",label:"Admin",icon:"⚙️"}]:[]),
+    {id:"ai",label:"AI",icon:"🤖"},
+    {id:"account",label:"Account",icon:"🔐"},
+  ];
   return(
-    <div className="fi" style={{display:"flex",flexDirection:"column",gap:20}}>
-      <div style={{background:"linear-gradient(135deg,#1a2e6c,#1d4ed8)",borderRadius:16,padding:"24px 28px",color:"#fff",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:16}}>
-        <div>
-          <div style={{fontSize:12,color:"rgba(255,255,255,.5)",letterSpacing:1}}>Welcome back,</div>
-          <div style={{fontSize:22,fontWeight:800,marginTop:2}}>{user.name}</div>
-          <div style={{fontSize:12,color:"rgba(255,255,255,.6)",marginTop:4}}>{new Date().toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div>
-        </div>
-        <img src={LOGO} alt="logo" style={{width:60,height:60,objectFit:"contain",opacity:0.85}}/>
-      </div>
-      <div className="grid4" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14}}>
-        <StatCard label="Registered Students" val={totalStudents} icon="👨‍🎓" color="#1a2e6c" sub="Self-registered" onClick={()=>setTab("students")}/>
-        <StatCard label="Tests Recorded" val={totalTests} icon="📋" color="#1d4ed8" sub="All sections" onClick={()=>setTab("class")}/>
-        <StatCard label="Sections Today" val={classesMarkedToday} icon="✅" color="#16a34a" sub="Attendance marked" onClick={()=>setTab("attendance")}/>
-        <StatCard label="Problem Topics" val={problemTopics.length} icon="⚠️" color={problemTopics.length>0?"#dc2626":"#16a34a"} sub="School-wide" onClick={()=>setTab("class")}/>
-      </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
-        <Card>
-          <div style={{padding:"14px 20px",borderBottom:"1.5px solid #e2e8f0",background:"#f8fafc",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div style={{fontWeight:700,fontSize:14,color:"#1a2e6c"}}>Recent Tests</div>
-            <button onClick={()=>setTab("class")} style={{fontSize:12,color:"#1d4ed8",background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View All</button>
+    <div style={{minHeight:"100vh",background:"#eef1f6"}}>
+      {/* Header */}
+      <div style={{background:"#1a2e6c",color:"#fff",padding:"0 20px",height:56,display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:"3px solid #2563eb",position:"sticky",top:0,zIndex:100,boxShadow:"0 4px 20px rgba(0,0,0,.25)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <img src={LOGO} alt="logo" style={{width:34,height:34,objectFit:"contain"}}/>
+          <div>
+            <div style={{fontSize:12,fontWeight:800,letterSpacing:-0.3}}>Stepping Stone Inter College</div>
+            <div style={{fontSize:9,color:"rgba(255,255,255,.45)",letterSpacing:1}}>Weekly Test Tracker</div>
           </div>
-          {recentTests.length===0?<div style={{padding:24,textAlign:"center",color:"#94a3b8",fontSize:13}}>No tests yet</div>:
-            recentTests.map((t,i)=>(
-              <div key={i} style={{padding:"11px 20px",borderBottom:i<recentTests.length-1?"1px solid #f1f5f9":"none",display:"flex",justifyContent:"space-between"}}>
-                <div>
-                  <div style={{fontSize:13,fontWeight:600,color:"#1e293b"}}>{t.cls} {t.section} - {t.subj}</div>
-                  <div style={{fontSize:11,color:"#64748b",marginTop:2}}>Week {t.week} · {t.by} · {fmtDate(t.testDate)}</div>
-                </div>
-              </div>
-            ))
-          }
-        </Card>
-        <Card>
-          <div style={{padding:"14px 20px",borderBottom:"1.5px solid #e2e8f0",background:"#f8fafc"}}><div style={{fontWeight:700,fontSize:14,color:"#1a2e6c"}}>Problem Topics</div></div>
-          {problemTopics.length===0?<div style={{padding:24,textAlign:"center",color:"#16a34a",fontSize:13,fontWeight:600}}>All topics performing well!</div>:
-            problemTopics.map(([tp,cnt],i)=>(
-              <div key={tp} style={{padding:"12px 20px",borderBottom:i<problemTopics.length-1?"1px solid #f1f5f9":"none",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <div style={{fontWeight:600,color:"#c2410c",fontSize:13}}>📚 {tp}</div>
-                <span style={{background:"#fee2e2",color:"#dc2626",borderRadius:6,padding:"2px 10px",fontSize:11,fontWeight:700}}>{cnt} test{cnt>1?"s":""}</span>
-              </div>
-            ))
-          }
-        </Card>
-      </div>
-      <Card style={{padding:20}}>
-        <div style={{fontWeight:700,fontSize:14,color:"#1a2e6c",marginBottom:14}}>Quick Actions</div>
-        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-          {[{label:"Enter Marks",icon:"✏️",tab:"enter",color:"#1a2e6c"},{label:"Attendance",icon:"✅",tab:"attendance",color:"#16a34a"},{label:"Progress",icon:"📊",tab:"class",color:"#1d4ed8"},{label:"AI Assistant",icon:"🤖",tab:"ai",color:"#3730a3"},
-          ...(isAdmin?[{label:"Admin",icon:"⚙️",tab:"admin",color:"#d97706"}]:[])].map(a=>(
-            <button key={a.tab} onClick={()=>setTab(a.tab)} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 18px",borderRadius:10,border:`1.5px solid ${a.color}22`,background:`${a.color}11`,color:a.color,fontFamily:"Sora,sans-serif",fontSize:13,fontWeight:600,cursor:"pointer"}}>
-              <span>{a.icon}</span>{a.label}
-            </button>
-          ))}
         </div>
-      </Card>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <div style={{textAlign:"right"}} className="hide-mobile">
+            <div style={{fontSize:12,fontWeight:600}}>{user.name}</div>
+            <div style={{fontSize:9,color:"rgba(255,255,255,.45)",textTransform:"capitalize"}}>{user.role}</div>
+          </div>
+          <button onClick={()=>{setUser(null);setTab("dashboard");}} style={{background:"rgba(255,255,255,.1)",color:"#fff",border:"1px solid rgba(255,255,255,.2)",borderRadius:8,padding:"5px 12px",fontSize:12,cursor:"pointer",fontWeight:600}}>Sign Out</button>
+        </div>
+      </div>
+      {/* Tabs */}
+      <div style={{background:"#fff",borderBottom:"1.5px solid #e2e8f0",display:"flex",padding:"0 20px",position:"sticky",top:56,zIndex:99,overflowX:"auto"}}>
+        {tabs.map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)} style={{padding:"12px 14px",border:"none",background:"none",fontSize:12,fontWeight:600,color:tab===t.id?"#1a2e6c":"#64748b",borderBottom:tab===t.id?"2.5px solid #1a2e6c":"2.5px solid transparent",cursor:"pointer",display:"flex",alignItems:"center",gap:5,transition:"all .15s",whiteSpace:"nowrap"}}>
+            <span>{t.icon}</span><span className="tab-label">{t.label}</span>
+          </button>
+        ))}
+      </div>
+      {/* Content */}
+      <div style={{maxWidth:1060,margin:"24px auto",padding:"0 16px 0"}}>
+        {tab==="dashboard"&&!isParent&&<Dashboard user={user} testsDB={testsDB} studentsDB={studentsDB} attendanceDB={attendanceDB} setTab={setTab}/>}
+        {tab==="students"&&!isParent&&<ManageStudents studentsDB={studentsDB}/>}
+        {tab==="topics"&&!isParent&&<ManageTopics topicsDB={topicsDB}/>}
+        {tab==="attendance"&&!isParent&&<Attendance user={user} attendanceDB={attendanceDB} studentsDB={studentsDB}/>}
+        {tab==="enter"&&!isParent&&<EnterMarks user={user} testsDB={testsDB} topicsDB={topicsDB} studentsDB={studentsDB}/>}
+        {tab==="class"&&!isParent&&<ClassProgress user={user} testsDB={testsDB} studentsDB={studentsDB}/>}
+        {tab==="student"&&!isParent&&<StudentReport user={user} testsDB={testsDB} studentsDB={studentsDB}/>}
+        {tab==="admin"&&isAdmin&&<AdminPanel testsDB={testsDB} studentsDB={studentsDB} usersDB={usersDB}/>}
+        {tab==="parent"&&isParent&&<ParentView user={user} testsDB={testsDB} studentsDB={studentsDB}/>}
+        {tab==="account"&&<AccountSettings user={user} usersDB={usersDB} onUpdate={handleUpdateUser}/> }
+        {tab==="ai"&&<AIPanel testsDB={testsDB} studentsDB={studentsDB} topicsDB={topicsDB}/>}
+      </div>
+      {/* Footer */}
+      <div style={{borderTop:"1px solid #e2e8f0",marginTop:40,padding:"18px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",background:"#fff",flexWrap:"wrap",gap:12}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <img src={LOGO} alt="logo" style={{width:26,height:26,objectFit:"contain",opacity:0.6}}/>
+          <div>
+            <div style={{fontSize:11,color:"#94a3b8"}}>Stepping Stone Inter College, Gorakhpur</div>
+            <div style={{fontSize:10,color:"#cbd5e1",marginTop:1}}>Weekly Test Tracker</div>
+          </div>
+        </div>
+        <div style={{textAlign:"right"}}>
+          <div style={{fontSize:11,color:"#94a3b8"}}>Designed &amp; Built by</div>
+          <div style={{fontSize:13,fontWeight:700,color:"#1a2e6c"}}>Rajvansh Gupta</div>
+          <div style={{fontSize:10,color:"#94a3b8",textTransform:"uppercase",letterSpacing:0.5}}>Director, Stepping Stone</div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1067,14 +1097,28 @@ async function askAI(prompt, maxTokens=800){
   try{
     const res = await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
-      headers:{"Content-Type":"application/json","x-api-key":AI_KEY,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:maxTokens,messages:[{role:"user",content:prompt}]})
+      headers:{
+        "Content-Type":"application/json",
+        "x-api-key":AI_KEY,
+        "anthropic-version":"2023-06-01",
+        "anthropic-dangerous-direct-browser-access":"true"
+      },
+      body:JSON.stringify({
+        model:"claude-haiku-4-5-20251001",
+        max_tokens:maxTokens,
+        messages:[{role:"user",content:prompt}]
+      })
     });
+    if(!res.ok){
+      const err = await res.json().catch(()=>({error:{message:"Unknown error"}}));
+      return "AI Error ("+res.status+"): "+(err?.error?.message||"Please try again.");
+    }
     const data = await res.json();
-    return data.content?.[0]?.text || "Could not generate response.";
-  }catch(e){return "AI error: "+e.message;}
+    return data.content?.[0]?.text || "No response generated.";
+  }catch(e){
+    return "Connection error: "+e.message+". Check your internet connection.";
+  }
 }
-
 
 // ── AI PANEL ──
 function AIPanel({testsDB, studentsDB, topicsDB}){
@@ -1189,7 +1233,7 @@ function AIPanel({testsDB, studentsDB, topicsDB}){
         <div>
           <div style={{fontSize:11,color:"rgba(255,255,255,.5)",letterSpacing:2,textTransform:"uppercase"}}>Powered by Claude AI</div>
           <div style={{fontSize:22,fontWeight:800,marginTop:4}}>🤖 AI Assistant</div>
-          <div style={{fontSize:13,color:"rgba(255,255,255,.6)",marginTop:4}}>Smart insights, study plans &amp; question papers</div>
+          <div style={{fontSize:13,color:"rgba(255,255,255,.6)",marginTop:4}}>Smart insights, study plans, question papers & more</div>
         </div>
         <div style={{fontSize:48,opacity:0.3}}>✨</div>
       </div>
@@ -1310,205 +1354,6 @@ function AIPanel({testsDB, studentsDB, topicsDB}){
           )}
         </Card>
       )}
-    </div>
-  );
-}
-
-
-
-// ── STUDENT PORTAL ──
-function StudentPortal({user,testsDB,studentsDB}){
-  const{cls,section,roll}=user;
-  const subjects=SCHOOL.subjects[cls]||[];
-  const sd=useMemo(()=>subjects.map(subj=>{
-    const rel=Object.values(testsDB.data).filter(t=>t.cls===cls&&t.section===section&&t.subj===subj).sort((a,b)=>a.week-b.week);
-    const sc=rel.map(t=>({week:t.week,p:pct(Number(t.rows?.[String(roll)]??0),t.total),date:t.testDate}));
-    const avg=sc.length?Math.round(sc.reduce((a,b)=>a+b.p,0)/sc.length):null;
-    const trend=sc.length>=2?sc[sc.length-1].p-sc[0].p:null;
-    return{subj,sc,avg,trend};
-  }),[cls,section,roll,testsDB.data,subjects]);
-  const overall=useMemo(()=>{const a=sd.filter(x=>x.avg!==null).map(x=>x.avg);return a.length?Math.round(a.reduce((x,y)=>x+y,0)/a.length):null;},[sd]);
-  const sData=studentsDB.data[studentId(cls,section,roll)];
-  if(testsDB.loading)return<Spinner/>;
-  return(
-    <div className="fi" style={{display:"flex",flexDirection:"column",gap:18}}>
-      <div style={{background:"linear-gradient(135deg,#1a2e6c,#1d4ed8)",borderRadius:16,padding:"28px",color:"#fff"}}>
-        <div style={{fontSize:11,color:"rgba(255,255,255,.5)",letterSpacing:2,textTransform:"uppercase"}}>Student Portal</div>
-        <div style={{fontSize:24,fontWeight:800,marginTop:4}}>{sData?.name||`Roll No. ${roll}`}</div>
-        <div style={{fontSize:13,color:"rgba(255,255,255,.6)",marginTop:6}}>{cls} Section {section} · Roll Number {roll}</div>
-        {overall!==null&&(
-          <div style={{marginTop:16,display:"inline-flex",alignItems:"center",gap:12,background:"rgba(255,255,255,.12)",borderRadius:10,padding:"10px 18px"}}>
-            <div style={{fontSize:10,color:"rgba(255,255,255,.6)",textTransform:"uppercase",letterSpacing:1}}>Overall Average</div>
-            <div style={{fontSize:26,fontWeight:800,fontFamily:"monospace",color:gradeOf(overall).c}}>{overall}%</div>
-            <div style={{fontSize:18,fontWeight:700}}>{gradeOf(overall).l}</div>
-          </div>
-        )}
-      </div>
-      {sd.filter(s=>s.sc.length>0).length===0?(
-        <Empty icon="📋" title="No test results yet" sub="Your results will appear here once your teacher enters marks."/>
-      ):(
-        <>
-          {overall!==null&&(
-            <div className="grid3" style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14}}>
-              <StatCard label="Overall Average" val={overall+"%"} icon="📊" color={gradeOf(overall).c} sub={gradeOf(overall).l+" Grade"}/>
-              <StatCard label="Best Subject" val={[...sd].filter(s=>s.avg!==null).sort((a,b)=>b.avg-a.avg)[0]?.subj.split(" ")[0]||"—"} icon="⭐" color="#d97706" sub={[...sd].filter(s=>s.avg!==null).sort((a,b)=>b.avg-a.avg)[0]?.avg+"%"}/>
-              <StatCard label="Needs Work" val={[...sd].filter(s=>s.avg!==null).sort((a,b)=>a.avg-b.avg)[0]?.subj.split(" ")[0]||"—"} icon="📌" color="#dc2626" sub={[...sd].filter(s=>s.avg!==null).sort((a,b)=>a.avg-b.avg)[0]?.avg+"%"}/>
-            </div>
-          )}
-          <Card>
-            <div style={{padding:"14px 20px",borderBottom:"1.5px solid #e2e8f0",background:"#f8fafc"}}><div style={{fontWeight:700,fontSize:14,color:"#1a2e6c"}}>My Subject-wise Results</div></div>
-            {sd.map((s,i)=>(
-              <div key={s.subj} style={{padding:"16px 20px",borderBottom:i<sd.length-1?"1px solid #f1f5f9":"none",background:i%2===0?"#fff":"#fafbfd"}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:s.avg!==null?10:0,flexWrap:"wrap",gap:8}}>
-                  <div style={{fontWeight:700,fontSize:14,color:"#1e293b"}}>{s.subj}</div>
-                  <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
-                    {s.sc.map(sc=>{const g=gradeOf(sc.p);return<div key={sc.week} style={{textAlign:"center"}}><div style={{fontSize:9,color:"#94a3b8"}}>W{sc.week}</div><div style={{fontSize:13,fontWeight:700,color:g.c,fontFamily:"monospace"}}>{sc.p}%</div></div>;})}
-                    {s.avg!==null?<GBadge p={s.avg}/>:<span style={{fontSize:12,color:"#cbd5e1"}}>No results yet</span>}
-                    {s.trend!==null&&<span style={{fontSize:12,fontWeight:700,color:s.trend>0?"#16a34a":s.trend<-5?"#dc2626":"#64748b"}}>{s.trend>0?`↑+${s.trend}%`:s.trend<-5?`↓${s.trend}%`:"→"}</span>}
-                  </div>
-                </div>
-                {s.avg!==null&&<Bar p={s.avg}/>}
-              </div>
-            ))}
-          </Card>
-        </>
-      )}
-    </div>
-  );
-}
-
-
-// ── STUDENT ACCOUNT ──
-function StudentAccount({user,studentsDB,onUpdate}){
-  const{cls,section,roll}=user;
-  const sid=studentId(cls,section,roll);
-  const[name,setName]=useState(user.name||"");
-  const[newPin,setNewPin]=useState("");const[confirmPin,setConfirmPin]=useState("");const[currentPin,setCurrentPin]=useState("");
-  const[err,setErr]=useState("");const[saved,setSaved]=useState(false);
-  const existing=studentsDB.data[sid];
-  const nameAlreadySet=existing?.nameSet;
-  const handleSave=async()=>{
-    setErr("");
-    if(!currentPin){setErr("Enter your current PIN.");return;}
-    if(currentPin!==existing?.pin){setErr("Current PIN is incorrect.");return;}
-    if(newPin&&newPin.length<4){setErr("PIN must be at least 4 digits.");return;}
-    if(newPin&&newPin!==confirmPin){setErr("PINs do not match.");return;}
-    if(!nameAlreadySet&&!name.trim()){setErr("Please enter your name.");return;}
-    const updated={...existing,pin:newPin||existing.pin,name:nameAlreadySet?existing.name:name.trim(),nameSet:true};
-    await studentsDB.set(sid,updated);
-    onUpdate({...user,name:updated.name});
-    setSaved(true);setNewPin("");setConfirmPin("");setCurrentPin("");
-    setTimeout(()=>setSaved(false),3000);
-  };
-  return(
-    <div className="fi" style={{display:"flex",flexDirection:"column",gap:18}}>
-      <Card style={{padding:24}}>
-        <div style={{fontWeight:700,fontSize:15,color:"#1a2e6c",marginBottom:4}}>👤 My Account</div>
-        <div style={{fontSize:13,color:"#64748b",marginBottom:20}}>{nameAlreadySet?"Change your PIN below.":"Set your name — you can only set this once."}</div>
-        <div style={{background:"#f0f9ff",border:"1.5px solid #bae6fd",borderRadius:10,padding:"12px 16px",marginBottom:20}}>
-          <div style={{fontSize:14,fontWeight:600,color:"#1e293b"}}>{cls} Section {section} · Roll No. {roll}</div>
-          {nameAlreadySet&&<div style={{fontSize:13,color:"#64748b",marginTop:2}}>Name: {existing?.name}</div>}
-        </div>
-        {!nameAlreadySet&&<Inp label="Your Full Name (set once, cannot change later)" value={name} onChange={setName} placeholder="Enter your full name"/>}
-        <Inp label="New PIN (leave blank to keep current)" value={newPin} onChange={setNewPin} type="password" placeholder="Min 4 digits"/>
-        <Inp label="Confirm New PIN" value={confirmPin} onChange={setConfirmPin} type="password" placeholder="Re-enter PIN"/>
-        <div style={{borderTop:"1.5px solid #f1f5f9",paddingTop:16,marginTop:4}}>
-          <Inp label="Current PIN (required to save)" value={currentPin} onChange={setCurrentPin} type="password" placeholder="Your current PIN"/>
-        </div>
-        {err&&<div style={{fontSize:12,color:"#dc2626",background:"#fee2e2",borderRadius:8,padding:"8px 12px",marginBottom:12}}>{err}</div>}
-        {saved&&<div style={{fontSize:12,color:"#16a34a",background:"#dcfce7",borderRadius:8,padding:"8px 12px",marginBottom:12}}>✓ Saved!</div>}
-        <Btn onClick={handleSave} style={{width:"100%",padding:12}}>Save Changes</Btn>
-      </Card>
-    </div>
-  );
-}
-
-
-// ── ROOT APP ──
-function App(){
-  const[user,setUser]=useState(null);
-  const[tab,setTab]=useState("dashboard");
-  const testsDB=useFirestore("tests");
-  const topicsDB=useFirestore("topics");
-  const studentsDB=useFirestore("students");
-  const attendanceDB=useFirestore("attendance");
-  const usersDB=useFirestore("users");
-  const handleUpdateUser=updated=>setUser(updated);
-  if(!user)return<Login onLogin={u=>{setUser(u);setTab(u.role==="parent"?"parent":"dashboard");}} usersDB={usersDB}/>;
-  const isStudent=user.role==="student",isParent=user.role==="parent",isAdmin=user.role==="admin",isStaff=!isStudent&&!isParent;
-  const tabs=isParent?[
-    {id:"parent",label:"My Child",icon:"👨‍👩‍👦"},
-    {id:"account",label:"Account",icon:"🔐"},
-  ]:[
-    {id:"dashboard",label:"Dashboard",icon:"🏠"},
-    {id:"students",label:"Students",icon:"👨‍🎓"},
-    {id:"topics",label:"Topics",icon:"📝"},
-    {id:"attendance",label:"Attendance",icon:"✅"},
-    {id:"enter",label:"Enter Marks",icon:"✏️"},
-    {id:"class",label:"Progress",icon:"📊"},
-    {id:"student",label:"Report",icon:"👤"},
-    ...(isAdmin?[{id:"admin",label:"Admin",icon:"⚙️"}]:[]),
-    {id:"ai",label:"AI",icon:"🤖"},
-    {id:"account",label:"Account",icon:"🔐"},
-  ];
-  return(
-    <div style={{minHeight:"100vh",background:"#eef1f6"}}>
-      {/* Header */}
-      <div style={{background:"#1a2e6c",color:"#fff",padding:"0 20px",height:56,display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:"3px solid #2563eb",position:"sticky",top:0,zIndex:100,boxShadow:"0 4px 20px rgba(0,0,0,.25)"}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <img src={LOGO} alt="logo" style={{width:34,height:34,objectFit:"contain"}}/>
-          <div>
-            <div style={{fontSize:12,fontWeight:800,letterSpacing:-0.3}}>Stepping Stone Inter College</div>
-            <div style={{fontSize:9,color:"rgba(255,255,255,.45)",letterSpacing:1}}>Weekly Test Tracker</div>
-          </div>
-        </div>
-        <div style={{display:"flex",alignItems:"center",gap:12}}>
-          <div style={{textAlign:"right"}} className="hide-mobile">
-            <div style={{fontSize:12,fontWeight:600}}>{user.name}</div>
-            <div style={{fontSize:9,color:"rgba(255,255,255,.45)",textTransform:"capitalize"}}>{user.role}</div>
-          </div>
-          <button onClick={()=>{setUser(null);setTab("dashboard");}} style={{background:"rgba(255,255,255,.1)",color:"#fff",border:"1px solid rgba(255,255,255,.2)",borderRadius:8,padding:"5px 12px",fontSize:12,cursor:"pointer",fontWeight:600}}>Sign Out</button>
-        </div>
-      </div>
-      {/* Tabs */}
-      <div style={{background:"#fff",borderBottom:"1.5px solid #e2e8f0",display:"flex",padding:"0 20px",position:"sticky",top:56,zIndex:99,overflowX:"auto"}}>
-        {tabs.map(t=>(
-          <button key={t.id} onClick={()=>setTab(t.id)} style={{padding:"12px 14px",border:"none",background:"none",fontSize:12,fontWeight:600,color:tab===t.id?"#1a2e6c":"#64748b",borderBottom:tab===t.id?"2.5px solid #1a2e6c":"2.5px solid transparent",cursor:"pointer",display:"flex",alignItems:"center",gap:5,transition:"all .15s",whiteSpace:"nowrap"}}>
-            <span>{t.icon}</span><span className="tab-label">{t.label}</span>
-          </button>
-        ))}
-      </div>
-      {/* Content */}
-      <div style={{maxWidth:1060,margin:"24px auto",padding:"0 16px 0"}}>
-        {tab==="dashboard"&&isStaff&&<Dashboard user={user} testsDB={testsDB} studentsDB={studentsDB} attendanceDB={attendanceDB} setTab={setTab}/>}
-        {tab==="students"&&isStaff&&<ManageStudents studentsDB={studentsDB}/>}
-        {tab==="topics"&&isStaff&&<ManageTopics topicsDB={topicsDB}/>}
-        {tab==="attendance"&&isStaff&&<Attendance user={user} attendanceDB={attendanceDB} studentsDB={studentsDB}/>}
-        {tab==="enter"&&isStaff&&<EnterMarks user={user} testsDB={testsDB} topicsDB={topicsDB} studentsDB={studentsDB}/>}
-        {tab==="class"&&isStaff&&<ClassProgress user={user} testsDB={testsDB} studentsDB={studentsDB}/>}
-        {tab==="student"&&isStaff&&<StudentReport user={user} testsDB={testsDB} studentsDB={studentsDB}/>}
-        {tab==="admin"&&isAdmin&&<AdminPanel testsDB={testsDB} studentsDB={studentsDB} usersDB={usersDB}/>}
-        {tab==="parent"&&isParent&&<ParentView user={user} testsDB={testsDB} studentsDB={studentsDB}/>}
-        {tab==="account"&&isStaff&&<AccountSettings user={user} usersDB={usersDB} onUpdate={handleUpdateUser}/>}
-        {tab==="ai"&&isStaff&&<AIPanel testsDB={testsDB} studentsDB={studentsDB} topicsDB={topicsDB}/>}
-        {tab==="myresults"&&isStudent&&<StudentPortal user={user} testsDB={testsDB} studentsDB={studentsDB}/>}
-        {tab==="myaccount"&&isStudent&&<StudentAccount user={user} studentsDB={studentsDB} onUpdate={handleUpdateUser}/>}
-      </div>
-      {/* Footer */}
-      <div style={{borderTop:"1px solid #e2e8f0",marginTop:40,padding:"18px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",background:"#fff",flexWrap:"wrap",gap:12}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <img src={LOGO} alt="logo" style={{width:26,height:26,objectFit:"contain",opacity:0.6}}/>
-          <div>
-            <div style={{fontSize:11,color:"#94a3b8"}}>Stepping Stone Inter College, Gorakhpur</div>
-            <div style={{fontSize:10,color:"#cbd5e1",marginTop:1}}>Weekly Test Tracker</div>
-          </div>
-        </div>
-        <div style={{textAlign:"right"}}>
-          <div style={{fontSize:11,color:"#94a3b8"}}>Designed & Built by</div>
-          <div style={{fontSize:13,fontWeight:700,color:"#1a2e6c"}}>Rajvansh Gupta</div>
-          <div style={{fontSize:10,color:"#94a3b8",textTransform:"uppercase",letterSpacing:0.5}}>Director, Stepping Stone</div>
-        </div>
-      </div>
     </div>
   );
 }
