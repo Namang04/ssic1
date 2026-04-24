@@ -1254,8 +1254,10 @@ function ManageStudents({studentsDB}){
   const[editIdx,setEditIdx]=useState(null);
   const[editVal,setEditVal]=useState("");
   const students=data[safeId(cls)]?.list||[];
+  const sections=data[safeId(cls)]?.sections||{};
   const filtered=students.filter(s=>s.toLowerCase().includes(search.toLowerCase()));
-  const save=async(list)=>await set(cls,{cls,list,updatedAt:new Date().toISOString()});
+  const save=async(list,newSections)=>await set(cls,{cls,list,sections:newSections||sections,updatedAt:new Date().toISOString()});
+  const assignSection=async(name,sec)=>{const ns={...sections,[name]:sec};await set(cls,{cls,list:students,sections:ns,updatedAt:new Date().toISOString()});};
   const add=async()=>{const name=input.trim();if(!name)return;if(students.includes(name)){setInput("");return;}await save([...students,name]);setInput("");};
   const remove=async(name)=>{if(!window.confirm(`Remove ${name}?`))return;await save(students.filter(s=>s!==name));};
   const saveEdit=async(idx)=>{const name=editVal.trim();if(!name)return;const u=[...students];u[idx]=name;await save(u);setEditIdx(null);setEditVal("");};
@@ -1287,19 +1289,24 @@ function ManageStudents({studentsDB}){
             </div>
             <div style={{border:"1.5px solid #e2e8f0",borderRadius:10,overflow:"hidden"}}>
               {/* Header */}
-              <div style={{display:"grid",gridTemplateColumns:"50px 1fr 80px",background:"#f8fafc",borderBottom:"1.5px solid #e2e8f0",padding:"8px 14px",gap:10}}>
-                {["Roll No","Student Name","Actions"].map(h=><div key={h} style={{fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:1}}>{h}</div>)}
+              <div style={{display:"grid",gridTemplateColumns:"50px 1fr 90px 80px",background:"#f8fafc",borderBottom:"1.5px solid #e2e8f0",padding:"8px 14px",gap:10}}>
+                {["Roll No","Student Name","Section","Actions"].map(h=><div key={h} style={{fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:1}}>{h}</div>)}
               </div>
               {filtered.map((s,i)=>{
                 const realIdx=students.indexOf(s);
                 return(
-                  <div key={s} style={{display:"grid",gridTemplateColumns:"50px 1fr 80px",padding:"10px 14px",alignItems:"center",gap:10,borderBottom:i<filtered.length-1?"1px solid #f1f5f9":"none",background:i%2===0?"#fff":"#fafbfd"}}>
+                  <div key={s} style={{display:"grid",gridTemplateColumns:"50px 1fr 90px 80px",padding:"10px 14px",alignItems:"center",gap:10,borderBottom:i<filtered.length-1?"1px solid #f1f5f9":"none",background:i%2===0?"#fff":"#fafbfd"}}>
                     <div style={{width:32,height:32,borderRadius:"50%",background:"#eff6ff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#1a2e6c"}}>{realIdx+1}</div>
                     {editIdx===realIdx?(
                       <><input value={editVal} onChange={e=>setEditVal(e.target.value)} onKeyDown={e=>e.key==="Enter"&&saveEdit(realIdx)} style={{flex:1,padding:"6px 10px",borderRadius:7,border:"1.5px solid #1a2e6c",fontSize:13,outline:"none"}} autoFocus/></>
                     ):(
                       <div style={{fontSize:13,fontWeight:500,color:"#1e293b"}}>{s}</div>
                     )}
+                    <select value={sections[s]||""} onChange={e=>assignSection(s,e.target.value)}
+                      style={{padding:"4px 6px",borderRadius:7,border:"1.5px solid #e2e8f0",fontSize:12,color:sections[s]?"#1a2e6c":"#94a3b8",background:sections[s]?"#eff6ff":"#fff",cursor:"pointer",outline:"none"}}>
+                      <option value="">—</option>
+                      {["A","B","C","D","E"].map(sec=><option key={sec} value={sec}>{sec}</option>)}
+                    </select>
                     <div style={{display:"flex",gap:4}}>
                       {editIdx===realIdx?(
                         <><button onClick={()=>saveEdit(realIdx)} style={{background:"#dcfce7",border:"none",borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:11,color:"#16a34a",fontWeight:700}}>✓</button>
@@ -1315,6 +1322,21 @@ function ManageStudents({studentsDB}){
             </div>
           </div>
         )}
+      </Card>
+      <Card style={{padding:22}}>
+        <div style={{fontWeight:700,fontSize:14,color:"#1a2e6c",marginBottom:12}}>📂 Section Summary — {cls}</div>
+        {["A","B","C","D","E"].map(sec=>{
+          const count=students.filter(s=>sections[s]===sec).length;
+          if(count===0)return null;
+          return <div key={sec} style={{display:"inline-flex",alignItems:"center",gap:8,background:"#eff6ff",border:"1.5px solid #bfdbfe",borderRadius:8,padding:"6px 14px",marginRight:8,marginBottom:8}}>
+            <span style={{fontWeight:700,fontSize:13,color:"#1a2e6c"}}>Section {sec}</span>
+            <span style={{background:"#1a2e6c",color:"#fff",borderRadius:20,padding:"1px 9px",fontSize:12,fontWeight:700}}>{count}</span>
+          </div>;
+        })}
+        {students.filter(s=>!sections[s]).length>0&&<div style={{display:"inline-flex",alignItems:"center",gap:8,background:"#fef9ec",border:"1.5px solid #fde68a",borderRadius:8,padding:"6px 14px",marginRight:8,marginBottom:8}}>
+          <span style={{fontWeight:700,fontSize:13,color:"#92400e"}}>Unassigned</span>
+          <span style={{background:"#92400e",color:"#fff",borderRadius:20,padding:"1px 9px",fontSize:12,fontWeight:700}}>{students.filter(s=>!sections[s]).length}</span>
+        </div>}
       </Card>
       <Card style={{padding:22}}>
         <div style={{fontWeight:700,fontSize:14,color:"#1a2e6c",marginBottom:14}}>All Classes Summary</div>
@@ -1479,14 +1501,18 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB}){
   const[selTopics,setSelTopics]=useState([]);
   const[rows,setRows]=useState({});
   const[saved,setSaved]=useState(false);
-  useEffect(()=>setSubj(aS[0]||""),[cls]);
+  useEffect(()=>{setSubj(aS[0]||"");setEmFilterSec("");},[cls]);
   const testKey=`${cls}__${subj}__week${week}`;
   const existing=testsDB.data[safeId(testKey)];
   useEffect(()=>{
     if(existing){setTotal(existing.total);setSelTopics(existing.topics||[]);setRows(existing.rows||{});setTestDate(existing.testDate||today());}
     else{setRows({});setSelTopics([]);setTestDate(today());}
   },[testKey,existing?.at]);
-  const students=studentsDB.data[safeId(cls)]?.list||[];
+  const allStudentsEM=studentsDB.data[safeId(cls)]?.list||[];
+  const emSections=studentsDB.data[safeId(cls)]?.sections||{};
+  const emAvailSecs=[...new Set(allStudentsEM.map(s=>emSections[s]).filter(Boolean))].sort();
+  const[emFilterSec,setEmFilterSec]=useState("");
+  const students=emFilterSec?allStudentsEM.filter(s=>emSections[s]===emFilterSec):allStudentsEM;
   const availableTopics=topicsDB.data[safeId(`${cls}__${subj}`)]?.list||[];
   const toggleTopic=t=>setSelTopics(p=>p.includes(t)?p.filter(x=>x!==t):[...p,t]);
   const setMark=(s,v)=>setRows(p=>({...p,[s]:v}));
@@ -1502,11 +1528,12 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB}){
   return(
     <div className="fi" style={{display:"flex",flexDirection:"column",gap:18}}>
       <Card style={{padding:20}}>
-        <div className="grid4" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14}}>
+        <div style={{display:"grid",gridTemplateColumns:emAvailSecs.length>0?"repeat(5,1fr)":"repeat(4,1fr)",gap:14}}>
           {[{lbl:"Class",v:cls,opts:aC,fn:v=>setCls(v)},{lbl:"Subject",v:subj,opts:aS,fn:setSubj},
             {lbl:"Week",v:week,opts:Array.from({length:30},(_,i)=>({v:i+1,l:`Week ${i+1}`})),fn:v=>setWeek(Number(v))},
             {lbl:"Total Marks",v:total,opts:[10,15,20,25,30,40,50,100].map(v=>({v,l:`${v} marks`})),fn:v=>setTotal(Number(v))}
           ].map(f=><div key={f.lbl}><Lbl c={f.lbl}/><Sel value={f.v} onChange={f.fn} options={f.opts}/></div>)}
+          {emAvailSecs.length>0&&<div><Lbl c="Section"/><Sel value={emFilterSec} onChange={setEmFilterSec} options={[{v:"",l:"All"},...emAvailSecs.map(s=>({v:s,l:`Section ${s}`}))]}/></div>}
         </div>
         <div style={{marginTop:14}}>
           <Lbl c="Test Date"/>
@@ -1574,10 +1601,15 @@ function ClassProgress({user,testsDB,studentsDB}){
   const[cls,setCls]=useState(aC[0]);
   const aS=useMemo(()=>{const all=SCHOOL.subjects[cls]||[];return user.role==="admin"?all:all.filter(s=>(user.subjects||[]).includes(s));},[cls,user]);
   const[subj,setSubj]=useState(aS[0]||"");
-  useEffect(()=>setSubj(aS[0]||""),[cls]);
-  const students=studentsDB.data[safeId(cls)]?.list||[];
+  useEffect(()=>{setSubj(aS[0]||"");setFilterSec("");},[cls]);
+  const allStudents=studentsDB.data[safeId(cls)]?.list||[];
+  const classSections=studentsDB.data[safeId(cls)]?.sections||{};
+  const availSections=[...new Set(allStudents.map(s=>classSections[s]).filter(Boolean))].sort();
+  const[filterSec,setFilterSec]=useState("");
+  const students=filterSec?allStudents.filter(s=>classSections[s]===filterSec):allStudents;
   const rTests=useMemo(()=>Object.values(testsDB.data).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week),[testsDB.data,cls,subj]);
-  const stats=useMemo(()=>students.map(s=>{const sc=rTests.filter(t=>t.rows?.[s]!==undefined&&t.rows?.[s]!=="").map(t=>({week:t.week,p:pct(Number(t.rows[s]),t.total),date:t.testDate,absent:false}));const avg=sc.length?Math.round(sc.reduce((a,b)=>a+b.p,0)/sc.length):null;const trend=sc.length>=2?sc[sc.length-1].p-sc[0].p:0;return{name:s,sc,avg,trend};}),[students,rTests]);
+  const stats=useMemo(()=>students.map(s=>{const sc=rTests.filter(t=>t.rows?.[s]!==undefined&&t.rows?.[s]!=="").map(t=>({week:t.week,p:pct(Number(t.rows[s]),t.total),date:t.testDate}));const avg=sc.length?Math.round(sc.reduce((a,b)=>a+b.p,0)/sc.length):null;const trend=sc.length>=2?sc[sc.length-1].p-sc[0].p:0;const roll=allStudents.indexOf(s)+1;const sec=classSections[s]||"-";return{name:s,sc,avg,trend,roll,sec};}),[students,rTests,allStudents,classSections]);
+  const absentPerTest=useMemo(()=>rTests.map(test=>students.filter(s=>test.rows?.[s]===undefined||test.rows?.[s]==="").length),[rTests,students]);
   const classAvg=useMemo(()=>{const all=stats.flatMap(s=>s.sc.map(x=>x.p));return all.length?Math.round(all.reduce((a,b)=>a+b,0)/all.length):null;},[stats]);
   const problemTopics=useMemo(()=>{const m={};rTests.forEach(t=>{const fc=students.filter(s=>pct(Number(t.rows?.[s]??0),t.total)<50).length;if(fc>=students.length*.4)(t.topics||[]).forEach(tp=>{m[tp]=(m[tp]||0)+1;});});return Object.entries(m).sort((a,b)=>b[1]-a[1]);},[rTests,students]);
   const printReport=()=>{
@@ -1585,8 +1617,9 @@ function ClassProgress({user,testsDB,studentsDB}){
     const rows=[...stats].sort((a,b)=>(b.avg??-1)-(a.avg??-1));
     w.document.write(`<html><head><title>Report</title><style>body{font-family:Arial,sans-serif;padding:20px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:8px;text-align:center}th{background:#1a2e6c;color:#fff}h2{color:#1a2e6c}</style></head><body>`);
     w.document.write(`<h2>Stepping Stone Inter College</h2><p><strong>${cls} — ${subj}</strong> | ${rTests.length} Tests | Class Avg: ${classAvg??'—'}%</p>`);
-    w.document.write(`<table><tr><th>Roll</th><th>Student</th>${rTests.map(t=>`<th>Wk ${t.week}<br/><small>${fmtDate(t.testDate)}</small></th>`).join("")}<th>Average</th><th>Trend</th></tr>`);
-    rows.forEach((ss,i)=>{w.document.write(`<tr><td>${i+1}</td><td style="text-align:left">${ss.name}</td>${ss.sc.map(sc=>`<td style="color:${gradeOf(sc.p).c}">${sc.p}%</td>`).join("")}<td><strong>${ss.avg??'—'}%</strong></td><td>${ss.trend>5?"↑ Improving":ss.trend<-5?"↓ Declining":"→ Stable"}</td></tr>`);});
+    w.document.write(`<table><tr><th>Roll</th><th>Student</th>${rTests.map(t=>`<th>Wk ${t.week}<br/><small>${fmtDate(t.testDate)}</small></th>`).join("")}<th>Average</th><th>Trend</th><th>Section</th></tr>`);
+    rows.forEach((ss,i)=>{w.document.write(`<tr><td>${i+1}</td><td style="text-align:left">${ss.name}</td>${rTests.map(test=>{const sc=ss.sc.find(x=>x.week===test.week);return sc?`<td style="color:${gradeOf(sc.p).c}">${sc.p}%</td>`:`<td style="color:#cbd5e1">A</td>`;}).join("")}<td><strong>${ss.avg??'—'}%</strong></td><td>${ss.trend>5?"↑ Improving":ss.trend<-5?"↓ Declining":"→ Stable"}</td><td>${ss.sec||"—"}</td></tr>`);});
+    w.document.write(`<tr style="background:#FEF2F2"><td colspan="2"><strong>🚫 Absent</strong></td>${absentPerTest.map(n=>`<td style="color:${n>0?"#DC2626":"#16A34A"};font-weight:700">${n>0?n:"✓"}</td>`).join("")}<td><strong>${absentPerTest.reduce((a,b)=>a+b,0)} total</strong></td><td></td></tr>`);
     w.document.write(`</table>`);
     if(problemTopics.length){w.document.write(`<h3 style="color:#dc2626">Problem Topics</h3><ul>${problemTopics.map(([t,c])=>`<li>${t} — flagged in ${c} tests</li>`).join("")}</ul>`);}
     w.document.write(`<p style="color:#94a3b8;font-size:12px;margin-top:20px">Generated by Rajvansh Gupta, Director — Stepping Stone Inter College</p></body></html>`);
@@ -1599,6 +1632,7 @@ function ClassProgress({user,testsDB,studentsDB}){
         <div style={{display:"flex",gap:14,alignItems:"flex-end",flexWrap:"wrap"}}>
           <div style={{flex:1,minWidth:120}}><Lbl c="Class"/><Sel value={cls} onChange={setCls} options={aC}/></div>
           <div style={{flex:1,minWidth:120}}><Lbl c="Subject"/><Sel value={subj} onChange={setSubj} options={aS}/></div>
+          {availSections.length>0&&<div style={{flex:1,minWidth:100}}><Lbl c="Section"/><Sel value={filterSec} onChange={setFilterSec} options={[{v:"",l:"All Sections"},...availSections.map(s=>({v:s,l:`Section ${s}`}))]}/></div>}
           <Btn onClick={printReport} v="ghost" style={{whiteSpace:"nowrap"}}>🖨️ PDF Report</Btn>
         </div>
       </Card>
@@ -1619,21 +1653,29 @@ function ClassProgress({user,testsDB,studentsDB}){
               <table style={{width:"100%",borderCollapse:"collapse"}}>
                 <thead><tr style={{background:"#f8fafc"}}>
                   <th style={{padding:"8px 12px",textAlign:"center",fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase"}}>Roll</th>
-                  <th style={{padding:"10px 20px",textAlign:"left",fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase",whiteSpace:"nowrap"}}>Student</th>
+                  <th style={{padding:"10px 20px",textAlign:"left",fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase",whiteSpace:"nowrap"}}>Student</th><th style={{padding:"8px 12px",textAlign:"center",fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase"}}>Sec</th>
                   {rTests.map(t=><th key={t.week} style={{padding:"8px 12px",textAlign:"center",fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase",whiteSpace:"nowrap"}}>W{t.week}<br/><span style={{fontSize:9,fontWeight:400}}>{fmtDate(t.testDate)}</span></th>)}
                   <th style={{padding:"10px 16px",textAlign:"center",fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase"}}>Avg</th>
                   <th style={{padding:"10px 16px",textAlign:"center",fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase"}}>Trend</th>
                 </tr></thead>
                 <tbody>
-                  {[...stats].sort((a,b)=>(b.avg??-1)-(a.avg??-1)).map((ss,i)=>(
+                  {[...stats].sort((a,b)=>a.sec===b.sec?(b.avg??-1)-(a.avg??-1):a.sec.localeCompare(b.sec)).map((ss,i)=>(
                     <tr key={ss.name} style={{borderTop:"1px solid #f1f5f9",background:i%2===0?"#fff":"#fafbfd"}}>
-                      <td style={{padding:"10px 12px",textAlign:"center",fontSize:12,color:"#94a3b8",fontWeight:700}}>{students.indexOf(ss.name)+1}</td>
+                      <td style={{padding:"10px 12px",textAlign:"center",fontSize:12,color:"#94a3b8",fontWeight:700}}>{ss.roll}</td>
                       <td style={{padding:"10px 20px",fontWeight:500,fontSize:13,color:"#1e293b",whiteSpace:"nowrap"}}>{ss.name}</td>
-                      {ss.sc.map((sc,idx)=>{const g=gradeOf(sc.p);return<td key={idx} style={{padding:"10px 12px",textAlign:"center"}}><span style={{fontFamily:"monospace",fontSize:12,fontWeight:700,color:g.c}}>{sc.p}%</span></td>;})}
+                      <td style={{padding:"8px 12px",textAlign:"center"}}>{ss.sec!=="-"?<span style={{background:"#eff6ff",color:"#1a2e6c",borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700}}>{ss.sec}</span>:<span style={{color:"#cbd5e1",fontSize:11}}>—</span>}</td>
+                      {rTests.map((test,idx)=>{const sc=ss.sc.find(x=>x.week===test.week);const g=sc?gradeOf(sc.p):null;return<td key={idx} style={{padding:"10px 12px",textAlign:"center"}}>{sc?<span style={{fontFamily:"monospace",fontSize:12,fontWeight:700,color:g.c}}>{sc.p}%</span>:<span style={{color:"#e2e8f0",fontSize:12}}>A</span>}</td>;})}
                       <td style={{padding:"10px 16px",textAlign:"center"}}>{ss.avg!==null?<GBadge p={ss.avg}/>:<span style={{color:"#cbd5e1"}}>—</span>}</td>
                       <td style={{padding:"10px 16px",textAlign:"center",fontSize:12,fontWeight:700,color:ss.trend>5?"#16a34a":ss.trend<-5?"#dc2626":"#64748b"}}>{ss.trend>5?`↑ +${ss.trend}%`:ss.trend<-5?`↓ ${ss.trend}%`:"→ Stable"}</td>
                     </tr>
                   ))}
+                  <tr style={{background:"#FEF2F2",borderTop:"2px solid #FECACA"}}>
+                    <td style={{padding:"6px 12px",textAlign:"center",fontSize:10,fontWeight:700,color:"#991B1B"}}>—</td>
+                    <td style={{padding:"6px 20px",textAlign:"left",fontSize:11,fontWeight:700,color:"#991B1B",whiteSpace:"nowrap"}}>🚫 Absent</td>
+                    {absentPerTest.map((n,i)=><td key={i} style={{padding:"6px 12px",textAlign:"center",fontSize:12,fontWeight:700,color:n>0?"#DC2626":"#16A34A"}}>{n>0?n:"✓"}</td>)}
+                    <td style={{padding:"6px 16px",textAlign:"center",fontSize:11,fontWeight:700,color:"#991B1B"}}>{absentPerTest.reduce((a,b)=>a+b,0)} total</td>
+                    <td></td>
+                  </tr>
                 </tbody>
               </table>
             </div>
