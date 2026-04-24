@@ -1510,7 +1510,7 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB}){
   },[testKey,existing?.at]);
   const allStudentsEM=studentsDB.data[safeId(cls)]?.list||[];
   const emSections=studentsDB.data[safeId(cls)]?.sections||{};
-  const emAvailSecs=[...new Set(allStudentsEM.map(s=>emSections[s]).filter(Boolean))].sort();
+  const emAvailSecs=["A","B","C","D"];
   const[emFilterSec,setEmFilterSec]=useState("");
   const students=emFilterSec?allStudentsEM.filter(s=>emSections[s]===emFilterSec):allStudentsEM;
   const availableTopics=topicsDB.data[safeId(`${cls}__${subj}`)]?.list||[];
@@ -1604,7 +1604,7 @@ function ClassProgress({user,testsDB,studentsDB}){
   useEffect(()=>{setSubj(aS[0]||"");setFilterSec("");},[cls]);
   const allStudents=studentsDB.data[safeId(cls)]?.list||[];
   const classSections=studentsDB.data[safeId(cls)]?.sections||{};
-  const availSections=[...new Set(allStudents.map(s=>classSections[s]).filter(Boolean))].sort();
+  const availSections=["A","B","C","D"];
   const[filterSec,setFilterSec]=useState("");
   const students=filterSec?allStudents.filter(s=>classSections[s]===filterSec):allStudents;
   const rTests=useMemo(()=>Object.values(testsDB.data).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week),[testsDB.data,cls,subj]);
@@ -1632,7 +1632,7 @@ function ClassProgress({user,testsDB,studentsDB}){
         <div style={{display:"flex",gap:14,alignItems:"flex-end",flexWrap:"wrap"}}>
           <div style={{flex:1,minWidth:120}}><Lbl c="Class"/><Sel value={cls} onChange={setCls} options={aC}/></div>
           <div style={{flex:1,minWidth:120}}><Lbl c="Subject"/><Sel value={subj} onChange={setSubj} options={aS}/></div>
-          {availSections.length>0&&<div style={{flex:1,minWidth:100}}><Lbl c="Section"/><Sel value={filterSec} onChange={setFilterSec} options={[{v:"",l:"All Sections"},...availSections.map(s=>({v:s,l:`Section ${s}`}))]}/></div>}
+          
           <Btn onClick={printReport} v="ghost" style={{whiteSpace:"nowrap"}}>🖨️ PDF Report</Btn>
         </div>
       </Card>
@@ -1644,6 +1644,18 @@ function ClassProgress({user,testsDB,studentsDB}){
             <StatCard label="Top Scorer" val={[...stats].filter(s=>s.avg!==null).sort((a,b)=>b.avg-a.avg)[0]?.avg+"%"||"—"} icon="🏆" color="#d97706" sub={[...stats].filter(s=>s.avg!==null).sort((a,b)=>b.avg-a.avg)[0]?.name?.split(" ")[0]}/>
             <StatCard label="Problem Topics" val={problemTopics.length} icon="⚠️" color={problemTopics.length>0?"#dc2626":"#16a34a"} sub={problemTopics.length>0?"Need revision":"All clear"}/>
           </div>
+          {availSections.length>0&&<div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:4}}>
+            <span style={{fontSize:11,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:1}}>Filter by Section:</span>
+            {[{v:"",l:"All Sections"},...availSections.map(s=>({v:s,l:`Section ${s}`}))].map(opt=>(
+              <button key={opt.v} onClick={()=>setFilterSec(opt.v)} style={{
+                padding:"5px 14px",borderRadius:20,border:"1.5px solid "+(filterSec===opt.v?"#1a2e6c":"#e2e8f0"),
+                background:filterSec===opt.v?"#1a2e6c":"#fff",
+                color:filterSec===opt.v?"#fff":"#64748b",
+                fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                {opt.l}
+              </button>
+            ))}
+          </div>}
           <Card>
             <div style={{padding:"14px 20px",borderBottom:"1.5px solid #e2e8f0",background:"#f8fafc",display:"flex",justifyContent:"space-between"}}>
               <div style={{fontWeight:700,fontSize:14,color:"#1a2e6c"}}>Performance — {cls} · {subj}</div>
