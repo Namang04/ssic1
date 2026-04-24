@@ -1612,6 +1612,28 @@ function ClassProgress({user,testsDB,studentsDB}){
   const absentPerTest=useMemo(()=>rTests.map(test=>students.filter(s=>test.rows?.[s]===undefined||test.rows?.[s]==="").length),[rTests,students]);
   const classAvg=useMemo(()=>{const all=stats.flatMap(s=>s.sc.map(x=>x.p));return all.length?Math.round(all.reduce((a,b)=>a+b,0)/all.length):null;},[stats]);
   const problemTopics=useMemo(()=>{const m={};rTests.forEach(t=>{const fc=students.filter(s=>pct(Number(t.rows?.[s]??0),t.total)<50).length;if(fc>=students.length*.4)(t.topics||[]).forEach(tp=>{m[tp]=(m[tp]||0)+1;});});return Object.entries(m).sort((a,b)=>b[1]-a[1]);},[rTests,students]);
+  const topicStats=useMemo(()=>{
+    const map={};
+    rTests.forEach(test=>{
+      (test.topics||[]).forEach(tp=>{
+        if(!map[tp])map[tp]={scores:[],tests:0};
+        map[tp].tests++;
+        students.forEach(s=>{
+          const v=test.rows?.[s];
+          if(v!==undefined&&v!=="")
+            map[tp].scores.push(pct(Number(v),test.total));
+        });
+      });
+    });
+    return Object.entries(map).map(([tp,d])=>{
+      const avg=d.scores.length?Math.round(d.scores.reduce((a,b)=>a+b,0)/d.scores.length):0;
+      const good=d.scores.filter(p=>p>=70).length;
+      const avg_band=d.scores.filter(p=>p>=50&&p<70).length;
+      const poor=d.scores.filter(p=>p<50).length;
+      const total=d.scores.length;
+      return{tp,avg,good,avg_band,poor,total,tests:d.tests};
+    }).sort((a,b)=>a.avg-b.avg);
+  },[rTests,students]);
   const printReport=()=>{
     const w=window.open("","_blank");
     const rows=[...stats].sort((a,b)=>(b.avg??-1)-(a.avg??-1));
@@ -1701,6 +1723,64 @@ function ClassProgress({user,testsDB,studentsDB}){
                   <span style={{background:"#c2410c",color:"#fff",borderRadius:7,padding:"4px 12px",fontSize:11,fontWeight:700}}>REVIEW</span>
                 </div>
               ))}
+            </Card>
+          )}
+          {topicStats.length>0&&(
+            <Card style={{padding:20}}>
+              <div style={{fontWeight:700,fontSize:14,color:"#1a2e6c",marginBottom:4}}>📊 Topic-wise Performance Ranking</div>
+              <div style={{fontSize:12,color:"#64748b",marginBottom:16}}>Sorted worst → best · based on average marks scored when topic was tested</div>
+              <div style={{overflowX:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"collapse"}}>
+                  <thead><tr style={{background:"#f8fafc"}}>
+                    {["Topic","Tests","Avg %","Good ≥70%","Average 50–69%","Poor <50%","Bar"].map(h=>(
+                      <th key={h} style={{padding:"8px 12px",fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase",textAlign:h==="Topic"?"left":"center",whiteSpace:"nowrap"}}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {topicStats.map((row,i)=>{
+                      const rank=topicStats.length-i;
+                      const rankColor=row.avg>=70?"#16a34a":row.avg>=50?"#d97706":"#dc2626";
+                      const rankBg=row.avg>=70?"#f0fdf4":row.avg>=50?"#fffbeb":"#fef2f2";
+                      const goodPct=row.total?Math.round(row.good/row.total*100):0;
+                      const avgPct=row.total?Math.round(row.avg_band/row.total*100):0;
+                      const poorPct=row.total?Math.round(row.poor/row.total*100):0;
+                      return(
+                        <tr key={row.tp} style={{borderTop:"1px solid #f1f5f9",background:i%2===0?"#fff":"#fafbfd"}}>
+                          <td style={{padding:"10px 12px",fontWeight:600,fontSize:13,color:"#1e293b",minWidth:160}}>{row.tp}</td>
+                          <td style={{padding:"10px 12px",textAlign:"center",fontSize:12,color:"#64748b"}}>{row.tests}</td>
+                          <td style={{padding:"10px 12px",textAlign:"center"}}>
+                            <span style={{background:rankBg,color:rankColor,borderRadius:6,padding:"3px 10px",fontSize:13,fontWeight:700}}>{row.avg}%</span>
+                          </td>
+                          <td style={{padding:"10px 12px",textAlign:"center"}}>
+                            <span style={{color:"#16a34a",fontWeight:700,fontSize:12}}>{row.good}</span>
+                            <span style={{color:"#94a3b8",fontSize:10,marginLeft:4}}>({goodPct}%)</span>
+                          </td>
+                          <td style={{padding:"10px 12px",textAlign:"center"}}>
+                            <span style={{color:"#d97706",fontWeight:700,fontSize:12}}>{row.avg_band}</span>
+                            <span style={{color:"#94a3b8",fontSize:10,marginLeft:4}}>({avgPct}%)</span>
+                          </td>
+                          <td style={{padding:"10px 12px",textAlign:"center"}}>
+                            <span style={{color:"#dc2626",fontWeight:700,fontSize:12}}>{row.poor}</span>
+                            <span style={{color:"#94a3b8",fontSize:10,marginLeft:4}}>({poorPct}%)</span>
+                          </td>
+                          <td style={{padding:"10px 12px",minWidth:120}}>
+                            <div style={{display:"flex",height:10,borderRadius:5,overflow:"hidden",background:"#f1f5f9"}}>
+                              <div style={{width:goodPct+"%",background:"#16a34a"}}/>
+                              <div style={{width:avgPct+"%",background:"#f59e0b"}}/>
+                              <div style={{width:poorPct+"%",background:"#ef4444"}}/>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{display:"flex",gap:16,marginTop:12,fontSize:11,color:"#64748b"}}>
+                <span><span style={{display:"inline-block",width:10,height:10,borderRadius:2,background:"#16a34a",marginRight:4}}/>Good ≥70%</span>
+                <span><span style={{display:"inline-block",width:10,height:10,borderRadius:2,background:"#f59e0b",marginRight:4}}/>Average 50–69%</span>
+                <span><span style={{display:"inline-block",width:10,height:10,borderRadius:2,background:"#ef4444",marginRight:4}}/>Poor &lt;50%</span>
+              </div>
             </Card>
           )}
         </>
