@@ -1163,8 +1163,13 @@ function Login({onLogin,usersDB}){
   const go=()=>{
     const uKey=u.trim().toLowerCase();
     const userData=usersDB.data[uKey]||DEFAULT_USERS[uKey];
-    if(userData&&userData.password===p)onLogin({username:uKey,...userData});
-    else setErr("Invalid username or password.");
+    if(userData&&userData.password===p){
+      try{if(window.__db){const lk="log_"+Date.now()+"_"+uKey;
+      window.__fbSetDoc(window.__fbDoc(window.__db,"loginLogs",lk),
+      {username:uKey,name:userData.name||uKey,role:userData.role||"teacher",
+      timestamp:new Date().toISOString(),device:navigator.userAgent.substring(0,120)});}}catch(e){}
+      onLogin({username:uKey,...userData});
+    } else setErr("Invalid username or password.");
   };
   return(
     <div style={{minHeight:"100vh",background:"linear-gradient(150deg,#1a2e6c 0%,#1d4ed8 60%,#b8860b 100%)",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
@@ -1946,6 +1951,7 @@ function ParentView({user,testsDB,studentsDB}){
 
 // ── ADMIN PANEL ──
 function AdminPanel({testsDB,studentsDB,usersDB}){
+  const logsDB=useFirestore("loginLogs");
   const[activeTab,setActiveTab]=useState("tests");
   const[resetUser,setResetUser]=useState("");
   const[newPass,setNewPass]=useState("");
@@ -1980,7 +1986,7 @@ function AdminPanel({testsDB,studentsDB,usersDB}){
   };
 
   if(testsDB.loading)return<Spinner/>;
-  const tabs=[{id:"tests",label:"Tests"},{id:"reset",label:"Reset Password"},{id:"parents",label:"Add Parents"},{id:"users",label:"All Users"}];
+  const tabs=[{id:"tests",label:"Tests"},{id:"reset",label:"Reset Password"},{id:"parents",label:"Add Parents"},{id:"users",label:"All Users"},{id:"logs",label:"🔐 Login Logs"}];
   return(
     <div className="fi" style={{display:"flex",flexDirection:"column",gap:18}}>
       <div className="grid4" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14}}>
@@ -2107,6 +2113,40 @@ function AdminPanel({testsDB,studentsDB,usersDB}){
               })}
               {Object.keys(logsDB.data||{}).length===0&&<div style={{padding:40,textAlign:"center",color:"#94a3b8"}}>No logins recorded yet. Logs appear after users log in.</div>}
             </div>
+          )}
+        </Card>
+      )}
+      {activeTab==="logs"&&(
+        <Card>
+          <div style={{padding:"14px 20px",borderBottom:"1.5px solid #e2e8f0",background:"#f8fafc",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{fontWeight:700,fontSize:14,color:"#1a2e6c"}}>🔐 Login History</div>
+            <div style={{fontSize:11,color:"#94a3b8"}}>{Object.keys(logsDB.data||{}).length} total logins</div>
+          </div>
+          {logsDB.loading?<div style={{padding:40,textAlign:"center",color:"#94a3b8"}}>Loading...</div>:(
+            Object.entries(logsDB.data||{}).length===0
+            ?<div style={{padding:40,textAlign:"center",color:"#94a3b8"}}>No logins yet. Logs appear after users log in.</div>
+            :Object.entries(logsDB.data||{}).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,100).map(([key,log])=>{
+              const d=new Date(log.timestamp);
+              const isStudent=log.role==="student";
+              const roleColor=isStudent?"#7c3aed":log.role==="admin"?"#dc2626":"#1d4ed8";
+              const roleBg=isStudent?"#ede9fe":log.role==="admin"?"#fee2e2":"#dbeafe";
+              return(
+                <div key={key} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 20px",borderBottom:"1px solid #f1f5f9"}}>
+                  <div style={{width:36,height:36,borderRadius:"50%",background:roleBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>
+                    {isStudent?"👨‍🎓":log.role==="admin"?"👑":"👨‍🏫"}
+                  </div>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:600,fontSize:13,color:"#1e293b"}}>{log.name} <span style={{fontFamily:"monospace",fontSize:11,color:"#94a3b8"}}>({log.username})</span></div>
+                    <div style={{fontSize:11,color:"#94a3b8",marginTop:2,wordBreak:"break-all"}}>{(log.device||"").substring(0,80)}</div>
+                  </div>
+                  <div style={{textAlign:"right",flexShrink:0}}>
+                    <span style={{background:roleBg,color:roleColor,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700,textTransform:"capitalize",display:"block",marginBottom:4}}>{log.role}</span>
+                    <div style={{fontSize:11,color:"#64748b",fontWeight:600}}>{d.toLocaleDateString("en-IN",{day:"2-digit",month:"short"})}</div>
+                    <div style={{fontSize:10,color:"#94a3b8"}}>{d.toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}</div>
+                  </div>
+                </div>
+              );
+            })
           )}
         </Card>
       )}
