@@ -1043,6 +1043,11 @@ const DEFAULT_USERS={
   computer8:{password:"Stepping@computer",role:"teacher",name:"Computer Teacher (Class 8)",classes:["Class 8"],subjects:["Computer"]},
   computer9:{password:"Stepping@computer",role:"teacher",name:"Computer Teacher (Class 9)",classes:["Class 9"],subjects:["Computer"]},
   computer10:{password:"Stepping@computer",role:"teacher",name:"Computer Teacher (Class 10)",classes:["Class 10"],subjects:["Computer"]},
+  student10a:{password:"Study@2027",role:"student",name:"Topper A",classes:["Class 10"],subjects:null},
+  student10b:{password:"Study@2027",role:"student",name:"Topper B",classes:["Class 10"],subjects:null},
+  student10c:{password:"Study@2027",role:"student",name:"Topper C",classes:["Class 10"],subjects:null},
+  student10d:{password:"Study@2027",role:"student",name:"Topper D",classes:["Class 10"],subjects:null},
+  student10e:{password:"Study@2027",role:"student",name:"Topper E",classes:["Class 10"],subjects:null},
   vp:{password:"Stepping@vp",role:"admin",name:"Vice Principal",classes:null,subjects:null},
 };
 
@@ -2569,8 +2574,9 @@ function App(){
   const attendanceDB=useFirestore("attendance");
   const usersDB=useFirestore("users");
   const handleUpdateUser=updated=>setUser(updated);
-  if(!user)return<Login onLogin={u=>{setUser(u);setTab(u.role==="parent"?"parent":"dashboard");}} usersDB={usersDB}/>;
-  const isParent=user.role==="parent",isAdmin=user.role==="admin";
+  if(!user)return<Login onLogin={u=>{setUser(u);setTab(u.role==="parent"?"parent":u.role==="student"?"student":"dashboard");}} usersDB={usersDB}/>;
+  const isParent=user.role==="parent",isAdmin=user.role==="admin",isStudent=user.role==="student";
+  if(isStudent) return <StudentPortal user={user}/>;
   const tabs=isParent?[
     {id:"parent",label:"My Child",icon:"👨‍👩‍👦"},
     {id:"account",label:"Account",icon:"🔐"},
@@ -2934,6 +2940,609 @@ function AIPanel({testsDB, studentsDB, topicsDB}){
     </div>
   );
 }
+
+// ═══════════════════════════════════════════════════════
+// STUDENT PORTAL — QB Browser + Practice Tests
+// ═══════════════════════════════════════════════════════
+
+function StudentPortal({user}){
+  const[view,setView]=useState("home"); // home | qbank | test | result
+  const[testResult,setTestResult]=useState(null);
+  const subj_map={std:"📘 Maths Std",bas:"📗 Maths Basic",sci:"🔬 Science",sst:"🗺️ SST"};
+
+  // Load done/saved from localStorage
+  const storageKey="ss_student_"+user.username;
+  const getSaved=()=>{try{return JSON.parse(localStorage.getItem(storageKey)||"{}")}catch{return{}}};
+  const [saved,setSaved]=useState(getSaved);
+  const saveDone=(key,val)=>{const s={...getSaved(),[key]:val};localStorage.setItem(storageKey,JSON.stringify(s));setSaved(s);};
+
+  if(view==="test")   return <PracticeTest user={user} onBack={()=>setView("home")} onFinish={r=>{setTestResult(r);setView("result");}} saved={saved} saveDone={saveDone}/>;
+  if(view==="result") return <TestResult result={testResult} onBack={()=>setView("home")} onRetry={()=>setView("test")}/>;
+  if(view==="qbank")  return <StudentQB user={user} onBack={()=>setView("home")} saved={saved} saveDone={saveDone}/>;
+
+  // Home screen
+  const totalDone=Object.values(saved).filter(v=>v===true).length;
+  const totalQ=Object.values(QB_DATA).reduce((a,arr)=>a+(arr||[]).length,0);
+  const testsTaken=Object.keys(saved).filter(k=>k.startsWith("test_")).length;
+  const bestScore=Object.entries(saved).filter(([k])=>k.startsWith("test_")).map(([,v])=>v?.pct||0).reduce((a,b)=>Math.max(a,b),0);
+
+  return(
+    <div style={{minHeight:"100vh",background:"linear-gradient(150deg,#0f172a 0%,#1e3a8a 60%,#b8860b 100%)",padding:"0 0 40px"}}>
+      {/* Header */}
+      <div style={{background:"rgba(0,0,0,0.3)",backdropFilter:"blur(10px)",padding:"14px 24px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <div style={{width:36,height:36,borderRadius:"50%",background:"#b8860b",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,color:"#0f172a",fontSize:16}}>S</div>
+          <div>
+            <div style={{color:"#fff",fontWeight:700,fontSize:14}}>Stepping Stone Greencity</div>
+            <div style={{color:"rgba(255,255,255,0.5)",fontSize:11}}>Student Portal — Class 10</div>
+          </div>
+        </div>
+        <div style={{color:"rgba(255,255,255,0.7)",fontSize:12}}>Welcome, <b style={{color:"#fbbf24"}}>{user.name}</b></div>
+      </div>
+
+      <div style={{maxWidth:900,margin:"32px auto",padding:"0 20px"}}>
+        {/* Stats row */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14,marginBottom:28}}>
+          {[
+            {icon:"✅",val:totalDone,label:"Questions Done",color:"#10b981"},
+            {icon:"📝",val:testsTaken,label:"Tests Taken",color:"#6366f1"},
+            {icon:"🏆",val:bestScore?bestScore+"%":"—",label:"Best Score",color:"#f59e0b"},
+          ].map(s=>(
+            <div key={s.label} style={{background:"rgba(255,255,255,0.08)",backdropFilter:"blur(10px)",borderRadius:16,padding:"20px 24px",border:"1px solid rgba(255,255,255,0.12)"}}>
+              <div style={{fontSize:28,marginBottom:6}}>{s.icon}</div>
+              <div style={{fontSize:28,fontWeight:800,color:s.color}}>{s.val}</div>
+              <div style={{fontSize:12,color:"rgba(255,255,255,0.5)",marginTop:2}}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Progress bar */}
+        <div style={{background:"rgba(255,255,255,0.06)",borderRadius:16,padding:"18px 22px",marginBottom:28,border:"1px solid rgba(255,255,255,0.1)"}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+            <span style={{color:"#fff",fontWeight:600,fontSize:13}}>Overall Progress</span>
+            <span style={{color:"#fbbf24",fontWeight:700,fontSize:13}}>{totalQ>0?Math.round(totalDone/totalQ*100):0}% complete</span>
+          </div>
+          <div style={{height:10,background:"rgba(255,255,255,0.1)",borderRadius:5,overflow:"hidden"}}>
+            <div style={{width:(totalQ>0?totalDone/totalQ*100:0)+"%",height:"100%",background:"linear-gradient(90deg,#10b981,#6366f1)",borderRadius:5,transition:"width 0.5s"}}/>
+          </div>
+          <div style={{color:"rgba(255,255,255,0.4)",fontSize:11,marginTop:6}}>{totalDone} of {totalQ} questions marked done</div>
+        </div>
+
+        {/* Main action cards */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+          {/* QB Card */}
+          <div onClick={()=>setView("qbank")} style={{background:"rgba(255,255,255,0.08)",backdropFilter:"blur(10px)",borderRadius:20,padding:"28px 24px",cursor:"pointer",border:"1px solid rgba(255,255,255,0.12)",transition:"all 0.2s"}}
+            onMouseEnter={e=>{e.currentTarget.style.background="rgba(255,255,255,0.14)";e.currentTarget.style.transform="translateY(-2px)";}}
+            onMouseLeave={e=>{e.currentTarget.style.background="rgba(255,255,255,0.08)";e.currentTarget.style.transform="none";}}>
+            <div style={{fontSize:40,marginBottom:12}}>📚</div>
+            <div style={{color:"#fff",fontWeight:800,fontSize:18,marginBottom:6}}>Question Bank</div>
+            <div style={{color:"rgba(255,255,255,0.5)",fontSize:13,marginBottom:16}}>Browse all 856 questions. Filter by subject, chapter, difficulty. Mark questions as done.</div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {Object.entries(subj_map).map(([k,v])=>(
+                <span key={k} style={{background:"rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.7)",fontSize:11,padding:"3px 10px",borderRadius:20}}>{v}</span>
+              ))}
+            </div>
+          </div>
+
+          {/* Practice Test Card */}
+          <div onClick={()=>setView("test")} style={{background:"linear-gradient(135deg,rgba(99,102,241,0.3),rgba(168,85,247,0.2))",backdropFilter:"blur(10px)",borderRadius:20,padding:"28px 24px",cursor:"pointer",border:"1px solid rgba(99,102,241,0.4)",transition:"all 0.2s"}}
+            onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 8px 30px rgba(99,102,241,0.3)";}}
+            onMouseLeave={e=>{e.currentTarget.style.transform="none";e.currentTarget.style.boxShadow="none";}}>
+            <div style={{fontSize:40,marginBottom:12}}>🎯</div>
+            <div style={{color:"#fff",fontWeight:800,fontSize:18,marginBottom:6}}>Practice Test</div>
+            <div style={{color:"rgba(255,255,255,0.5)",fontSize:13,marginBottom:16}}>Select subject and chapters. Set your time. Get scored instantly. Results saved locally.</div>
+            <div style={{background:"rgba(99,102,241,0.3)",border:"1px solid rgba(99,102,241,0.5)",borderRadius:10,padding:"8px 14px",display:"inline-block"}}>
+              <span style={{color:"#a5b4fc",fontSize:12,fontWeight:600}}>⚡ Instant scoring + full solutions</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Past test results */}
+        {testsTaken>0&&(()=>{
+          const tests=Object.entries(saved).filter(([k])=>k.startsWith("test_")).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,5);
+          return(
+            <div style={{marginTop:24,background:"rgba(255,255,255,0.06)",borderRadius:16,padding:"18px 22px",border:"1px solid rgba(255,255,255,0.1)"}}>
+              <div style={{color:"#fff",fontWeight:700,fontSize:14,marginBottom:14}}>📈 Recent Test History</div>
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {tests.map(([k,v])=>(
+                  <div key={k} style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:"rgba(255,255,255,0.05)",borderRadius:10,padding:"10px 14px"}}>
+                    <div>
+                      <div style={{color:"#fff",fontSize:13,fontWeight:600}}>{v?.subject||"Mixed"}</div>
+                      <div style={{color:"rgba(255,255,255,0.4)",fontSize:11}}>{v?.chapters?.slice(0,2).join(", ")}{v?.chapters?.length>2?" +more":""} · {v?.date||""}</div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div style={{fontSize:18,fontWeight:800,color:v?.pct>=70?"#10b981":v?.pct>=50?"#f59e0b":"#ef4444"}}>{v?.pct}%</div>
+                      <div style={{color:"rgba(255,255,255,0.4)",fontSize:11}}>{v?.score}/{v?.total} correct</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+      </div>
+    </div>
+  );
+}
+
+// ── STUDENT QB BROWSER ─────────────────────────────────
+function StudentQB({user,onBack,saved,saveDone}){
+  const[lvl,setLvl]=useState("std");
+  const[sciSub,setSciSub]=useState("");
+  const[filterCh,setFilterCh]=useState("");
+  const[filterSec,setFilterSec]=useState("");
+  const[filterDiff,setFilterDiff]=useState("");
+  const[search,setSearch]=useState("");
+  const[showDone,setShowDone]=useState(true);
+
+  const data=useMemo(()=>{
+    let d=QB_DATA[lvl]||[];
+    if(lvl==="sci"&&sciSub) d=d.filter(q=>q.subj===sciSub);
+    return d;
+  },[lvl,sciSub]);
+
+  const chapters=useMemo(()=>[...new Set(data.map(q=>q.c))].sort(),[data]);
+
+  const filtered=useMemo(()=>data.filter(q=>{
+    if(filterCh&&q.c!==filterCh) return false;
+    if(filterSec&&q.s!==filterSec) return false;
+    if(filterDiff&&q.d!==filterDiff) return false;
+    if(search&&!q.q.toLowerCase().includes(search.toLowerCase())) return false;
+    if(!showDone&&saved["done_"+lvl+"_"+data.indexOf(q)]) return false;
+    return true;
+  }),[data,filterCh,filterSec,filterDiff,search,showDone,saved]);
+
+  const doneCount=data.filter((_,i)=>saved["done_"+lvl+"_"+i]).length;
+  const subjLabels={std:"📘 Maths Std",bas:"📗 Maths Basic",sci:"🔬 Science",sst:"🗺️ SST"};
+  const diffColors={e:"#10b981",m:"#f59e0b",h:"#ef4444"};
+  const diffLabels={e:"Easy",m:"Medium",h:"Hard"};
+  const secLabels={A:"1 mark",B:"2–4 marks",C:"3 marks",D:"5 marks",E:"4 marks"};
+
+  return(
+    <div style={{minHeight:"100vh",background:"#f1f5f9"}}>
+      {/* Top bar */}
+      <div style={{background:"#0f172a",padding:"12px 20px",display:"flex",alignItems:"center",gap:12,position:"sticky",top:0,zIndex:100}}>
+        <button onClick={onBack} style={{background:"rgba(255,255,255,0.1)",border:"none",color:"#fff",padding:"6px 14px",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600}}>← Back</button>
+        <span style={{color:"#fff",fontWeight:700,fontSize:15}}>Question Bank</span>
+        <span style={{marginLeft:"auto",color:"#fbbf24",fontSize:12,fontWeight:600}}>{doneCount}/{data.length} done</span>
+      </div>
+
+      {/* Subject tabs */}
+      <div style={{background:"#1e293b",display:"flex",flexWrap:"wrap",padding:"0 12px"}}>
+        {Object.entries(subjLabels).map(([k,v])=>(
+          <button key={k} onClick={()=>{setLvl(k);setSciSub("");setFilterCh("");}}
+            style={{padding:"10px 16px",border:"none",borderBottom:"3px solid "+(lvl===k?"#b8860b":"transparent"),background:"transparent",color:lvl===k?"#fff":"rgba(255,255,255,0.45)",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+            {v}
+          </button>
+        ))}
+      </div>
+      {lvl==="sci"&&(
+        <div style={{background:"#1e293b",display:"flex",gap:6,padding:"6px 16px 10px"}}>
+          {[{id:"",l:"All"},{id:"phy",l:"⚡ Physics"},{id:"chem",l:"🧪 Chemistry"},{id:"bio",l:"🌿 Biology"}].map(s=>(
+            <button key={s.id} onClick={()=>{setSciSub(s.id);setFilterCh("");}}
+              style={{padding:"4px 12px",borderRadius:20,border:"1.5px solid "+(sciSub===s.id?"#b8860b":"rgba(255,255,255,0.2)"),background:sciSub===s.id?"#b8860b":"transparent",color:"#fff",fontSize:11,fontWeight:600,cursor:"pointer"}}>
+              {s.l}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Filters */}
+      <div style={{background:"#fff",padding:"10px 20px",borderBottom:"2px solid #e2e8f0",display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+        <select value={filterCh} onChange={e=>setFilterCh(e.target.value)} style={{padding:"6px 10px",borderRadius:8,border:"1.5px solid #e2e8f0",fontSize:12,color:"#475569",outline:"none"}}>
+          <option value="">All Chapters</option>
+          {chapters.map(c=><option key={c} value={c}>{c}</option>)}
+        </select>
+        <select value={filterSec} onChange={e=>setFilterSec(e.target.value)} style={{padding:"6px 10px",borderRadius:8,border:"1.5px solid #e2e8f0",fontSize:12,color:"#475569",outline:"none"}}>
+          <option value="">All Sections</option>
+          {["A","B","C","D","E"].map(s=><option key={s} value={s}>Section {s} — {secLabels[s]}</option>)}
+        </select>
+        <select value={filterDiff} onChange={e=>setFilterDiff(e.target.value)} style={{padding:"6px 10px",borderRadius:8,border:"1.5px solid #e2e8f0",fontSize:12,color:"#475569",outline:"none"}}>
+          <option value="">All Difficulties</option>
+          <option value="e">🟢 Easy</option>
+          <option value="m">🟡 Medium</option>
+          <option value="h">🔴 Hard</option>
+        </select>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Search…" style={{padding:"6px 10px",borderRadius:8,border:"1.5px solid #e2e8f0",fontSize:12,outline:"none",minWidth:160}}/>
+        <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"#475569",cursor:"pointer",marginLeft:"auto"}}>
+          <input type="checkbox" checked={showDone} onChange={e=>setShowDone(e.target.checked)}/>
+          Show done
+        </label>
+        <span style={{background:"#1e293b",color:"#fff",borderRadius:20,padding:"4px 12px",fontSize:11,fontWeight:600}}>{filtered.length} questions</span>
+      </div>
+
+      {/* Questions */}
+      <div style={{maxWidth:1200,margin:"0 auto",padding:"16px 20px",display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(500px,1fr))",gap:12}}>
+        {filtered.map((q,fi)=>{
+          const realIdx=data.indexOf(q);
+          const doneKey="done_"+lvl+"_"+realIdx;
+          const isDone=saved[doneKey]||false;
+          return <StudentQCard key={realIdx} q={q} isDone={isDone} onToggleDone={()=>saveDone(doneKey,!isDone)} diffColors={diffColors} diffLabels={diffLabels}/>;
+        })}
+        {filtered.length===0&&<div style={{gridColumn:"1/-1",textAlign:"center",padding:"60px 20px",color:"#94a3b8",fontSize:15}}>No questions match your filters.</div>}
+      </div>
+    </div>
+  );
+}
+
+function StudentQCard({q,isDone,onToggleDone,diffColors,diffLabels}){
+  const[showAns,setShowAns]=useState(false);
+  const[picked,setPicked]=useState(null);
+  const typeLabel={mcq:"MCQ",ar:"A/R",vsa:"VSA",sa:"Short",la:"Long",cs:"Case Study",sb:"Source"};
+  return(
+    <div style={{background:"#fff",borderRadius:14,border:`1.5px solid ${isDone?"#bbf7d0":"#e2e8f0"}`,overflow:"hidden",position:"relative",opacity:isDone?0.75:1}}>
+      {isDone&&<div style={{position:"absolute",top:10,right:10,background:"#10b981",color:"#fff",borderRadius:20,padding:"2px 10px",fontSize:10,fontWeight:700}}>✓ Done</div>}
+      <div style={{padding:"14px 16px 8px"}}>
+        <div style={{display:"flex",gap:6,marginBottom:8,flexWrap:"wrap",alignItems:"center"}}>
+          <span style={{fontSize:10,fontWeight:700,color:"#64748b",background:"#f1f5f9",padding:"2px 8px",borderRadius:20}}>{q.c}</span>
+          <span style={{fontSize:10,fontWeight:700,color:diffColors[q.d],background:diffColors[q.d]+"20",padding:"2px 8px",borderRadius:20}}>{diffLabels[q.d]}</span>
+          <span style={{fontSize:10,fontWeight:600,color:"#94a3b8"}}>{typeLabel[q.t]||q.t} · {q.m}M</span>
+        </div>
+        <div style={{fontSize:13,lineHeight:1.7,color:"#1e293b"}} dangerouslySetInnerHTML={{__html:q.q}}/>
+      </div>
+      {q.o&&q.o.length>0&&(
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:4,padding:"0 16px 8px"}}>
+          {q.o.map((opt,i)=>{
+            const letter=opt.substring(0,1);
+            const isCorrect=letter===q.r;
+            const isChosen=picked===letter;
+            let bg="#f8fafc",border="#e2e8f0",color="#475569";
+            if(picked){
+              if(isCorrect){bg="#dcfce7";border="#86efac";color="#15803d";}
+              else if(isChosen){bg="#fee2e2";border="#fca5a5";color="#dc2626";}
+            }
+            return(
+              <div key={i} onClick={()=>!picked&&setPicked(letter)}
+                style={{padding:"6px 10px",borderRadius:8,border:`1.5px solid ${border}`,background:bg,fontSize:12,color,cursor:picked?"default":"pointer",display:"flex",gap:6,alignItems:"flex-start",userSelect:"none"}}>
+                <span style={{fontWeight:700,minWidth:14}}>{letter}</span>
+                <span dangerouslySetInnerHTML={{__html:opt.substring(3)}}/>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <div style={{display:"flex",gap:8,padding:"6px 16px 12px"}}>
+        <button onClick={()=>{setShowAns(!showAns);}} style={{padding:"5px 14px",background:showAns?"#1e293b":"#f1f5f9",color:showAns?"#fff":"#475569",border:"none",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer"}}>
+          {showAns?"Hide Answer":"Show Answer"}
+        </button>
+        <button onClick={onToggleDone} style={{padding:"5px 14px",background:isDone?"#dcfce7":"#f0fdf4",color:isDone?"#15803d":"#16a34a",border:`1.5px solid ${isDone?"#86efac":"#bbf7d0"}`,borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer",marginLeft:"auto"}}>
+          {isDone?"✓ Done":"Mark Done"}
+        </button>
+      </div>
+      {showAns&&<div style={{margin:"0 16px 14px",padding:"12px",background:"#f0fdf4",border:"1px solid #86efac",borderRadius:10,fontSize:12,color:"#15803d",lineHeight:1.7}} dangerouslySetInnerHTML={{__html:"<b>Answer & Solution</b><br/>"+q.a}}/>}
+    </div>
+  );
+}
+
+// ── PRACTICE TEST BUILDER ───────────────────────────────
+function PracticeTest({user,onBack,onFinish,saved,saveDone}){
+  const[step,setStep]=useState("setup"); // setup | running
+  const[lvl,setLvl]=useState("std");
+  const[selChs,setSelChs]=useState([]);
+  const[numQ,setNumQ]=useState(20);
+  const[timeMin,setTimeMin]=useState(30);
+  const[testQs,setTestQs]=useState([]);
+
+  const chapters=useMemo(()=>[...new Set((QB_DATA[lvl]||[]).map(q=>q.c))].sort(),[lvl]);
+  const toggleCh=ch=>setSelChs(s=>s.includes(ch)?s.filter(x=>x!==ch):[...s,ch]);
+  const selectAll=()=>setSelChs([...chapters]);
+  const clearAll=()=>setSelChs([]);
+
+  const startTest=()=>{
+    const pool=(QB_DATA[lvl]||[]).filter(q=>selChs.includes(q.c)&&q.o&&q.o.length>0&&q.r);
+    if(pool.length<5){alert("Not enough MCQ questions for selected chapters. Please select more chapters.");return;}
+    // Shuffle and pick
+    const shuffled=[...pool].sort(()=>Math.random()-0.5);
+    // Try to get balanced sections: prioritise A (MCQ), then spread
+    const mcqs=shuffled.filter(q=>q.s==="A").slice(0,Math.min(numQ,shuffled.length));
+    const final=mcqs.length>=numQ?mcqs.slice(0,numQ):shuffled.slice(0,numQ);
+    setTestQs(final);
+    setStep("running");
+  };
+
+  if(step==="running") return <RunningTest qs={testQs} timeMin={timeMin} lvl={lvl} selChs={selChs} onFinish={onFinish} saveDone={saveDone} user={user}/>;
+
+  const subjLabels={std:"📘 Maths Std",bas:"📗 Maths Basic",sci:"🔬 Science",sst:"🗺️ SST"};
+
+  return(
+    <div style={{minHeight:"100vh",background:"#f1f5f9"}}>
+      <div style={{background:"#0f172a",padding:"12px 20px",display:"flex",alignItems:"center",gap:12}}>
+        <button onClick={onBack} style={{background:"rgba(255,255,255,0.1)",border:"none",color:"#fff",padding:"6px 14px",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600}}>← Back</button>
+        <span style={{color:"#fff",fontWeight:700,fontSize:15}}>🎯 Practice Test Setup</span>
+      </div>
+
+      <div style={{maxWidth:800,margin:"28px auto",padding:"0 20px",display:"flex",flexDirection:"column",gap:16}}>
+
+        {/* Step 1: Subject */}
+        <div style={{background:"#fff",borderRadius:16,padding:"22px 24px",border:"1.5px solid #e2e8f0"}}>
+          <div style={{fontWeight:700,fontSize:15,color:"#1e293b",marginBottom:14}}>1. Choose Subject</div>
+          <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+            {Object.entries(subjLabels).map(([k,v])=>(
+              <button key={k} onClick={()=>{setLvl(k);setSelChs([]);}}
+                style={{padding:"8px 18px",borderRadius:20,border:`2px solid ${lvl===k?"#1e3a8a":"#e2e8f0"}`,background:lvl===k?"#1e3a8a":"#fff",color:lvl===k?"#fff":"#475569",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                {v}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Step 2: Chapters */}
+        <div style={{background:"#fff",borderRadius:16,padding:"22px 24px",border:"1.5px solid #e2e8f0"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+            <div style={{fontWeight:700,fontSize:15,color:"#1e293b"}}>2. Select Chapters <span style={{color:"#6366f1",fontSize:13}}>({selChs.length} selected)</span></div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={selectAll} style={{padding:"5px 12px",borderRadius:8,border:"1.5px solid #6366f1",background:"#eff6ff",color:"#4338ca",fontSize:12,fontWeight:600,cursor:"pointer"}}>Select All</button>
+              <button onClick={clearAll} style={{padding:"5px 12px",borderRadius:8,border:"1.5px solid #e2e8f0",background:"#f8fafc",color:"#64748b",fontSize:12,fontWeight:600,cursor:"pointer"}}>Clear</button>
+            </div>
+          </div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+            {chapters.map(ch=>{
+              const sel=selChs.includes(ch);
+              const qCount=(QB_DATA[lvl]||[]).filter(q=>q.c===ch&&q.o&&q.o.length>0&&q.r).length;
+              return(
+                <div key={ch} onClick={()=>toggleCh(ch)}
+                  style={{padding:"6px 14px",borderRadius:20,border:`1.5px solid ${sel?"#6366f1":"#e2e8f0"}`,background:sel?"#6366f1":"#f8fafc",color:sel?"#fff":"#475569",fontSize:12,fontWeight:500,cursor:"pointer",userSelect:"none",display:"flex",gap:6,alignItems:"center"}}>
+                  {ch}
+                  <span style={{fontSize:10,opacity:0.7}}>({qCount}q)</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Step 3: Settings */}
+        <div style={{background:"#fff",borderRadius:16,padding:"22px 24px",border:"1.5px solid #e2e8f0"}}>
+          <div style={{fontWeight:700,fontSize:15,color:"#1e293b",marginBottom:14}}>3. Test Settings</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:"#64748b",marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>Number of Questions</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {[10,15,20,25,30].map(n=>(
+                  <button key={n} onClick={()=>setNumQ(n)}
+                    style={{padding:"7px 16px",borderRadius:10,border:`2px solid ${numQ===n?"#1e3a8a":"#e2e8f0"}`,background:numQ===n?"#1e3a8a":"#fff",color:numQ===n?"#fff":"#475569",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:"#64748b",marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>Time Limit</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {[15,20,30,45,60].map(m=>(
+                  <button key={m} onClick={()=>setTimeMin(m)}
+                    style={{padding:"7px 16px",borderRadius:10,border:`2px solid ${timeMin===m?"#1e3a8a":"#e2e8f0"}`,background:timeMin===m?"#1e3a8a":"#fff",color:timeMin===m?"#fff":"#475569",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                    {m}m
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Start button */}
+        <button onClick={startTest} disabled={selChs.length===0}
+          style={{padding:"16px",background:selChs.length>0?"linear-gradient(135deg,#1e3a8a,#6366f1)":"#e2e8f0",color:selChs.length>0?"#fff":"#94a3b8",border:"none",borderRadius:16,fontSize:16,fontWeight:800,cursor:selChs.length>0?"pointer":"not-allowed",letterSpacing:0.5}}>
+          {selChs.length>0?`🚀 Start Test — ${numQ} Questions · ${timeMin} Minutes`:"← Select at least one chapter to start"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── RUNNING TEST ────────────────────────────────────────
+function RunningTest({qs,timeMin,lvl,selChs,onFinish,saveDone,user}){
+  const[answers,setAnswers]=useState({});
+  const[current,setCurrent]=useState(0);
+  const[timeLeft,setTimeLeft]=useState(timeMin*60);
+  const[submitted,setSubmitted]=useState(false);
+
+  useEffect(()=>{
+    if(submitted) return;
+    const t=setInterval(()=>{
+      setTimeLeft(s=>{
+        if(s<=1){clearInterval(t);handleSubmit();return 0;}
+        return s-1;
+      });
+    },1000);
+    return()=>clearInterval(t);
+  },[submitted]);
+
+  const handleSubmit=()=>{
+    if(submitted) return;
+    setSubmitted(true);
+    const score=qs.filter((q,i)=>answers[i]===q.r).length;
+    const pct=Math.round(score/qs.length*100);
+    const testKey="test_"+Date.now();
+    const result={score,total:qs.length,pct,subject:lvl,chapters:selChs,date:new Date().toLocaleDateString("en-IN"),qs,answers};
+    saveDone(testKey,result);
+    onFinish(result);
+  };
+
+  const mm=String(Math.floor(timeLeft/60)).padStart(2,"0");
+  const ss=String(timeLeft%60).padStart(2,"0");
+  const urgent=timeLeft<300;
+  const q=qs[current];
+  const answered=Object.keys(answers).length;
+
+  return(
+    <div style={{minHeight:"100vh",background:"#0f172a",display:"flex",flexDirection:"column"}}>
+      {/* Timer bar */}
+      <div style={{background:urgent?"#7f1d1d":"#1e293b",padding:"10px 20px",display:"flex",alignItems:"center",gap:16,position:"sticky",top:0,zIndex:100}}>
+        <span style={{color:urgent?"#fca5a5":"#94a3b8",fontSize:12}}>Question {current+1}/{qs.length}</span>
+        <div style={{flex:1,height:6,background:"rgba(255,255,255,0.1)",borderRadius:3,overflow:"hidden"}}>
+          <div style={{width:(answered/qs.length*100)+"%",height:"100%",background:"#6366f1",borderRadius:3}}/>
+        </div>
+        <span style={{color:urgent?"#ef4444":"#fbbf24",fontWeight:800,fontSize:16,fontFamily:"monospace"}}>{mm}:{ss}</span>
+        <button onClick={()=>{if(window.confirm("Submit test now?")) handleSubmit();}}
+          style={{background:"#6366f1",color:"#fff",border:"none",borderRadius:8,padding:"6px 16px",cursor:"pointer",fontWeight:700,fontSize:12}}>
+          Submit ({answered}/{qs.length})
+        </button>
+      </div>
+
+      <div style={{flex:1,display:"flex",maxWidth:1000,margin:"0 auto",width:"100%",padding:"20px",gap:16}}>
+        {/* Question panel */}
+        <div style={{flex:1,background:"#1e293b",borderRadius:16,padding:"28px",border:"1px solid rgba(255,255,255,0.1)"}}>
+          <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
+            <span style={{background:"rgba(99,102,241,0.3)",color:"#a5b4fc",padding:"3px 12px",borderRadius:20,fontSize:11,fontWeight:700}}>{q.c}</span>
+            <span style={{background:"rgba(255,255,255,0.08)",color:"#94a3b8",padding:"3px 10px",borderRadius:20,fontSize:11}}>{q.m} mark{q.m>1?"s":""}</span>
+          </div>
+          <div style={{fontSize:15,lineHeight:1.8,color:"#e2e8f0",marginBottom:24}} dangerouslySetInnerHTML={{__html:q.q}}/>
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {q.o.map((opt,i)=>{
+              const letter=opt.substring(0,1);
+              const sel=answers[current]===letter;
+              return(
+                <div key={i} onClick={()=>!submitted&&setAnswers(a=>({...a,[current]:letter}))}
+                  style={{padding:"12px 16px",borderRadius:12,border:`2px solid ${sel?"#6366f1":"rgba(255,255,255,0.1)"}`,background:sel?"rgba(99,102,241,0.2)":"rgba(255,255,255,0.04)",color:sel?"#a5b4fc":"#cbd5e1",cursor:"pointer",display:"flex",gap:12,alignItems:"flex-start",transition:"all 0.15s"}}>
+                  <span style={{fontWeight:800,fontSize:14,minWidth:20,color:sel?"#818cf8":"#64748b"}}>{letter}</span>
+                  <span style={{fontSize:14,lineHeight:1.6}} dangerouslySetInnerHTML={{__html:opt.substring(3)}}/>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",marginTop:24}}>
+            <button onClick={()=>setCurrent(c=>Math.max(0,c-1))} disabled={current===0}
+              style={{padding:"8px 20px",borderRadius:10,border:"1.5px solid rgba(255,255,255,0.15)",background:"transparent",color:current===0?"#334155":"#94a3b8",cursor:current===0?"not-allowed":"pointer",fontSize:13,fontWeight:600}}>
+              ← Prev
+            </button>
+            {current<qs.length-1?(
+              <button onClick={()=>setCurrent(c=>c+1)}
+                style={{padding:"8px 20px",borderRadius:10,border:"none",background:"#6366f1",color:"#fff",cursor:"pointer",fontSize:13,fontWeight:600}}>
+                Next →
+              </button>
+            ):(
+              <button onClick={()=>{if(window.confirm("Submit test?")) handleSubmit();}}
+                style={{padding:"8px 20px",borderRadius:10,border:"none",background:"#10b981",color:"#fff",cursor:"pointer",fontSize:13,fontWeight:700}}>
+                ✓ Submit Test
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Question grid */}
+        <div style={{width:200,background:"#1e293b",borderRadius:16,padding:"16px",border:"1px solid rgba(255,255,255,0.1)",alignSelf:"flex-start",position:"sticky",top:80}}>
+          <div style={{color:"#94a3b8",fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:1,marginBottom:12}}>Questions</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:5}}>
+            {qs.map((_,i)=>(
+              <button key={i} onClick={()=>setCurrent(i)}
+                style={{width:28,height:28,borderRadius:7,border:`2px solid ${i===current?"#6366f1":answers[i]?"#10b981":"rgba(255,255,255,0.15)"}`,background:i===current?"#6366f1":answers[i]?"rgba(16,185,129,0.2)":"transparent",color:i===current?"#fff":answers[i]?"#6ee7b7":"#64748b",fontSize:11,fontWeight:700,cursor:"pointer"}}>
+                {i+1}
+              </button>
+            ))}
+          </div>
+          <div style={{marginTop:14,fontSize:11,color:"#475569"}}>
+            <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:4}}><span style={{width:12,height:12,borderRadius:3,background:"rgba(16,185,129,0.4)",display:"inline-block"}}/> Answered ({answered})</div>
+            <div style={{display:"flex",gap:6,alignItems:"center"}}><span style={{width:12,height:12,borderRadius:3,background:"rgba(255,255,255,0.1)",display:"inline-block"}}/> Skipped ({qs.length-answered})</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── TEST RESULT ─────────────────────────────────────────
+function TestResult({result,onBack,onRetry}){
+  const{score,total,pct,qs,answers,subject,chapters}=result;
+  const[showAll,setShowAll]=useState(false);
+  const[filter,setFilter]=useState("all"); // all | correct | wrong
+  const grade=pct>=80?"🏆 Excellent":pct>=70?"⭐ Good":pct>=50?"📈 Average":"📚 Need Practice";
+  const gradeColor=pct>=70?"#10b981":pct>=50?"#f59e0b":"#ef4444";
+  const subjLabel={std:"Maths Std",bas:"Maths Basic",sci:"Science",sst:"SST"}[subject]||subject;
+
+  const filtered=qs.filter((_,i)=>{
+    if(filter==="correct") return answers[i]===qs[i].r;
+    if(filter==="wrong")   return answers[i]!==qs[i].r;
+    return true;
+  });
+
+  return(
+    <div style={{minHeight:"100vh",background:"#0f172a"}}>
+      {/* Header */}
+      <div style={{background:"#1e293b",padding:"14px 24px",display:"flex",alignItems:"center",gap:12}}>
+        <button onClick={onBack} style={{background:"rgba(255,255,255,0.1)",border:"none",color:"#fff",padding:"6px 14px",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600}}>← Home</button>
+        <span style={{color:"#fff",fontWeight:700,fontSize:15}}>Test Results</span>
+        <button onClick={onRetry} style={{marginLeft:"auto",background:"#6366f1",border:"none",color:"#fff",padding:"6px 16px",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600}}>🔄 Retry</button>
+      </div>
+
+      <div style={{maxWidth:900,margin:"28px auto",padding:"0 20px"}}>
+        {/* Score card */}
+        <div style={{background:"linear-gradient(135deg,#1e293b,#0f172a)",borderRadius:24,padding:"36px",border:"1px solid rgba(255,255,255,0.1)",textAlign:"center",marginBottom:24}}>
+          <div style={{fontSize:56,fontWeight:900,color:gradeColor,lineHeight:1}}>{pct}%</div>
+          <div style={{fontSize:22,color:"#fff",fontWeight:700,margin:"12px 0 6px"}}>{grade}</div>
+          <div style={{color:"#94a3b8",fontSize:14}}>{score} correct out of {total} questions</div>
+          <div style={{color:"#64748b",fontSize:12,marginTop:4}}>{subjLabel} · {chapters.slice(0,3).join(", ")}{chapters.length>3?` +${chapters.length-3} more`:""}</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:16,marginTop:28}}>
+            {[
+              {l:"Correct",v:score,c:"#10b981"},
+              {l:"Wrong",v:total-score-(qs.filter((_,i)=>!answers[i]).length),c:"#ef4444"},
+              {l:"Skipped",v:qs.filter((_,i)=>!answers[i]).length,c:"#f59e0b"},
+            ].map(s=>(
+              <div key={s.l} style={{background:"rgba(255,255,255,0.05)",borderRadius:14,padding:"14px"}}>
+                <div style={{fontSize:28,fontWeight:800,color:s.c}}>{s.v}</div>
+                <div style={{fontSize:12,color:"#64748b",marginTop:2}}>{s.l}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Solutions */}
+        <div style={{background:"#1e293b",borderRadius:16,padding:"20px",border:"1px solid rgba(255,255,255,0.1)"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+            <div style={{color:"#fff",fontWeight:700,fontSize:15}}>📖 Review Solutions</div>
+            <div style={{display:"flex",gap:8}}>
+              {["all","correct","wrong"].map(f=>(
+                <button key={f} onClick={()=>setFilter(f)}
+                  style={{padding:"5px 14px",borderRadius:20,border:`1.5px solid ${filter===f?"#6366f1":"rgba(255,255,255,0.15)"}`,background:filter===f?"#6366f1":"transparent",color:filter===f?"#fff":"#94a3b8",fontSize:12,fontWeight:600,cursor:"pointer",textTransform:"capitalize"}}>
+                  {f==="all"?"All":f==="correct"?"✓ Correct":"✗ Wrong"}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            {(showAll?filtered:filtered.slice(0,10)).map((q,fi)=>{
+              const realIdx=qs.indexOf(q);
+              const chosen=answers[realIdx];
+              const isCorrect=chosen===q.r;
+              return(
+                <div key={fi} style={{background:"rgba(255,255,255,0.04)",borderRadius:12,padding:"16px",border:`1px solid ${isCorrect?"rgba(16,185,129,0.3)":"rgba(239,68,68,0.3)"}`}}>
+                  <div style={{display:"flex",gap:8,marginBottom:10,alignItems:"center"}}>
+                    <span style={{fontSize:18}}>{isCorrect?"✅":"❌"}</span>
+                    <span style={{color:"#94a3b8",fontSize:11,background:"rgba(255,255,255,0.06)",padding:"2px 8px",borderRadius:20}}>{q.c}</span>
+                    {!chosen&&<span style={{color:"#f59e0b",fontSize:11,fontWeight:600}}>Skipped</span>}
+                  </div>
+                  <div style={{fontSize:13,color:"#e2e8f0",lineHeight:1.7,marginBottom:12}} dangerouslySetInnerHTML={{__html:q.q}}/>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:12}}>
+                    {q.o.map((opt,i)=>{
+                      const letter=opt.substring(0,1);
+                      const isRight=letter===q.r;
+                      const isChosen=letter===chosen;
+                      let bg="rgba(255,255,255,0.04)",border="rgba(255,255,255,0.08)",color="#64748b";
+                      if(isRight){bg="rgba(16,185,129,0.15)";border="#10b981";color="#6ee7b7";}
+                      else if(isChosen&&!isRight){bg="rgba(239,68,68,0.15)";border="#ef4444";color="#fca5a5";}
+                      return(
+                        <div key={i} style={{padding:"6px 10px",borderRadius:8,border:`1.5px solid ${border}`,background:bg,fontSize:12,color,display:"flex",gap:8}}>
+                          <span style={{fontWeight:700}}>{letter}</span>
+                          <span dangerouslySetInnerHTML={{__html:opt.substring(3)}}/>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div style={{background:"rgba(16,185,129,0.1)",border:"1px solid rgba(16,185,129,0.3)",borderRadius:8,padding:"10px 12px",fontSize:12,color:"#6ee7b7",lineHeight:1.7}} dangerouslySetInnerHTML={{__html:"<b>Solution:</b> "+q.a}}/>
+                </div>
+              );
+            })}
+            {!showAll&&filtered.length>10&&(
+              <button onClick={()=>setShowAll(true)} style={{padding:"10px",borderRadius:12,border:"1.5px solid rgba(99,102,241,0.4)",background:"rgba(99,102,241,0.1)",color:"#a5b4fc",cursor:"pointer",fontSize:13,fontWeight:600}}>
+                Show all {filtered.length} questions ↓
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 const root=ReactDOM.createRoot(document.getElementById("root"));
 root.render(<App/>);
