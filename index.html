@@ -1967,6 +1967,7 @@ function ParentView({user,testsDB,studentsDB}){
 // ── ADMIN PANEL ──
 function AdminPanel({testsDB,studentsDB,usersDB}){
   const logsDB=useFirestore("loginLogs");
+  const wrongDB=useFirestore("wrongAnswers");
   const[activeTab,setActiveTab]=useState("tests");
   const[resetUser,setResetUser]=useState("");
   const[newPass,setNewPass]=useState("");
@@ -2001,7 +2002,7 @@ function AdminPanel({testsDB,studentsDB,usersDB}){
   };
 
   if(testsDB.loading)return<Spinner/>;
-  const tabs=[{id:"tests",label:"Tests"},{id:"reset",label:"Reset Password"},{id:"parents",label:"Add Parents"},{id:"users",label:"All Users"},{id:"logs",label:"🔐 Login Logs"}];
+  const tabs=[{id:"tests",label:"Tests"},{id:"reset",label:"Reset Password"},{id:"parents",label:"Add Parents"},{id:"users",label:"All Users"},{id:"logs",label:"🔐 Login Logs"},{id:"wrong",label:"❌ Wrong Answers"}];
   return(
     <div className="fi" style={{display:"flex",flexDirection:"column",gap:18}}>
       <div className="grid4" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14}}>
@@ -2165,6 +2166,94 @@ function AdminPanel({testsDB,studentsDB,usersDB}){
           )}
         </Card>
       )}
+      {activeTab==="wrong"&&(()=>{
+        const entries=Object.values(wrongDB.data||{});
+        // Group by chapter
+        const byChapter={};
+        entries.forEach(e=>{
+          if(!byChapter[e.chapter])byChapter[e.chapter]={total:0,students:new Set(),questions:{}};
+          byChapter[e.chapter].total++;
+          byChapter[e.chapter].students.add(e.username);
+          const qKey=e.question;
+          if(!byChapter[e.chapter].questions[qKey])byChapter[e.chapter].questions[qKey]={q:e.question,wrong:0,students:[],chosen:{}};
+          byChapter[e.chapter].questions[qKey].wrong++;
+          byChapter[e.chapter].questions[qKey].students.push(e.name);
+          byChapter[e.chapter].questions[qKey].chosen[e.chosen]=(byChapter[e.chapter].questions[qKey].chosen[e.chosen]||0)+1;
+        });
+        const chapters=Object.entries(byChapter).sort((a,b)=>b[1].total-a[1].total);
+        return(
+          <Card>
+            <div style={{padding:"14px 20px",borderBottom:"1.5px solid #e2e8f0",background:"#f8fafc",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{fontWeight:700,fontSize:14,color:"#1a2e6c"}}>❌ Wrong Answer Analysis</div>
+              <div style={{fontSize:11,color:"#94a3b8"}}>{entries.length} wrong attempts recorded</div>
+            </div>
+            {wrongDB.loading?<div style={{padding:40,textAlign:"center",color:"#94a3b8"}}>Loading...</div>:
+            entries.length===0?<div style={{padding:40,textAlign:"center",color:"#94a3b8"}}>No wrong answers recorded yet. Data appears after students attempt questions.</div>:(
+            <div style={{padding:"0 0 8px"}}>
+              {/* Chapter summary */}
+              <div style={{padding:"14px 20px",borderBottom:"1.5px solid #e2e8f0"}}>
+                <div style={{fontWeight:700,fontSize:13,color:"#1a2e6c",marginBottom:10}}>📊 Chapter Summary — sorted by most mistakes</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                  {chapters.map(([ch,d])=>(
+                    <div key={ch} style={{background:d.total>10?"#fee2e2":d.total>5?"#fef3c7":"#f1f5f9",border:`1.5px solid ${d.total>10?"#fca5a5":d.total>5?"#fde68a":"#e2e8f0"}`,borderRadius:10,padding:"8px 14px",minWidth:140}}>
+                      <div style={{fontWeight:700,fontSize:12,color:"#1e293b"}}>{ch}</div>
+                      <div style={{fontSize:11,color:"#64748b",marginTop:2}}>
+                        <span style={{color:d.total>10?"#dc2626":d.total>5?"#d97706":"#64748b",fontWeight:700}}>{d.total} mistakes</span>
+                        {" · "}{d.students.size} student{d.students.size>1?"s":""}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {/* Per-student breakdown */}
+              <div style={{padding:"14px 20px",borderBottom:"1px solid #f1f5f9"}}>
+                <div style={{fontWeight:700,fontSize:13,color:"#1a2e6c",marginBottom:10}}>👨‍🎓 Student Breakdown</div>
+                {(()=>{
+                  const byStudent={};
+                  entries.forEach(e=>{
+                    if(!byStudent[e.username])byStudent[e.username]={name:e.name,total:0,chapters:{}};
+                    byStudent[e.username].total++;
+                    byStudent[e.username].chapters[e.chapter]=(byStudent[e.username].chapters[e.chapter]||0)+1;
+                  });
+                  return Object.entries(byStudent).sort((a,b)=>b[1].total-a[1].total).map(([uname,d])=>(
+                    <div key={uname} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0",borderBottom:"1px solid #f8fafc"}}>
+                      <div style={{width:36,height:36,borderRadius:"50%",background:"#ede9fe",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>👨‍🎓</div>
+                      <div style={{flex:1}}>
+                        <div style={{fontWeight:600,fontSize:13,color:"#1e293b"}}>{d.name}</div>
+                        <div style={{fontSize:11,color:"#94a3b8",marginTop:2}}>
+                          {Object.entries(d.chapters).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([ch,n])=>`${ch}(${n})`).join(" · ")}
+                        </div>
+                      </div>
+                      <div style={{textAlign:"right"}}>
+                        <div style={{fontSize:18,fontWeight:800,color:d.total>15?"#dc2626":d.total>8?"#d97706":"#64748b"}}>{d.total}</div>
+                        <div style={{fontSize:10,color:"#94a3b8"}}>mistakes</div>
+                      </div>
+                    </div>
+                  ));
+                })()}
+              </div>
+              {/* Most missed questions */}
+              <div style={{padding:"14px 20px"}}>
+                <div style={{fontWeight:700,fontSize:13,color:"#1a2e6c",marginBottom:10}}>🎯 Most Missed Questions</div>
+                {chapters.slice(0,5).map(([ch,d])=>{
+                  const topQs=Object.values(d.questions).sort((a,b)=>b.wrong-a.wrong).slice(0,3);
+                  return topQs.map((q,i)=>(
+                    <div key={ch+i} style={{background:"#fef2f2",border:"1px solid #fecaca",borderRadius:10,padding:"12px 14px",marginBottom:8}}>
+                      <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                        <span style={{fontSize:11,fontWeight:700,color:"#991b1b",background:"#fee2e2",padding:"2px 8px",borderRadius:20}}>{ch}</span>
+                        <span style={{fontSize:12,fontWeight:700,color:"#dc2626"}}>{q.wrong}× wrong</span>
+                      </div>
+                      <div style={{fontSize:12,color:"#1e293b",lineHeight:1.5,marginBottom:4}}>{q.q}</div>
+                      <div style={{fontSize:11,color:"#94a3b8"}}>Wrong by: {[...new Set(q.students)].slice(0,5).join(", ")}</div>
+                    </div>
+                  ));
+                })}
+              </div>
+            </div>
+            )}
+          </Card>
+        );
+      })()}
     </div>
   );
 }
@@ -2798,7 +2887,7 @@ function App(){
 }
 
 // ── AI HELPER ──
-const AI_KEY = localStorage.getItem("ss_ai_key")||"";
+const AI_KEY = (()=>{try{return localStorage.getItem("ss_ai_key")||"";}catch(e){return "";}})();
 async function askAI(prompt, maxTokens=800){
   try{
     const res = await fetch("https://api.anthropic.com/v1/messages",{
@@ -3368,7 +3457,7 @@ function StudentQB({user,onBack,saved,saveDone}){
           const realIdx=data.indexOf(q);
           const doneKey="done_"+lvl+"_"+realIdx;
           const isDone=saved[doneKey]||false;
-          return <StudentQCard key={realIdx} q={q} isDone={isDone} onToggleDone={()=>saveDone(doneKey,!isDone)} diffColors={diffColors} diffLabels={diffLabels}/>;
+          return <StudentQCard key={realIdx} q={q} isDone={isDone} onToggleDone={()=>saveDone(doneKey,!isDone)} diffColors={diffColors} diffLabels={diffLabels} user={user} lvl={lvl}/>;
         })}
         {filtered.length===0&&<div style={{gridColumn:"1/-1",textAlign:"center",padding:"60px 20px",color:"#94a3b8",fontSize:15}}>No questions match your filters.</div>}
       </div>
@@ -3376,7 +3465,7 @@ function StudentQB({user,onBack,saved,saveDone}){
   );
 }
 
-function StudentQCard({q,isDone,onToggleDone,diffColors,diffLabels}){
+function StudentQCard({q,isDone,onToggleDone,diffColors,diffLabels,user,lvl}){
   const[showAns,setShowAns]=useState(false);
   const[picked,setPicked]=useState(null);
   const typeLabel={mcq:"MCQ",ar:"A/R",vsa:"VSA",sa:"Short",la:"Long",cs:"Case Study",sb:"Source"};
@@ -3403,7 +3492,7 @@ function StudentQCard({q,isDone,onToggleDone,diffColors,diffLabels}){
               else if(isChosen){bg="#fee2e2";border="#fca5a5";color="#dc2626";}
             }
             return(
-              <div key={i} onClick={()=>!picked&&setPicked(letter)}
+              <div key={i} onClick={()=>{if(picked)return;setPicked(letter);if(letter!==q.r&&user&&window.__db){try{const lk="wrong_"+Date.now()+"_"+(user.username||"");window.__fbSetDoc(window.__fbDoc(window.__db,"wrongAnswers",lk),{username:user.username,name:user.name,chapter:q.c,subject:lvl||"qb",question:(q.q||"").replace(/<[^>]+>/g,"").substring(0,120),chosen:letter,correct:q.r,section:q.s,timestamp:new Date().toISOString(),source:"qb"});}catch(e){}}}}
                 style={{padding:"6px 10px",borderRadius:8,border:`1.5px solid ${border}`,background:bg,fontSize:12,color,cursor:picked?"default":"pointer",display:"flex",gap:6,alignItems:"flex-start",userSelect:"none"}}>
                 <span style={{fontWeight:700,minWidth:14}}>{letter}</span>
                 <span dangerouslySetInnerHTML={{__html:opt.substring(3)}}/>
@@ -3566,6 +3655,24 @@ function RunningTest({qs,timeMin,lvl,selChs,onFinish,saveDone,user}){
     const testKey="test_"+Date.now();
     const result={score,total:qs.length,pct,subject:lvl,chapters:selChs,date:new Date().toLocaleDateString("en-IN"),qs,answers};
     saveDone(testKey,result);
+    // Log wrong answers to Firebase
+    if(user&&window.__db){
+      try{
+      qs.forEach((q,i)=>{
+        const chosen=answers[i];
+        if(chosen&&chosen!==q.r){
+          const lk="wrong_"+Date.now()+"_"+i+"_"+(user.username||"");
+          window.__fbSetDoc(window.__fbDoc(window.__db,"wrongAnswers",lk),{
+            username:user.username,name:user.name,
+            chapter:q.c,subject:lvl,
+            question:(q.q||"").replace(/<[^>]+>/g,"").substring(0,120),
+            chosen,correct:q.r,section:q.s,
+            timestamp:new Date().toISOString(),source:"test"
+          });
+        }
+      });
+      }catch(e){}
+    }
     onFinish(result);
   };
 
@@ -3658,7 +3765,7 @@ function TestResult({result,onBack,onRetry}){
   const[filter,setFilter]=useState("all"); // all | correct | wrong
   const grade=pct>=80?"🏆 Excellent":pct>=70?"⭐ Good":pct>=50?"📈 Average":"📚 Need Practice";
   const gradeColor=pct>=70?"#10b981":pct>=50?"#f59e0b":"#ef4444";
-  const subjLabel={std:"Maths Std",bas:"Maths Basic",sci:"Science",sst:"SST"}[subject]||subject;
+  const subjLabel=({"std":"Maths Std","bas":"Maths Basic","sci":"Science","sst":"SST"}[subject]||subject)||subject;
 
   const filtered=qs.filter((_,i)=>{
     if(filter==="correct") return answers[i]===qs[i].r;
