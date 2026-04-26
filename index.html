@@ -1075,11 +1075,26 @@ const DEFAULT_USERS={
   computer8:{password:"Stepping@computer",role:"teacher",name:"Computer Teacher (Class 8)",classes:["Class 8"],subjects:["Computer"]},
   computer9:{password:"Stepping@computer",role:"teacher",name:"Computer Teacher (Class 9)",classes:["Class 9"],subjects:["Computer"]},
   computer10:{password:"Stepping@computer",role:"teacher",name:"Computer Teacher (Class 10)",classes:["Class 10"],subjects:["Computer"]},
-  student10a:{password:"Study@2027",role:"student",name:"Topper A",classes:["Class 10"],subjects:null},
-  student10b:{password:"Study@2027",role:"student",name:"Topper B",classes:["Class 10"],subjects:null},
-  student10c:{password:"Study@2027",role:"student",name:"Topper C",classes:["Class 10"],subjects:null},
-  student10d:{password:"Study@2027",role:"student",name:"Topper D",classes:["Class 10"],subjects:null},
-  student10e:{password:"Study@2027",role:"student",name:"Topper E",classes:["Class 10"],subjects:null},
+  suryansh:{password:"Study@2027",role:"student",name:"Suryansh Pandey (10A)",classes:["Class 10"],subjects:null},
+  alaina:{password:"Study@2027",role:"student",name:"Alaina (10A)",classes:["Class 10"],subjects:null},
+  krishna:{password:"Study@2027",role:"student",name:"Krishna Jaiswal (10B)",classes:["Class 10"],subjects:null},
+  salviya:{password:"Study@2027",role:"student",name:"Salviya Khatoon (10A)",classes:["Class 10"],subjects:null},
+  prateek:{password:"Study@2027",role:"student",name:"Prateek Yadav (10B)",classes:["Class 10"],subjects:null},
+  sabhya:{password:"Study@2027",role:"student",name:"Sabhya Yadav (10B)",classes:["Class 10"],subjects:null},
+  iqrafatma:{password:"Study@2027",role:"student",name:"Iqra Fatma (10A)",classes:["Class 10"],subjects:null},
+  tashkeer:{password:"Study@2027",role:"student",name:"Tashkeer Raza (10A)",classes:["Class 10"],subjects:null},
+  shambhavi:{password:"Study@2027",role:"student",name:"Shambhavi Pandey (10B)",classes:["Class 10"],subjects:null},
+  tabinda:{password:"Study@2027",role:"student",name:"Tabinda Abbas (10B)",classes:["Class 10"],subjects:null},
+  bhavesh:{password:"Study@2027",role:"student",name:"Bhavesh Jumnani (10A)",classes:["Class 10"],subjects:null},
+  adyansh:{password:"Study@2027",role:"student",name:"Adyansh Yadav (10B)",classes:["Class 10"],subjects:null},
+  satwik:{password:"Study@2027",role:"student",name:"Satwik Raj Dwivedi (10B)",classes:["Class 10"],subjects:null},
+  iqrakhan:{password:"Study@2027",role:"student",name:"Iqra Khan (10A)",classes:["Class 10"],subjects:null},
+  rida:{password:"Study@2027",role:"student",name:"Rida Jabeen (10A)",classes:["Class 10"],subjects:null},
+  ifrat:{password:"Study@2027",role:"student",name:"Ifrat Naseem (10A)",classes:["Class 10"],subjects:null},
+  shifa:{password:"Study@2027",role:"student",name:"Shifa Sheikh (10A)",classes:["Class 10"],subjects:null},
+  kajal:{password:"Study@2027",role:"student",name:"Kajal Maddheshiya (10B)",classes:["Class 10"],subjects:null},
+  rajveer:{password:"Study@2027",role:"student",name:"Rajveer Singh (10B)",classes:["Class 10"],subjects:null},
+  ajitesh:{password:"Study@2027",role:"student",name:"Ajitesh Kumar (10A)",classes:["Class 10"],subjects:null},
   vp:{password:"Stepping@vp",role:"admin",name:"Vice Principal",classes:null,subjects:null},
 };
 
@@ -3061,8 +3076,75 @@ function AIPanel({testsDB, studentsDB, topicsDB}){
 // STUDENT PORTAL — QB Browser + Practice Tests
 // ═══════════════════════════════════════════════════════
 
+function ChangePassword({user,onBack}){
+  const[curr,setCurr]=useState("");
+  const[newP,setNewP]=useState("");
+  const[conf,setConf]=useState("");
+  const[msg,setMsg]=useState("");
+  const[err,setErr]=useState("");
+
+  const save=async()=>{
+    setMsg("");setErr("");
+    if(!curr){setErr("Enter your current password.");return;}
+    if(newP.length<6){setErr("New password must be at least 6 characters.");return;}
+    if(newP!==conf){setErr("Passwords do not match.");return;}
+    // Verify current password against Firebase users collection or DEFAULT_USERS
+    const storedPass=(window.__db)?null:DEFAULT_USERS[user.username]?.password;
+    // Save new password to Firebase users collection
+    try{
+      if(window.__db){
+        await window.__fbSetDoc(window.__fbDoc(window.__db,"users",user.username),{
+          ...user, password:newP
+        });
+        setMsg("✓ Password changed successfully! Use your new password next time you log in.");
+        setCurr("");setNewP("");setConf("");
+      } else {
+        setErr("Cannot save — Firebase not connected.");
+      }
+    }catch(e){setErr("Error saving: "+e.message);}
+  };
+
+  return(
+    <div style={{minHeight:"100vh",background:"linear-gradient(150deg,#0f172a 0%,#1e3a8a 60%,#b8860b 100%)",display:"flex",flexDirection:"column"}}>
+      <div style={{background:"rgba(0,0,0,0.3)",backdropFilter:"blur(10px)",padding:"14px 24px",display:"flex",alignItems:"center",gap:12}}>
+        <button onClick={onBack} style={{background:"rgba(255,255,255,0.1)",border:"none",color:"#fff",padding:"6px 14px",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600}}>← Back</button>
+        <span style={{color:"#fff",fontWeight:700,fontSize:15}}>🔑 Change Password</span>
+      </div>
+      <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+        <div style={{background:"rgba(255,255,255,0.08)",backdropFilter:"blur(10px)",borderRadius:20,padding:"32px 28px",width:"100%",maxWidth:400,border:"1px solid rgba(255,255,255,0.12)"}}>
+          <div style={{color:"#fff",fontWeight:800,fontSize:18,marginBottom:6}}>Set New Password</div>
+          <div style={{color:"rgba(255,255,255,0.45)",fontSize:13,marginBottom:24}}>Logged in as <b style={{color:"#fbbf24"}}>{user.name}</b></div>
+
+          {err&&<div style={{background:"rgba(239,68,68,0.2)",border:"1px solid #ef4444",borderRadius:10,padding:"10px 14px",color:"#fca5a5",fontSize:13,marginBottom:16}}>{err}</div>}
+          {msg&&<div style={{background:"rgba(16,185,129,0.2)",border:"1px solid #10b981",borderRadius:10,padding:"10px 14px",color:"#6ee7b7",fontSize:13,marginBottom:16}}>{msg}</div>}
+
+          {[
+            {label:"Current Password",val:curr,set:setCurr},
+            {label:"New Password",val:newP,set:setNewP},
+            {label:"Confirm New Password",val:conf,set:setConf},
+          ].map(({label,val,set})=>(
+            <div key={label} style={{marginBottom:16}}>
+              <div style={{color:"rgba(255,255,255,0.6)",fontSize:12,fontWeight:600,marginBottom:6,textTransform:"uppercase",letterSpacing:1}}>{label}</div>
+              <input type="password" value={val} onChange={e=>set(e.target.value)}
+                style={{width:"100%",padding:"10px 14px",borderRadius:10,border:"1.5px solid rgba(255,255,255,0.15)",background:"rgba(255,255,255,0.08)",color:"#fff",fontSize:14,outline:"none",boxSizing:"border-box"}}/>
+            </div>
+          ))}
+
+          <button onClick={save}
+            style={{width:"100%",padding:"12px",background:"linear-gradient(135deg,#1e3a8a,#6366f1)",color:"#fff",border:"none",borderRadius:12,fontSize:15,fontWeight:700,cursor:"pointer",marginTop:8}}>
+            Save Password
+          </button>
+          <div style={{color:"rgba(255,255,255,0.3)",fontSize:11,textAlign:"center",marginTop:12}}>
+            Your teacher will not see your new password.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function StudentPortal({user}){
-  const[view,setView]=useState("home"); // home | qbank | test | result
+  const[view,setView]=useState("home"); // home | qbank | test | result | password
   const[testResult,setTestResult]=useState(null);
   const subj_map={std:"📘 Maths Std",bas:"📗 Maths Basic",sci:"🔬 Science",sst:"🗺️ SST"};
 
@@ -3072,6 +3154,7 @@ function StudentPortal({user}){
   const [saved,setSaved]=useState(getSaved);
   const saveDone=(key,val)=>{const s={...getSaved(),[key]:val};localStorage.setItem(storageKey,JSON.stringify(s));setSaved(s);};
 
+  if(view==="password") return <ChangePassword user={user} onBack={()=>setView("home")}/>;
   if(view==="test")   return <PracticeTest user={user} onBack={()=>setView("home")} onFinish={r=>{setTestResult(r);setView("result");}} saved={saved} saveDone={saveDone}/>;
   if(view==="result") return <TestResult result={testResult} onBack={()=>setView("home")} onRetry={()=>setView("test")}/>;
   if(view==="qbank")  return <StudentQB user={user} onBack={()=>setView("home")} saved={saved} saveDone={saveDone}/>;
@@ -3151,6 +3234,18 @@ function StudentPortal({user}){
               <span style={{color:"#a5b4fc",fontSize:12,fontWeight:600}}>⚡ Instant scoring + full solutions</span>
             </div>
           </div>
+        </div>
+
+        {/* Change Password card */}
+        <div onClick={()=>setView("password")} style={{marginTop:16,background:"rgba(255,255,255,0.06)",backdropFilter:"blur(10px)",borderRadius:16,padding:"16px 24px",cursor:"pointer",border:"1px solid rgba(255,255,255,0.1)",display:"flex",alignItems:"center",gap:16,transition:"all 0.2s"}}
+          onMouseEnter={e=>{e.currentTarget.style.background="rgba(255,255,255,0.12)";}}
+          onMouseLeave={e=>{e.currentTarget.style.background="rgba(255,255,255,0.06)";}}>
+          <div style={{fontSize:28}}>🔑</div>
+          <div>
+            <div style={{color:"#fff",fontWeight:700,fontSize:14}}>Change Password</div>
+            <div style={{color:"rgba(255,255,255,0.45)",fontSize:12,marginTop:2}}>Set a personal password for your account</div>
+          </div>
+          <div style={{marginLeft:"auto",color:"rgba(255,255,255,0.3)",fontSize:20}}>›</div>
         </div>
 
         {/* Past test results */}
