@@ -1655,6 +1655,255 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB}){
   );
 }
 
+
+// ── CLASS OVERVIEW ──────────────────────────────────────
+function SubjectBar({label,pct}){
+  const color=pct>=60?"#16a34a":pct>=40?"#d97706":"#dc2626";
+  return(
+    <div style={{marginBottom:12}}>
+      <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+        <span style={{fontSize:13,fontWeight:600,color:"#1e293b"}}>{label}</span>
+        <span style={{fontSize:13,fontWeight:700,color}}>{pct}%</span>
+      </div>
+      <div style={{height:8,background:"#f1f5f9",borderRadius:99,overflow:"hidden"}}>
+        <div style={{height:"100%",width:pct+"%",background:color,borderRadius:99}}/>
+      </div>
+    </div>
+  );
+}
+
+function ClassOverview({user,testsDB,studentsDB}){
+  const aC=user.role==="admin"?SCHOOL.classes:(user.classes||SCHOOL.classes);
+  const[cls,setCls]=useState(aC[0]||"Class 10");
+
+  const SUBJ_LABELS={std:"Maths Std",bas:"Maths Basic",sci:"Science",sst:"Social Science",
+    maths:"Mathematics",english:"English",hindi:"Hindi",computer:"Computer",sanskrit:"Sanskrit"};
+
+  const allTests=useMemo(()=>Object.values(testsDB.data||{}).filter(tt=>tt.cls===cls),[testsDB.data,cls]);
+
+  // Subject averages
+  const subjAvgs=useMemo(()=>{
+    const map={};
+    allTests.forEach(test=>{
+      const subj=test.subj||"";
+      const maxMark=Number(test.total)||80;
+      if(!map[subj])map[subj]={sum:0,n:0,max:maxMark};
+      Object.values(test.rows||{}).forEach(v=>{
+        if(v!==null&&v!==undefined&&v!==""){map[subj].sum+=Number(v);map[subj].n++;}
+      });
+    });
+    return Object.entries(map)
+      .filter(([,d])=>d.n>0)
+      .map(([subj,d])=>({subj,pct:Math.round(d.sum/d.n/d.max*100),n:d.n}))
+      .sort((a,b)=>a.pct-b.pct);
+  },[allTests]);
+
+  // Student averages
+  const stuAvgs=useMemo(()=>{
+    const map={};
+    allTests.forEach(test=>{
+      const maxMark=Number(test.total)||80;
+      Object.entries(test.rows||{}).forEach(([stu,val])=>{
+        if(val===null||val===undefined||val==="")return;
+        if(!map[stu])map[stu]={sum:0,maxSum:0,n:0,subjs:{}};
+        map[stu].sum+=Number(val);
+        map[stu].maxSum+=maxMark;
+        map[stu].n++;
+        const s=test.subj||"";
+        if(!map[stu].subjs[s])map[stu].subjs[s]={sum:0,maxSum:0};
+        map[stu].subjs[s].sum+=Number(val);
+        map[stu].subjs[s].maxSum+=maxMark;
+      });
+    });
+    return Object.entries(map).map(([stu,d])=>{
+      const pct=d.maxSum?Math.round(d.sum/d.maxSum*100):0;
+      const worst=Object.entries(d.subjs)
+        .map(([s,v])=>({s,pct:v.maxSum?Math.round(v.sum/v.maxSum*100):0}))
+        .sort((a,b)=>a.pct-b.pct)[0];
+      return{stu,pct,n:d.n,worstSubj:worst?SUBJ_LABELS[worst.s]||worst.s:"",worstPct:worst?worst.pct:0};
+    }).sort((a,b)=>a.pct-b.pct);
+  },[allTests]);
+
+  // Weakest topics from teacher-entered test marks
+  const weakChapters=useMemo(()=>{
+    const map={};
+    allTests.forEach(test=>{
+      const topics=test.topics||[];
+      if(!topics.length) return;
+      const maxMark=Number(test.total)||80;
+      const vals=Object.values(test.rows||{}).filter(v=>v!==null&&v!==undefined&&v!=="").map(Number);
+      if(!vals.length) return;
+      const avg=vals.reduce((a,b)=>a+b,0)/vals.length;
+      const pct=Math.round(avg/maxMark*100);
+      topics.forEach(topic=>{
+        if(!map[topic])map[topic]={topic,sumPct:0,n:0,subj:test.subj||""};
+        map[topic].sumPct+=pct;
+        map[topic].n++;
+      });
+    });
+    return Object.values(map)
+      .filter(c=>c.n>0)
+      .map(c=>({...c,avgPct:Math.round(c.sumPct/c.n)}))
+      .sort((a,b)=>a.avgPct-b.avgPct)
+      .slice(0,8);
+  },[allTests]);
+
+  const classAvg=stuAvgs.length?Math.round(stuAvgs.reduce((a,b)=>a+b.pct,0)/stuAvgs.length):0;
+  const weakestSubj=subjAvgs[0];
+  const needAttn=stuAvgs.filter(s=>s.pct<40).length;
+
+  if(testsDB.loading||studentsDB.loading)return <Spinner/>;
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:18}}>
+      <div style={{background:"linear-gradient(135deg,#1a2e6c,#3730a3)",borderRadius:16,padding:"20px 24px",color:"#fff"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
+          <div>
+            <div style={{fontSize:11,color:"rgba(255,255,255,.5)",letterSpacing:2,textTransform:"uppercase",marginBottom:4}}>Class Overview</div>
+            <div style={{fontSize:22,fontWeight:800}}>📈 Performance Dashboard</div>
+            <div style={{fontSize:13,color:"rgba(255,255,255,.55)",marginTop:4}}>{cls} · {allTests.length} tests · {stuAvgs.length} students tracked</div>
+          </div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {aC.map(c=>(
+              <button key={c} onClick={()=>setCls(c)}
+                style={{padding:"6px 16px",borderRadius:20,border:"2px solid "+(cls===c?"#fff":"rgba(255,255,255,0.3)"),background:cls===c?"rgba(255,255,255,0.2)":"transparent",color:"#fff",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                {c.replace("Class ","")}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {allTests.length===0?(
+        <Card><div style={{padding:60,textAlign:"center",color:"#94a3b8"}}>
+          <div style={{fontSize:40,marginBottom:12}}>📊</div>
+          <div style={{fontWeight:700,fontSize:16,marginBottom:6}}>No test data for {cls} yet</div>
+          <div style={{fontSize:13}}>Enter marks in the Enter Marks tab to see the overview.</div>
+        </div></Card>
+      ):(
+        <div style={{display:"flex",flexDirection:"column",gap:18}}>
+          <div className="grid4" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14}}>
+            {[
+              {label:"Class Average",val:classAvg+"%",icon:"🎯",color:classAvg>=60?"#16a34a":classAvg>=40?"#d97706":"#dc2626"},
+              {label:"Tests Conducted",val:allTests.length,icon:"📝",color:"#6366f1"},
+              {label:"Weakest Subject",val:weakestSubj?SUBJ_LABELS[weakestSubj.subj]||weakestSubj.subj:"—",icon:"⚠️",color:"#dc2626"},
+              {label:"Needs Attention",val:needAttn,icon:"🚨",color:needAttn>0?"#dc2626":"#16a34a"},
+            ].map(function(item){
+              return(
+                <Card key={item.label} style={{padding:"18px 20px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                    <div>
+                      <div style={{fontSize:11,color:"#94a3b8",fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>{item.label}</div>
+                      <div style={{fontSize:22,fontWeight:800,color:item.color}}>{item.val}</div>
+                    </div>
+                    <div style={{fontSize:28}}>{item.icon}</div>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:18}}>
+            <Card>
+              <div style={{padding:"14px 20px",borderBottom:"1.5px solid #e2e8f0",fontWeight:700,fontSize:14,color:"#1a2e6c"}}>📚 Subject Averages</div>
+              <div style={{padding:"16px 20px"}}>
+                {subjAvgs.length===0
+                  ?<div style={{color:"#94a3b8",fontSize:13}}>No data yet</div>
+                  :subjAvgs.map(function(s){return <SubjectBar key={s.subj} label={SUBJ_LABELS[s.subj]||s.subj} pct={s.pct}/>;})
+                }
+              </div>
+            </Card>
+
+            <Card>
+              <div style={{padding:"14px 20px",borderBottom:"1.5px solid #e2e8f0",fontWeight:700,fontSize:14,color:"#1a2e6c"}}>❌ Weakest Chapters</div>
+              <div style={{padding:"14px 20px",display:"flex",flexDirection:"column",gap:8}}>
+                {weakChapters.length===0
+                  ?<div style={{color:"#94a3b8",fontSize:13}}>No topic data yet. Topics appear once marks are entered with topics selected.</div>
+                  :weakChapters.map(function(ch,i){
+                    const col=ch.avgPct<40?"#dc2626":ch.avgPct<60?"#d97706":"#64748b";
+                    return(
+                      <div key={ch.topic} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:i<3?"#fef2f2":"#f8fafc",borderRadius:10,border:"1px solid "+(i<3?"#fecaca":"#e2e8f0")}}>
+                        <div style={{width:22,height:22,borderRadius:"50%",background:i<3?"#dc2626":"#94a3b8",color:"#fff",fontSize:11,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{i+1}</div>
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:12,fontWeight:600,color:"#1e293b"}}>{ch.topic}</div>
+                          <div style={{fontSize:11,color:"#94a3b8"}}>{ch.subj} · {ch.n} test{ch.n>1?"s":""}</div>
+                        </div>
+                        <div style={{fontSize:13,fontWeight:700,color:col}}>{ch.avgPct}%</div>
+                      </div>
+                    );
+                  })
+                }
+              </div>
+            </Card>
+          </div>
+
+          <Card>
+            <div style={{padding:"14px 20px",borderBottom:"1.5px solid #e2e8f0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{fontWeight:700,fontSize:14,color:"#1a2e6c"}}>🚨 Students Needing Attention <span style={{fontSize:11,color:"#94a3b8",fontWeight:400}}>(lowest first)</span></div>
+              <div style={{fontSize:11,color:"#94a3b8"}}>Top 10 weakest</div>
+            </div>
+            <div>
+              {stuAvgs.length===0
+                ?<div style={{padding:40,textAlign:"center",color:"#94a3b8"}}>No student data yet.</div>
+                :stuAvgs.slice(0,10).map(function(s,i){
+                  const color=s.pct>=60?"#16a34a":s.pct>=40?"#d97706":"#dc2626";
+                  return(
+                    <div key={s.stu} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 20px",borderBottom:"1px solid #f1f5f9",background:i%2===0?"#fff":"#fafbfd"}}>
+                      <div style={{width:28,height:28,borderRadius:"50%",background:s.pct<40?"#fee2e2":s.pct<60?"#fef3c7":"#dcfce7",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:800,color,flexShrink:0}}>{i+1}</div>
+                      <div style={{flex:1}}>
+                        <div style={{fontWeight:600,fontSize:13,color:"#1e293b"}}>{s.stu}</div>
+                        <div style={{fontSize:11,color:"#94a3b8",marginTop:2}}>Worst: <span style={{color:"#dc2626",fontWeight:600}}>{s.worstSubj}</span> ({s.worstPct}%)</div>
+                      </div>
+                      <div style={{textAlign:"right",marginRight:12}}>
+                        <div style={{fontSize:20,fontWeight:800,color}}>{s.pct}%</div>
+                        <div style={{fontSize:10,color:"#94a3b8"}}>{s.n} test{s.n>1?"s":""}</div>
+                      </div>
+                      <div style={{width:60,height:6,background:"#f1f5f9",borderRadius:99,overflow:"hidden"}}>
+                        <div style={{height:"100%",width:s.pct+"%",background:color,borderRadius:99}}/>
+                      </div>
+                    </div>
+                  );
+                })
+              }
+            </div>
+          </Card>
+
+          <Card>
+            <div style={{padding:"14px 20px",borderBottom:"1.5px solid #e2e8f0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{fontWeight:700,fontSize:14,color:"#166534"}}>🏆 Top 10 Students <span style={{fontSize:11,color:"#94a3b8",fontWeight:400}}>(highest first)</span></div>
+              <div style={{fontSize:11,color:"#94a3b8"}}>Best performers</div>
+            </div>
+            <div>
+              {stuAvgs.length===0
+                ?<div style={{padding:40,textAlign:"center",color:"#94a3b8"}}>No student data yet.</div>
+                :[...stuAvgs].reverse().slice(0,10).map(function(s,i){
+                    const medals=["🥇","🥈","🥉"];
+                    return(
+                      <div key={s.stu} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 20px",borderBottom:"1px solid #f1f5f9",background:i%2===0?"#fff":"#fafbfd"}}>
+                        <div style={{width:28,height:28,borderRadius:"50%",background:"#dcfce7",display:"flex",alignItems:"center",justifyContent:"center",fontSize:i<3?16:12,fontWeight:800,color:"#166534",flexShrink:0}}>{i<3?medals[i]:i+1}</div>
+                        <div style={{flex:1}}>
+                          <div style={{fontWeight:600,fontSize:13,color:"#1e293b"}}>{s.stu}</div>
+                          <div style={{fontSize:11,color:"#94a3b8",marginTop:2}}>Best: <span style={{color:"#166534",fontWeight:600}}>{s.worstSubj?SUBJ_LABELS[Object.entries(s).find(([k])=>k==="worstSubj")?.[1]]||s.worstSubj:"—"}</span></div>
+                        </div>
+                        <div style={{textAlign:"right",marginRight:12}}>
+                          <div style={{fontSize:20,fontWeight:800,color:"#16a34a"}}>{s.pct}%</div>
+                          <div style={{fontSize:10,color:"#94a3b8"}}>{s.n} test{s.n>1?"s":""}</div>
+                        </div>
+                        <div style={{width:60,height:6,background:"#f1f5f9",borderRadius:99,overflow:"hidden"}}>
+                          <div style={{height:"100%",width:s.pct+"%",background:"#16a34a",borderRadius:99}}/>
+                        </div>
+                      </div>
+                    );
+                  })
+              }
+            </div>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── CLASS PROGRESS ──
 function ClassProgress({user,testsDB,studentsDB}){
   const aC=user.role==="admin"?SCHOOL.classes:(user.classes||SCHOOL.classes);
@@ -1965,9 +2214,8 @@ function ParentView({user,testsDB,studentsDB}){
 }
 
 // ── ADMIN PANEL ──
-function AdminPanel({testsDB,studentsDB,usersDB}){
+function AdminPanel({testsDB,studentsDB,usersDB,wrongDB}){
   const logsDB=useFirestore("loginLogs");
-  const wrongDB=useFirestore("wrongAnswers");
   const[activeTab,setActiveTab]=useState("tests");
   const[resetUser,setResetUser]=useState("");
   const[newPass,setNewPass]=useState("");
@@ -2785,6 +3033,7 @@ function App(){
   const studentsDB=useFirestore("students");
   const attendanceDB=useFirestore("attendance");
   const usersDB=useFirestore("users");
+  const wrongDB=useFirestore("wrongAnswers");
   const handleUpdateUser=updated=>setUser(updated);
   if(!user)return<Login onLogin={u=>{setUser(u);setTab(u.role==="parent"?"parent":u.role==="student"?"student":"dashboard");}} usersDB={usersDB}/>;
   const isParent=user.role==="parent",isAdmin=user.role==="admin",isStudent=user.role==="student";
@@ -2798,6 +3047,7 @@ function App(){
     {id:"topics",label:"Topics",icon:"📝"},
     {id:"attendance",label:"Attendance",icon:"✅"},
     {id:"enter",label:"Enter Marks",icon:"✏️"},
+    {id:"overview",label:"Overview",icon:"📈"},
     {id:"class",label:"Progress",icon:"📊"},
     {id:"student",label:"Report",icon:"👤"},
     ...(isAdmin?[{id:"admin",label:"Admin",icon:"⚙️"}]:[]),
@@ -2839,9 +3089,10 @@ function App(){
         {tab==="topics"&&!isParent&&<ManageTopics topicsDB={topicsDB}/>}
         {tab==="attendance"&&!isParent&&<Attendance user={user} attendanceDB={attendanceDB} studentsDB={studentsDB}/>}
         {tab==="enter"&&!isParent&&<EnterMarks user={user} testsDB={testsDB} topicsDB={topicsDB} studentsDB={studentsDB}/>}
-        {tab==="class"&&!isParent&&<ClassProgress user={user} testsDB={testsDB} studentsDB={studentsDB}/>}
+        {tab==="overview"&&!isParent&&<ClassOverview user={user} testsDB={testsDB} studentsDB={studentsDB}/>}
+      {tab==="class"&&!isParent&&<ClassProgress user={user} testsDB={testsDB} studentsDB={studentsDB}/>}
         {tab==="student"&&!isParent&&<StudentReport user={user} testsDB={testsDB} studentsDB={studentsDB}/>}
-        {tab==="admin"&&isAdmin&&<AdminPanel testsDB={testsDB} studentsDB={studentsDB} usersDB={usersDB}/>}
+        {tab==="admin"&&isAdmin&&<AdminPanel testsDB={testsDB} studentsDB={studentsDB} usersDB={usersDB} wrongDB={wrongDB}/>}
         {tab==="parent"&&isParent&&<ParentView user={user} testsDB={testsDB} studentsDB={studentsDB}/>}
         {tab==="account"&&<AccountSettings user={user} usersDB={usersDB} onUpdate={handleUpdateUser}/> }
         {tab==="ai"&&<AIPanel testsDB={testsDB} studentsDB={studentsDB} topicsDB={topicsDB}/>
@@ -2887,7 +3138,7 @@ function App(){
 }
 
 // ── AI HELPER ──
-const AI_KEY = (()=>{try{return localStorage.getItem("ss_ai_key")||"";}catch(e){return "";}})();
+const AI_KEY = localStorage.getItem("ss_ai_key")||"";
 async function askAI(prompt, maxTokens=800){
   try{
     const res = await fetch("https://api.anthropic.com/v1/messages",{
@@ -3492,7 +3743,7 @@ function StudentQCard({q,isDone,onToggleDone,diffColors,diffLabels,user,lvl}){
               else if(isChosen){bg="#fee2e2";border="#fca5a5";color="#dc2626";}
             }
             return(
-              <div key={i} onClick={()=>{if(picked)return;setPicked(letter);if(letter!==q.r&&user&&window.__db){try{const lk="wrong_"+Date.now()+"_"+(user.username||"");window.__fbSetDoc(window.__fbDoc(window.__db,"wrongAnswers",lk),{username:user.username,name:user.name,chapter:q.c,subject:lvl||"qb",question:(q.q||"").replace(/<[^>]+>/g,"").substring(0,120),chosen:letter,correct:q.r,section:q.s,timestamp:new Date().toISOString(),source:"qb"});}catch(e){}}}}
+              <div key={i} onClick={()=>{if(picked)return;setPicked(letter);if(letter!==q.r&&user&&window.__db){const lk="wrong_"+Date.now()+"_"+(user.username||"");window.__fbSetDoc(window.__fbDoc(window.__db,"wrongAnswers",lk),{username:user.username,name:user.name,chapter:q.c,subject:lvl||"qb",question:(q.q||"").replace(/<[^>]+>/g,"").substring(0,120),chosen:letter,correct:q.r,section:q.s,timestamp:new Date().toISOString(),source:"qb"});}}}
                 style={{padding:"6px 10px",borderRadius:8,border:`1.5px solid ${border}`,background:bg,fontSize:12,color,cursor:picked?"default":"pointer",display:"flex",gap:6,alignItems:"flex-start",userSelect:"none"}}>
                 <span style={{fontWeight:700,minWidth:14}}>{letter}</span>
                 <span dangerouslySetInnerHTML={{__html:opt.substring(3)}}/>
@@ -3657,7 +3908,6 @@ function RunningTest({qs,timeMin,lvl,selChs,onFinish,saveDone,user}){
     saveDone(testKey,result);
     // Log wrong answers to Firebase
     if(user&&window.__db){
-      try{
       qs.forEach((q,i)=>{
         const chosen=answers[i];
         if(chosen&&chosen!==q.r){
@@ -3671,7 +3921,6 @@ function RunningTest({qs,timeMin,lvl,selChs,onFinish,saveDone,user}){
           });
         }
       });
-      }catch(e){}
     }
     onFinish(result);
   };
@@ -3765,7 +4014,7 @@ function TestResult({result,onBack,onRetry}){
   const[filter,setFilter]=useState("all"); // all | correct | wrong
   const grade=pct>=80?"🏆 Excellent":pct>=70?"⭐ Good":pct>=50?"📈 Average":"📚 Need Practice";
   const gradeColor=pct>=70?"#10b981":pct>=50?"#f59e0b":"#ef4444";
-  const subjLabel=({"std":"Maths Std","bas":"Maths Basic","sci":"Science","sst":"SST"}[subject]||subject)||subject;
+  const subjLabel={std:"Maths Std",bas:"Maths Basic",sci:"Science",sst:"SST"}[subject]||subject;
 
   const filtered=qs.filter((_,i)=>{
     if(filter==="correct") return answers[i]===qs[i].r;
