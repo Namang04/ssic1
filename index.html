@@ -256,7 +256,7 @@ std:[// ── SEC A : MCQ & AR ────────────────
 {subj:'mstd',s:'C',t:'sa',c:'Polynomials',d:'m',m:3,q:'If α and β are zeroes of p(x)=2x²−5x+3, find α³β + αβ³.',o:[],a:'<b>Given:</b> p(x) = 2x² – 5x + 3<br><b>Step 1:</b> Find sum and product of zeroes:<br>α + β = –(–5)/2 = 5/2<br>αβ = 3/2<br><b>Step 2:</b> Simplify the expression:<br>α³β + αβ³ = αβ(α² + β²)<br><b>Step 3:</b> Find α² + β²:<br>α² + β² = (α + β)² – 2αβ<br>= (5/2)² – 2(3/2)<br>= 25/4 – 3<br>= 25/4 – 12/4 = 13/4<br><b>Step 4:</b> Calculate:<br>α³β + αβ³ = (3/2) × (13/4) = <b>39/8</b>'},
 {subj:'mstd',s:'C',t:'sa',c:'Polynomials',d:'h',m:3,q:'Divide 2x⁴−3x³−3x²+6x−2 by x²−2 and verify division algorithm.',o:[],a:'<b>Step 1:</b> Long Division of 2x⁴–3x³–3x²+6x–2 by (x²–2):<br>• 2x⁴ ÷ x² = 2x². Multiply: 2x²(x²–2) = 2x⁴–4x²<br>Subtract: –3x³+x²+6x–2<br>• –3x³ ÷ x² = –3x. Multiply: –3x(x²–2) = –3x³+6x<br>Subtract: x²–2<br>• x² ÷ x² = 1. Multiply: 1(x²–2) = x²–2<br>Remainder = 0<br><b>∴ Quotient = 2x²–3x+1, Remainder = 0</b><br><b>Verification (Division Algorithm: Dividend = Divisor × Quotient + Remainder):</b><br>(x²–2)(2x²–3x+1) + 0<br>= 2x⁴–3x³+x²–4x²+6x–2<br>= 2x⁴–3x³–3x²+6x–2 ✓'},
 {subj:'mstd',s:'D',t:'la',c:'Polynomials',d:'h',m:5,q:'(a) If one zero of 5x²+13x+k is the reciprocal of the other, find k. (b) Find all zeroes of 2x⁴−3x³−3x²+6x−2 if two zeroes are √2 and −√2. (c) What are the zeroes of x³−2x²−x+2?',o:[],a:'<b>(a)</b> Let zeroes be α and 1/α.<br>Product of zeroes = α × (1/α) = 1<br>But product = k/5 → k/5 = 1 → <b>k = 5</b><br><br><b>(b)</b> Since √2 and –√2 are zeroes, (x–√2)(x+√2) = (x²–2) is a factor.<br>Divide 2x⁴–3x³–3x²+6x–2 by (x²–2):<br>Quotient = 2x²–3x+1 = (2x–1)(x–1)<br>All zeroes: <b>√2, –√2, ½, 1</b><br><br><b>(c)</b> p(x) = x³–2x²–x+2<br>Try x=1: 1–2–1+2=0 ✓ → (x–1) is a factor<br>Divide: x³–2x²–x+2 = (x–1)(x²–x–2) = (x–1)(x–2)(x+1)<br>Zeroes: <b>1, 2, –1</b>'},
-{subj:'mstd',s:'E',t:'cs',c:'Polynomials',d:'m',m:4,q:'<div class="csb"><b>📋 Case Study — Rectangular Garden</b><br><br>A rectangular garden has area (6x²+x−2) m². If length is (3x−1) m:<br><br><b>(i)</b> Find the breadth. <span class="cm">[1]</span><br><b>(ii)</b> If x=3, find actual dimensions. <span class="cm">[1]</span><br><b>(iii)(a)</b> Find zeroes of 6x²+x−2 and explain their geometric meaning. <span class="cm">[2]</span><br><i>OR</i><br><b>(iii)(b)</b> If x=2, perimeter of garden = ? <span class="cm">[2]</span></div>',o:[],a:'<b>(i)</b> 6x²+x−2=(3x−1)(2x+2)... let me factor: 6x²+x−2=(3x+2)(2x−1). Breadth=(6x²+x−2)/(3x−1). Actually: 6x²+x−2=(2x+1)(3x−2)... try: (3x−1)(2x+2)=6x²+6x−2x−2=6x²+4x−2. No. 6x²+x−2: product=−12, sum=1: 4 and −3. 6x²+4x−3x−2=2x(3x+2)−1(3x+2)=(2x−1)(3x+2). So breadth=(2x+1) — wait, area/length=(2x−1)(3x+2)/(3x−1)... Hmm, let\'s say area=(3x+2)(2x−1), length=(2x−1). Breadth=<b>(3x+2) m</b>.<br><b>(ii)</b> x=3: length=5, breadth=11. Dimensions: <b>5m×11m</b>.<br><b>(iii)(a)</b> Zeroes of 6x²+x−2: x=½ and x=−⅔. These values make area zero — geometrically meaning the garden collapses.<br><b>(iii)(b)</b> x=2: length=3, breadth=8. Perimeter=2(3+8)=<b>22m</b>.'},
+{subj:'mstd',s:'E',t:'cs',c:'Polynomials',d:'h',m:4,q:'<div class="csb"><b>📋 Case Study — Open Box from a Metal Sheet</b><br><br>A rectangular metal sheet measuring 20 cm × 12 cm is to be turned into an open box. Equal squares of side x cm are cut from each of the four corners, and the remaining flaps are folded up to form the sides of the box.<br><br><b>(i)</b> Express the volume V(x) of the box as a polynomial in x. State its degree. <span class="cm">[1]</span><br><b>(ii)</b> For what range of values of x is the construction of the box physically possible? Justify briefly. <span class="cm">[1]</span><br><b>(iii)(a)</b> Find all three zeros of V(x) and explain the physical meaning of each zero. <span class="cm">[2]</span><br><i>OR</i><br><b>(iii)(b)</b> Without finding the zeros, verify the relationship between the zeros and coefficients of V(x). <span class="cm">[2]</span></div>',o:[],a:'<b>(i)</b> V(x) = x(20−2x)(12−2x) = x(240−64x+4x²) = <b>4x³ − 64x² + 240x</b>. Degree = 3.<br><b>(ii)</b> All three dimensions must be positive: x > 0, 12−2x > 0 (so x < 6), and 20−2x > 0 (so x < 10). Combined: <b>0 < x < 6</b>.<br><b>(iii)(a)</b> 4x³−64x²+240x = 0 → 4x(x²−16x+60) = 0 → 4x(x−6)(x−10) = 0. Zeros: <b>x = 0, 6, 10</b>. Physical meaning: x=0 means no cut so no height (no box); x=6 means the two cuts on the 12-cm side remove the entire width (width = 0); x=10 means the two cuts on the 20-cm side remove the entire length (length = 0). All three zeros correspond to a degenerate box with V = 0.<br><b>(iii)(b)</b> Compare with ax³+bx²+cx+d: a=4, b=−64, c=240, d=0. Sum α+β+γ = −b/a = 64/4 = <b>16</b> (check: 0+6+10 = 16 ✓). Sum αβ+βγ+γα = c/a = 240/4 = <b>60</b> (check: 0·6 + 6·10 + 10·0 = 60 ✓). Product αβγ = −d/a = 0 (check: 0·6·10 = 0 ✓). All three relationships hold.'},
 
 // ── ARITHMETIC PROGRESSIONS — fill B, C ──────────────────────────
 {subj:'mstd',s:'B',t:'vsa',c:'Arithmetic Progressions',d:'m',m:2,q:'The first term of an AP is −5 and common difference is 2. Find the sum of first 20 terms.',o:[],a:'<b>Given:</b> a = –5, d = 2, n = 20<br><b>Formula:</b> Sₙ = n/2 [2a + (n–1)d]<br><b>Step 1:</b> Substitute values:<br>S₂₀ = 20/2 × [2(–5) + (20–1) × 2]<br>S₂₀ = 10 × [–10 + 19 × 2]<br><b>Step 2:</b> Simplify bracket:<br>S₂₀ = 10 × [–10 + 38]<br>S₂₀ = 10 × 28<br><b>∴ S₂₀ = 280</b><br><b>Verification:</b> Last term a₂₀ = –5 + 19(2) = 33. S = 20/2 × (–5 + 33) = 10 × 28 = 280 ✓'},
@@ -1075,26 +1075,11 @@ const DEFAULT_USERS={
   computer8:{password:"Stepping@computer",role:"teacher",name:"Computer Teacher (Class 8)",classes:["Class 8"],subjects:["Computer"]},
   computer9:{password:"Stepping@computer",role:"teacher",name:"Computer Teacher (Class 9)",classes:["Class 9"],subjects:["Computer"]},
   computer10:{password:"Stepping@computer",role:"teacher",name:"Computer Teacher (Class 10)",classes:["Class 10"],subjects:["Computer"]},
-  suryansh:{password:"Study@2027",role:"student",name:"Suryansh Pandey (10A)",classes:["Class 10"],subjects:null},
-  alaina:{password:"Study@2027",role:"student",name:"Alaina (10A)",classes:["Class 10"],subjects:null},
-  krishna:{password:"Study@2027",role:"student",name:"Krishna Jaiswal (10B)",classes:["Class 10"],subjects:null},
-  salviya:{password:"Study@2027",role:"student",name:"Salviya Khatoon (10A)",classes:["Class 10"],subjects:null},
-  prateek:{password:"Study@2027",role:"student",name:"Prateek Yadav (10B)",classes:["Class 10"],subjects:null},
-  sabhya:{password:"Study@2027",role:"student",name:"Sabhya Yadav (10B)",classes:["Class 10"],subjects:null},
-  iqrafatma:{password:"Study@2027",role:"student",name:"Iqra Fatma (10A)",classes:["Class 10"],subjects:null},
-  tashkeer:{password:"Study@2027",role:"student",name:"Tashkeer Raza (10A)",classes:["Class 10"],subjects:null},
-  shambhavi:{password:"Study@2027",role:"student",name:"Shambhavi Pandey (10B)",classes:["Class 10"],subjects:null},
-  tabinda:{password:"Study@2027",role:"student",name:"Tabinda Abbas (10B)",classes:["Class 10"],subjects:null},
-  bhavesh:{password:"Study@2027",role:"student",name:"Bhavesh Jumnani (10A)",classes:["Class 10"],subjects:null},
-  adyansh:{password:"Study@2027",role:"student",name:"Adyansh Yadav (10B)",classes:["Class 10"],subjects:null},
-  satwik:{password:"Study@2027",role:"student",name:"Satwik Raj Dwivedi (10B)",classes:["Class 10"],subjects:null},
-  iqrakhan:{password:"Study@2027",role:"student",name:"Iqra Khan (10A)",classes:["Class 10"],subjects:null},
-  rida:{password:"Study@2027",role:"student",name:"Rida Jabeen (10A)",classes:["Class 10"],subjects:null},
-  ifrat:{password:"Study@2027",role:"student",name:"Ifrat Naseem (10A)",classes:["Class 10"],subjects:null},
-  shifa:{password:"Study@2027",role:"student",name:"Shifa Sheikh (10A)",classes:["Class 10"],subjects:null},
-  kajal:{password:"Study@2027",role:"student",name:"Kajal Maddheshiya (10B)",classes:["Class 10"],subjects:null},
-  rajveer:{password:"Study@2027",role:"student",name:"Rajveer Singh (10B)",classes:["Class 10"],subjects:null},
-  ajitesh:{password:"Study@2027",role:"student",name:"Ajitesh Kumar (10A)",classes:["Class 10"],subjects:null},
+  student10a:{password:"Study@2027",role:"student",name:"Topper A",classes:["Class 10"],subjects:null},
+  student10b:{password:"Study@2027",role:"student",name:"Topper B",classes:["Class 10"],subjects:null},
+  student10c:{password:"Study@2027",role:"student",name:"Topper C",classes:["Class 10"],subjects:null},
+  student10d:{password:"Study@2027",role:"student",name:"Topper D",classes:["Class 10"],subjects:null},
+  student10e:{password:"Study@2027",role:"student",name:"Topper E",classes:["Class 10"],subjects:null},
   vp:{password:"Stepping@vp",role:"admin",name:"Vice Principal",classes:null,subjects:null},
 };
 
@@ -1655,255 +1640,6 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB}){
   );
 }
 
-
-// ── CLASS OVERVIEW ──────────────────────────────────────
-function SubjectBar({label,pct}){
-  const color=pct>=60?"#16a34a":pct>=40?"#d97706":"#dc2626";
-  return(
-    <div style={{marginBottom:12}}>
-      <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-        <span style={{fontSize:13,fontWeight:600,color:"#1e293b"}}>{label}</span>
-        <span style={{fontSize:13,fontWeight:700,color}}>{pct}%</span>
-      </div>
-      <div style={{height:8,background:"#f1f5f9",borderRadius:99,overflow:"hidden"}}>
-        <div style={{height:"100%",width:pct+"%",background:color,borderRadius:99}}/>
-      </div>
-    </div>
-  );
-}
-
-function ClassOverview({user,testsDB,studentsDB}){
-  const aC=user.role==="admin"?SCHOOL.classes:(user.classes||SCHOOL.classes);
-  const[cls,setCls]=useState(aC[0]||"Class 10");
-
-  const SUBJ_LABELS={std:"Maths Std",bas:"Maths Basic",sci:"Science",sst:"Social Science",
-    maths:"Mathematics",english:"English",hindi:"Hindi",computer:"Computer",sanskrit:"Sanskrit"};
-
-  const allTests=useMemo(()=>Object.values(testsDB.data||{}).filter(tt=>tt.cls===cls),[testsDB.data,cls]);
-
-  // Subject averages
-  const subjAvgs=useMemo(()=>{
-    const map={};
-    allTests.forEach(test=>{
-      const subj=test.subj||"";
-      const maxMark=Number(test.total)||80;
-      if(!map[subj])map[subj]={sum:0,n:0,max:maxMark};
-      Object.values(test.rows||{}).forEach(v=>{
-        if(v!==null&&v!==undefined&&v!==""){map[subj].sum+=Number(v);map[subj].n++;}
-      });
-    });
-    return Object.entries(map)
-      .filter(([,d])=>d.n>0)
-      .map(([subj,d])=>({subj,pct:Math.round(d.sum/d.n/d.max*100),n:d.n}))
-      .sort((a,b)=>a.pct-b.pct);
-  },[allTests]);
-
-  // Student averages
-  const stuAvgs=useMemo(()=>{
-    const map={};
-    allTests.forEach(test=>{
-      const maxMark=Number(test.total)||80;
-      Object.entries(test.rows||{}).forEach(([stu,val])=>{
-        if(val===null||val===undefined||val==="")return;
-        if(!map[stu])map[stu]={sum:0,maxSum:0,n:0,subjs:{}};
-        map[stu].sum+=Number(val);
-        map[stu].maxSum+=maxMark;
-        map[stu].n++;
-        const s=test.subj||"";
-        if(!map[stu].subjs[s])map[stu].subjs[s]={sum:0,maxSum:0};
-        map[stu].subjs[s].sum+=Number(val);
-        map[stu].subjs[s].maxSum+=maxMark;
-      });
-    });
-    return Object.entries(map).map(([stu,d])=>{
-      const pct=d.maxSum?Math.round(d.sum/d.maxSum*100):0;
-      const worst=Object.entries(d.subjs)
-        .map(([s,v])=>({s,pct:v.maxSum?Math.round(v.sum/v.maxSum*100):0}))
-        .sort((a,b)=>a.pct-b.pct)[0];
-      return{stu,pct,n:d.n,worstSubj:worst?SUBJ_LABELS[worst.s]||worst.s:"",worstPct:worst?worst.pct:0};
-    }).sort((a,b)=>a.pct-b.pct);
-  },[allTests]);
-
-  // Weakest topics from teacher-entered test marks
-  const weakChapters=useMemo(()=>{
-    const map={};
-    allTests.forEach(test=>{
-      const topics=test.topics||[];
-      if(!topics.length) return;
-      const maxMark=Number(test.total)||80;
-      const vals=Object.values(test.rows||{}).filter(v=>v!==null&&v!==undefined&&v!=="").map(Number);
-      if(!vals.length) return;
-      const avg=vals.reduce((a,b)=>a+b,0)/vals.length;
-      const pct=Math.round(avg/maxMark*100);
-      topics.forEach(topic=>{
-        if(!map[topic])map[topic]={topic,sumPct:0,n:0,subj:test.subj||""};
-        map[topic].sumPct+=pct;
-        map[topic].n++;
-      });
-    });
-    return Object.values(map)
-      .filter(c=>c.n>0)
-      .map(c=>({...c,avgPct:Math.round(c.sumPct/c.n)}))
-      .sort((a,b)=>a.avgPct-b.avgPct)
-      .slice(0,8);
-  },[allTests]);
-
-  const classAvg=stuAvgs.length?Math.round(stuAvgs.reduce((a,b)=>a+b.pct,0)/stuAvgs.length):0;
-  const weakestSubj=subjAvgs[0];
-  const needAttn=stuAvgs.filter(s=>s.pct<40).length;
-
-  if(testsDB.loading||studentsDB.loading)return <Spinner/>;
-
-  return(
-    <div style={{display:"flex",flexDirection:"column",gap:18}}>
-      <div style={{background:"linear-gradient(135deg,#1a2e6c,#3730a3)",borderRadius:16,padding:"20px 24px",color:"#fff"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
-          <div>
-            <div style={{fontSize:11,color:"rgba(255,255,255,.5)",letterSpacing:2,textTransform:"uppercase",marginBottom:4}}>Class Overview</div>
-            <div style={{fontSize:22,fontWeight:800}}>📈 Performance Dashboard</div>
-            <div style={{fontSize:13,color:"rgba(255,255,255,.55)",marginTop:4}}>{cls} · {allTests.length} tests · {stuAvgs.length} students tracked</div>
-          </div>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            {aC.map(c=>(
-              <button key={c} onClick={()=>setCls(c)}
-                style={{padding:"6px 16px",borderRadius:20,border:"2px solid "+(cls===c?"#fff":"rgba(255,255,255,0.3)"),background:cls===c?"rgba(255,255,255,0.2)":"transparent",color:"#fff",fontSize:12,fontWeight:600,cursor:"pointer"}}>
-                {c.replace("Class ","")}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {allTests.length===0?(
-        <Card><div style={{padding:60,textAlign:"center",color:"#94a3b8"}}>
-          <div style={{fontSize:40,marginBottom:12}}>📊</div>
-          <div style={{fontWeight:700,fontSize:16,marginBottom:6}}>No test data for {cls} yet</div>
-          <div style={{fontSize:13}}>Enter marks in the Enter Marks tab to see the overview.</div>
-        </div></Card>
-      ):(
-        <div style={{display:"flex",flexDirection:"column",gap:18}}>
-          <div className="grid4" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14}}>
-            {[
-              {label:"Class Average",val:classAvg+"%",icon:"🎯",color:classAvg>=60?"#16a34a":classAvg>=40?"#d97706":"#dc2626"},
-              {label:"Tests Conducted",val:allTests.length,icon:"📝",color:"#6366f1"},
-              {label:"Weakest Subject",val:weakestSubj?SUBJ_LABELS[weakestSubj.subj]||weakestSubj.subj:"—",icon:"⚠️",color:"#dc2626"},
-              {label:"Needs Attention",val:needAttn,icon:"🚨",color:needAttn>0?"#dc2626":"#16a34a"},
-            ].map(function(item){
-              return(
-                <Card key={item.label} style={{padding:"18px 20px"}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-                    <div>
-                      <div style={{fontSize:11,color:"#94a3b8",fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>{item.label}</div>
-                      <div style={{fontSize:22,fontWeight:800,color:item.color}}>{item.val}</div>
-                    </div>
-                    <div style={{fontSize:28}}>{item.icon}</div>
-                  </div>
-                </Card>
-              );
-            })}
-          </div>
-
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:18}}>
-            <Card>
-              <div style={{padding:"14px 20px",borderBottom:"1.5px solid #e2e8f0",fontWeight:700,fontSize:14,color:"#1a2e6c"}}>📚 Subject Averages</div>
-              <div style={{padding:"16px 20px"}}>
-                {subjAvgs.length===0
-                  ?<div style={{color:"#94a3b8",fontSize:13}}>No data yet</div>
-                  :subjAvgs.map(function(s){return <SubjectBar key={s.subj} label={SUBJ_LABELS[s.subj]||s.subj} pct={s.pct}/>;})
-                }
-              </div>
-            </Card>
-
-            <Card>
-              <div style={{padding:"14px 20px",borderBottom:"1.5px solid #e2e8f0",fontWeight:700,fontSize:14,color:"#1a2e6c"}}>❌ Weakest Chapters</div>
-              <div style={{padding:"14px 20px",display:"flex",flexDirection:"column",gap:8}}>
-                {weakChapters.length===0
-                  ?<div style={{color:"#94a3b8",fontSize:13}}>No topic data yet. Topics appear once marks are entered with topics selected.</div>
-                  :weakChapters.map(function(ch,i){
-                    const col=ch.avgPct<40?"#dc2626":ch.avgPct<60?"#d97706":"#64748b";
-                    return(
-                      <div key={ch.topic} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:i<3?"#fef2f2":"#f8fafc",borderRadius:10,border:"1px solid "+(i<3?"#fecaca":"#e2e8f0")}}>
-                        <div style={{width:22,height:22,borderRadius:"50%",background:i<3?"#dc2626":"#94a3b8",color:"#fff",fontSize:11,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{i+1}</div>
-                        <div style={{flex:1}}>
-                          <div style={{fontSize:12,fontWeight:600,color:"#1e293b"}}>{ch.topic}</div>
-                          <div style={{fontSize:11,color:"#94a3b8"}}>{ch.subj} · {ch.n} test{ch.n>1?"s":""}</div>
-                        </div>
-                        <div style={{fontSize:13,fontWeight:700,color:col}}>{ch.avgPct}%</div>
-                      </div>
-                    );
-                  })
-                }
-              </div>
-            </Card>
-          </div>
-
-          <Card>
-            <div style={{padding:"14px 20px",borderBottom:"1.5px solid #e2e8f0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div style={{fontWeight:700,fontSize:14,color:"#1a2e6c"}}>🚨 Students Needing Attention <span style={{fontSize:11,color:"#94a3b8",fontWeight:400}}>(lowest first)</span></div>
-              <div style={{fontSize:11,color:"#94a3b8"}}>Top 10 weakest</div>
-            </div>
-            <div>
-              {stuAvgs.length===0
-                ?<div style={{padding:40,textAlign:"center",color:"#94a3b8"}}>No student data yet.</div>
-                :stuAvgs.slice(0,10).map(function(s,i){
-                  const color=s.pct>=60?"#16a34a":s.pct>=40?"#d97706":"#dc2626";
-                  return(
-                    <div key={s.stu} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 20px",borderBottom:"1px solid #f1f5f9",background:i%2===0?"#fff":"#fafbfd"}}>
-                      <div style={{width:28,height:28,borderRadius:"50%",background:s.pct<40?"#fee2e2":s.pct<60?"#fef3c7":"#dcfce7",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:800,color,flexShrink:0}}>{i+1}</div>
-                      <div style={{flex:1}}>
-                        <div style={{fontWeight:600,fontSize:13,color:"#1e293b"}}>{s.stu}</div>
-                        <div style={{fontSize:11,color:"#94a3b8",marginTop:2}}>Worst: <span style={{color:"#dc2626",fontWeight:600}}>{s.worstSubj}</span> ({s.worstPct}%)</div>
-                      </div>
-                      <div style={{textAlign:"right",marginRight:12}}>
-                        <div style={{fontSize:20,fontWeight:800,color}}>{s.pct}%</div>
-                        <div style={{fontSize:10,color:"#94a3b8"}}>{s.n} test{s.n>1?"s":""}</div>
-                      </div>
-                      <div style={{width:60,height:6,background:"#f1f5f9",borderRadius:99,overflow:"hidden"}}>
-                        <div style={{height:"100%",width:s.pct+"%",background:color,borderRadius:99}}/>
-                      </div>
-                    </div>
-                  );
-                })
-              }
-            </div>
-          </Card>
-
-          <Card>
-            <div style={{padding:"14px 20px",borderBottom:"1.5px solid #e2e8f0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div style={{fontWeight:700,fontSize:14,color:"#166534"}}>🏆 Top 10 Students <span style={{fontSize:11,color:"#94a3b8",fontWeight:400}}>(highest first)</span></div>
-              <div style={{fontSize:11,color:"#94a3b8"}}>Best performers</div>
-            </div>
-            <div>
-              {stuAvgs.length===0
-                ?<div style={{padding:40,textAlign:"center",color:"#94a3b8"}}>No student data yet.</div>
-                :[...stuAvgs].reverse().slice(0,10).map(function(s,i){
-                    const medals=["🥇","🥈","🥉"];
-                    return(
-                      <div key={s.stu} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 20px",borderBottom:"1px solid #f1f5f9",background:i%2===0?"#fff":"#fafbfd"}}>
-                        <div style={{width:28,height:28,borderRadius:"50%",background:"#dcfce7",display:"flex",alignItems:"center",justifyContent:"center",fontSize:i<3?16:12,fontWeight:800,color:"#166534",flexShrink:0}}>{i<3?medals[i]:i+1}</div>
-                        <div style={{flex:1}}>
-                          <div style={{fontWeight:600,fontSize:13,color:"#1e293b"}}>{s.stu}</div>
-                          <div style={{fontSize:11,color:"#94a3b8",marginTop:2}}>Best: <span style={{color:"#166534",fontWeight:600}}>{s.worstSubj?SUBJ_LABELS[Object.entries(s).find(([k])=>k==="worstSubj")?.[1]]||s.worstSubj:"—"}</span></div>
-                        </div>
-                        <div style={{textAlign:"right",marginRight:12}}>
-                          <div style={{fontSize:20,fontWeight:800,color:"#16a34a"}}>{s.pct}%</div>
-                          <div style={{fontSize:10,color:"#94a3b8"}}>{s.n} test{s.n>1?"s":""}</div>
-                        </div>
-                        <div style={{width:60,height:6,background:"#f1f5f9",borderRadius:99,overflow:"hidden"}}>
-                          <div style={{height:"100%",width:s.pct+"%",background:"#16a34a",borderRadius:99}}/>
-                        </div>
-                      </div>
-                    );
-                  })
-              }
-            </div>
-          </Card>
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ── CLASS PROGRESS ──
 function ClassProgress({user,testsDB,studentsDB}){
   const aC=user.role==="admin"?SCHOOL.classes:(user.classes||SCHOOL.classes);
@@ -2214,7 +1950,7 @@ function ParentView({user,testsDB,studentsDB}){
 }
 
 // ── ADMIN PANEL ──
-function AdminPanel({testsDB,studentsDB,usersDB,wrongDB}){
+function AdminPanel({testsDB,studentsDB,usersDB}){
   const logsDB=useFirestore("loginLogs");
   const[activeTab,setActiveTab]=useState("tests");
   const[resetUser,setResetUser]=useState("");
@@ -2250,7 +1986,7 @@ function AdminPanel({testsDB,studentsDB,usersDB,wrongDB}){
   };
 
   if(testsDB.loading)return<Spinner/>;
-  const tabs=[{id:"tests",label:"Tests"},{id:"reset",label:"Reset Password"},{id:"parents",label:"Add Parents"},{id:"users",label:"All Users"},{id:"logs",label:"🔐 Login Logs"},{id:"wrong",label:"❌ Wrong Answers"}];
+  const tabs=[{id:"tests",label:"Tests"},{id:"reset",label:"Reset Password"},{id:"parents",label:"Add Parents"},{id:"users",label:"All Users"},{id:"logs",label:"🔐 Login Logs"}];
   return(
     <div className="fi" style={{display:"flex",flexDirection:"column",gap:18}}>
       <div className="grid4" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14}}>
@@ -2414,94 +2150,6 @@ function AdminPanel({testsDB,studentsDB,usersDB,wrongDB}){
           )}
         </Card>
       )}
-      {activeTab==="wrong"&&(()=>{
-        const entries=Object.values(wrongDB.data||{});
-        // Group by chapter
-        const byChapter={};
-        entries.forEach(e=>{
-          if(!byChapter[e.chapter])byChapter[e.chapter]={total:0,students:new Set(),questions:{}};
-          byChapter[e.chapter].total++;
-          byChapter[e.chapter].students.add(e.username);
-          const qKey=e.question;
-          if(!byChapter[e.chapter].questions[qKey])byChapter[e.chapter].questions[qKey]={q:e.question,wrong:0,students:[],chosen:{}};
-          byChapter[e.chapter].questions[qKey].wrong++;
-          byChapter[e.chapter].questions[qKey].students.push(e.name);
-          byChapter[e.chapter].questions[qKey].chosen[e.chosen]=(byChapter[e.chapter].questions[qKey].chosen[e.chosen]||0)+1;
-        });
-        const chapters=Object.entries(byChapter).sort((a,b)=>b[1].total-a[1].total);
-        return(
-          <Card>
-            <div style={{padding:"14px 20px",borderBottom:"1.5px solid #e2e8f0",background:"#f8fafc",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div style={{fontWeight:700,fontSize:14,color:"#1a2e6c"}}>❌ Wrong Answer Analysis</div>
-              <div style={{fontSize:11,color:"#94a3b8"}}>{entries.length} wrong attempts recorded</div>
-            </div>
-            {wrongDB.loading?<div style={{padding:40,textAlign:"center",color:"#94a3b8"}}>Loading...</div>:
-            entries.length===0?<div style={{padding:40,textAlign:"center",color:"#94a3b8"}}>No wrong answers recorded yet. Data appears after students attempt questions.</div>:(
-            <div style={{padding:"0 0 8px"}}>
-              {/* Chapter summary */}
-              <div style={{padding:"14px 20px",borderBottom:"1.5px solid #e2e8f0"}}>
-                <div style={{fontWeight:700,fontSize:13,color:"#1a2e6c",marginBottom:10}}>📊 Chapter Summary — sorted by most mistakes</div>
-                <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-                  {chapters.map(([ch,d])=>(
-                    <div key={ch} style={{background:d.total>10?"#fee2e2":d.total>5?"#fef3c7":"#f1f5f9",border:`1.5px solid ${d.total>10?"#fca5a5":d.total>5?"#fde68a":"#e2e8f0"}`,borderRadius:10,padding:"8px 14px",minWidth:140}}>
-                      <div style={{fontWeight:700,fontSize:12,color:"#1e293b"}}>{ch}</div>
-                      <div style={{fontSize:11,color:"#64748b",marginTop:2}}>
-                        <span style={{color:d.total>10?"#dc2626":d.total>5?"#d97706":"#64748b",fontWeight:700}}>{d.total} mistakes</span>
-                        {" · "}{d.students.size} student{d.students.size>1?"s":""}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              {/* Per-student breakdown */}
-              <div style={{padding:"14px 20px",borderBottom:"1px solid #f1f5f9"}}>
-                <div style={{fontWeight:700,fontSize:13,color:"#1a2e6c",marginBottom:10}}>👨‍🎓 Student Breakdown</div>
-                {(()=>{
-                  const byStudent={};
-                  entries.forEach(e=>{
-                    if(!byStudent[e.username])byStudent[e.username]={name:e.name,total:0,chapters:{}};
-                    byStudent[e.username].total++;
-                    byStudent[e.username].chapters[e.chapter]=(byStudent[e.username].chapters[e.chapter]||0)+1;
-                  });
-                  return Object.entries(byStudent).sort((a,b)=>b[1].total-a[1].total).map(([uname,d])=>(
-                    <div key={uname} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0",borderBottom:"1px solid #f8fafc"}}>
-                      <div style={{width:36,height:36,borderRadius:"50%",background:"#ede9fe",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>👨‍🎓</div>
-                      <div style={{flex:1}}>
-                        <div style={{fontWeight:600,fontSize:13,color:"#1e293b"}}>{d.name}</div>
-                        <div style={{fontSize:11,color:"#94a3b8",marginTop:2}}>
-                          {Object.entries(d.chapters).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([ch,n])=>`${ch}(${n})`).join(" · ")}
-                        </div>
-                      </div>
-                      <div style={{textAlign:"right"}}>
-                        <div style={{fontSize:18,fontWeight:800,color:d.total>15?"#dc2626":d.total>8?"#d97706":"#64748b"}}>{d.total}</div>
-                        <div style={{fontSize:10,color:"#94a3b8"}}>mistakes</div>
-                      </div>
-                    </div>
-                  ));
-                })()}
-              </div>
-              {/* Most missed questions */}
-              <div style={{padding:"14px 20px"}}>
-                <div style={{fontWeight:700,fontSize:13,color:"#1a2e6c",marginBottom:10}}>🎯 Most Missed Questions</div>
-                {chapters.slice(0,5).map(([ch,d])=>{
-                  const topQs=Object.values(d.questions).sort((a,b)=>b.wrong-a.wrong).slice(0,3);
-                  return topQs.map((q,i)=>(
-                    <div key={ch+i} style={{background:"#fef2f2",border:"1px solid #fecaca",borderRadius:10,padding:"12px 14px",marginBottom:8}}>
-                      <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                        <span style={{fontSize:11,fontWeight:700,color:"#991b1b",background:"#fee2e2",padding:"2px 8px",borderRadius:20}}>{ch}</span>
-                        <span style={{fontSize:12,fontWeight:700,color:"#dc2626"}}>{q.wrong}× wrong</span>
-                      </div>
-                      <div style={{fontSize:12,color:"#1e293b",lineHeight:1.5,marginBottom:4}}>{q.q}</div>
-                      <div style={{fontSize:11,color:"#94a3b8"}}>Wrong by: {[...new Set(q.students)].slice(0,5).join(", ")}</div>
-                    </div>
-                  ));
-                })}
-              </div>
-            </div>
-            )}
-          </Card>
-        );
-      })()}
     </div>
   );
 }
@@ -3033,7 +2681,6 @@ function App(){
   const studentsDB=useFirestore("students");
   const attendanceDB=useFirestore("attendance");
   const usersDB=useFirestore("users");
-  const wrongDB=useFirestore("wrongAnswers");
   const handleUpdateUser=updated=>setUser(updated);
   if(!user)return<Login onLogin={u=>{setUser(u);setTab(u.role==="parent"?"parent":u.role==="student"?"student":"dashboard");}} usersDB={usersDB}/>;
   const isParent=user.role==="parent",isAdmin=user.role==="admin",isStudent=user.role==="student";
@@ -3047,7 +2694,6 @@ function App(){
     {id:"topics",label:"Topics",icon:"📝"},
     {id:"attendance",label:"Attendance",icon:"✅"},
     {id:"enter",label:"Enter Marks",icon:"✏️"},
-    {id:"overview",label:"Overview",icon:"📈"},
     {id:"class",label:"Progress",icon:"📊"},
     {id:"student",label:"Report",icon:"👤"},
     ...(isAdmin?[{id:"admin",label:"Admin",icon:"⚙️"}]:[]),
@@ -3089,10 +2735,9 @@ function App(){
         {tab==="topics"&&!isParent&&<ManageTopics topicsDB={topicsDB}/>}
         {tab==="attendance"&&!isParent&&<Attendance user={user} attendanceDB={attendanceDB} studentsDB={studentsDB}/>}
         {tab==="enter"&&!isParent&&<EnterMarks user={user} testsDB={testsDB} topicsDB={topicsDB} studentsDB={studentsDB}/>}
-        {tab==="overview"&&!isParent&&<ClassOverview user={user} testsDB={testsDB} studentsDB={studentsDB}/>}
-      {tab==="class"&&!isParent&&<ClassProgress user={user} testsDB={testsDB} studentsDB={studentsDB}/>}
+        {tab==="class"&&!isParent&&<ClassProgress user={user} testsDB={testsDB} studentsDB={studentsDB}/>}
         {tab==="student"&&!isParent&&<StudentReport user={user} testsDB={testsDB} studentsDB={studentsDB}/>}
-        {tab==="admin"&&isAdmin&&<AdminPanel testsDB={testsDB} studentsDB={studentsDB} usersDB={usersDB} wrongDB={wrongDB}/>}
+        {tab==="admin"&&isAdmin&&<AdminPanel testsDB={testsDB} studentsDB={studentsDB} usersDB={usersDB}/>}
         {tab==="parent"&&isParent&&<ParentView user={user} testsDB={testsDB} studentsDB={studentsDB}/>}
         {tab==="account"&&<AccountSettings user={user} usersDB={usersDB} onUpdate={handleUpdateUser}/> }
         {tab==="ai"&&<AIPanel testsDB={testsDB} studentsDB={studentsDB} topicsDB={topicsDB}/>
@@ -3416,75 +3061,8 @@ function AIPanel({testsDB, studentsDB, topicsDB}){
 // STUDENT PORTAL — QB Browser + Practice Tests
 // ═══════════════════════════════════════════════════════
 
-function ChangePassword({user,onBack}){
-  const[curr,setCurr]=useState("");
-  const[newP,setNewP]=useState("");
-  const[conf,setConf]=useState("");
-  const[msg,setMsg]=useState("");
-  const[err,setErr]=useState("");
-
-  const save=async()=>{
-    setMsg("");setErr("");
-    if(!curr){setErr("Enter your current password.");return;}
-    if(newP.length<6){setErr("New password must be at least 6 characters.");return;}
-    if(newP!==conf){setErr("Passwords do not match.");return;}
-    // Verify current password against Firebase users collection or DEFAULT_USERS
-    const storedPass=(window.__db)?null:DEFAULT_USERS[user.username]?.password;
-    // Save new password to Firebase users collection
-    try{
-      if(window.__db){
-        await window.__fbSetDoc(window.__fbDoc(window.__db,"users",user.username),{
-          ...user, password:newP
-        });
-        setMsg("✓ Password changed successfully! Use your new password next time you log in.");
-        setCurr("");setNewP("");setConf("");
-      } else {
-        setErr("Cannot save — Firebase not connected.");
-      }
-    }catch(e){setErr("Error saving: "+e.message);}
-  };
-
-  return(
-    <div style={{minHeight:"100vh",background:"linear-gradient(150deg,#0f172a 0%,#1e3a8a 60%,#b8860b 100%)",display:"flex",flexDirection:"column"}}>
-      <div style={{background:"rgba(0,0,0,0.3)",backdropFilter:"blur(10px)",padding:"14px 24px",display:"flex",alignItems:"center",gap:12}}>
-        <button onClick={onBack} style={{background:"rgba(255,255,255,0.1)",border:"none",color:"#fff",padding:"6px 14px",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600}}>← Back</button>
-        <span style={{color:"#fff",fontWeight:700,fontSize:15}}>🔑 Change Password</span>
-      </div>
-      <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-        <div style={{background:"rgba(255,255,255,0.08)",backdropFilter:"blur(10px)",borderRadius:20,padding:"32px 28px",width:"100%",maxWidth:400,border:"1px solid rgba(255,255,255,0.12)"}}>
-          <div style={{color:"#fff",fontWeight:800,fontSize:18,marginBottom:6}}>Set New Password</div>
-          <div style={{color:"rgba(255,255,255,0.45)",fontSize:13,marginBottom:24}}>Logged in as <b style={{color:"#fbbf24"}}>{user.name}</b></div>
-
-          {err&&<div style={{background:"rgba(239,68,68,0.2)",border:"1px solid #ef4444",borderRadius:10,padding:"10px 14px",color:"#fca5a5",fontSize:13,marginBottom:16}}>{err}</div>}
-          {msg&&<div style={{background:"rgba(16,185,129,0.2)",border:"1px solid #10b981",borderRadius:10,padding:"10px 14px",color:"#6ee7b7",fontSize:13,marginBottom:16}}>{msg}</div>}
-
-          {[
-            {label:"Current Password",val:curr,set:setCurr},
-            {label:"New Password",val:newP,set:setNewP},
-            {label:"Confirm New Password",val:conf,set:setConf},
-          ].map(({label,val,set})=>(
-            <div key={label} style={{marginBottom:16}}>
-              <div style={{color:"rgba(255,255,255,0.6)",fontSize:12,fontWeight:600,marginBottom:6,textTransform:"uppercase",letterSpacing:1}}>{label}</div>
-              <input type="password" value={val} onChange={e=>set(e.target.value)}
-                style={{width:"100%",padding:"10px 14px",borderRadius:10,border:"1.5px solid rgba(255,255,255,0.15)",background:"rgba(255,255,255,0.08)",color:"#fff",fontSize:14,outline:"none",boxSizing:"border-box"}}/>
-            </div>
-          ))}
-
-          <button onClick={save}
-            style={{width:"100%",padding:"12px",background:"linear-gradient(135deg,#1e3a8a,#6366f1)",color:"#fff",border:"none",borderRadius:12,fontSize:15,fontWeight:700,cursor:"pointer",marginTop:8}}>
-            Save Password
-          </button>
-          <div style={{color:"rgba(255,255,255,0.3)",fontSize:11,textAlign:"center",marginTop:12}}>
-            Your teacher will not see your new password.
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function StudentPortal({user}){
-  const[view,setView]=useState("home"); // home | qbank | test | result | password
+  const[view,setView]=useState("home"); // home | qbank | test | result
   const[testResult,setTestResult]=useState(null);
   const subj_map={std:"📘 Maths Std",bas:"📗 Maths Basic",sci:"🔬 Science",sst:"🗺️ SST"};
 
@@ -3494,7 +3072,6 @@ function StudentPortal({user}){
   const [saved,setSaved]=useState(getSaved);
   const saveDone=(key,val)=>{const s={...getSaved(),[key]:val};localStorage.setItem(storageKey,JSON.stringify(s));setSaved(s);};
 
-  if(view==="password") return <ChangePassword user={user} onBack={()=>setView("home")}/>;
   if(view==="test")   return <PracticeTest user={user} onBack={()=>setView("home")} onFinish={r=>{setTestResult(r);setView("result");}} saved={saved} saveDone={saveDone}/>;
   if(view==="result") return <TestResult result={testResult} onBack={()=>setView("home")} onRetry={()=>setView("test")}/>;
   if(view==="qbank")  return <StudentQB user={user} onBack={()=>setView("home")} saved={saved} saveDone={saveDone}/>;
@@ -3574,18 +3151,6 @@ function StudentPortal({user}){
               <span style={{color:"#a5b4fc",fontSize:12,fontWeight:600}}>⚡ Instant scoring + full solutions</span>
             </div>
           </div>
-        </div>
-
-        {/* Change Password card */}
-        <div onClick={()=>setView("password")} style={{marginTop:16,background:"rgba(255,255,255,0.06)",backdropFilter:"blur(10px)",borderRadius:16,padding:"16px 24px",cursor:"pointer",border:"1px solid rgba(255,255,255,0.1)",display:"flex",alignItems:"center",gap:16,transition:"all 0.2s"}}
-          onMouseEnter={e=>{e.currentTarget.style.background="rgba(255,255,255,0.12)";}}
-          onMouseLeave={e=>{e.currentTarget.style.background="rgba(255,255,255,0.06)";}}>
-          <div style={{fontSize:28}}>🔑</div>
-          <div>
-            <div style={{color:"#fff",fontWeight:700,fontSize:14}}>Change Password</div>
-            <div style={{color:"rgba(255,255,255,0.45)",fontSize:12,marginTop:2}}>Set a personal password for your account</div>
-          </div>
-          <div style={{marginLeft:"auto",color:"rgba(255,255,255,0.3)",fontSize:20}}>›</div>
         </div>
 
         {/* Past test results */}
@@ -3708,7 +3273,7 @@ function StudentQB({user,onBack,saved,saveDone}){
           const realIdx=data.indexOf(q);
           const doneKey="done_"+lvl+"_"+realIdx;
           const isDone=saved[doneKey]||false;
-          return <StudentQCard key={realIdx} q={q} isDone={isDone} onToggleDone={()=>saveDone(doneKey,!isDone)} diffColors={diffColors} diffLabels={diffLabels} user={user} lvl={lvl}/>;
+          return <StudentQCard key={realIdx} q={q} isDone={isDone} onToggleDone={()=>saveDone(doneKey,!isDone)} diffColors={diffColors} diffLabels={diffLabels}/>;
         })}
         {filtered.length===0&&<div style={{gridColumn:"1/-1",textAlign:"center",padding:"60px 20px",color:"#94a3b8",fontSize:15}}>No questions match your filters.</div>}
       </div>
@@ -3716,7 +3281,7 @@ function StudentQB({user,onBack,saved,saveDone}){
   );
 }
 
-function StudentQCard({q,isDone,onToggleDone,diffColors,diffLabels,user,lvl}){
+function StudentQCard({q,isDone,onToggleDone,diffColors,diffLabels}){
   const[showAns,setShowAns]=useState(false);
   const[picked,setPicked]=useState(null);
   const typeLabel={mcq:"MCQ",ar:"A/R",vsa:"VSA",sa:"Short",la:"Long",cs:"Case Study",sb:"Source"};
@@ -3743,7 +3308,7 @@ function StudentQCard({q,isDone,onToggleDone,diffColors,diffLabels,user,lvl}){
               else if(isChosen){bg="#fee2e2";border="#fca5a5";color="#dc2626";}
             }
             return(
-              <div key={i} onClick={()=>{if(picked)return;setPicked(letter);if(letter!==q.r&&user&&window.__db){const lk="wrong_"+Date.now()+"_"+(user.username||"");window.__fbSetDoc(window.__fbDoc(window.__db,"wrongAnswers",lk),{username:user.username,name:user.name,chapter:q.c,subject:lvl||"qb",question:(q.q||"").replace(/<[^>]+>/g,"").substring(0,120),chosen:letter,correct:q.r,section:q.s,timestamp:new Date().toISOString(),source:"qb"});}}}
+              <div key={i} onClick={()=>!picked&&setPicked(letter)}
                 style={{padding:"6px 10px",borderRadius:8,border:`1.5px solid ${border}`,background:bg,fontSize:12,color,cursor:picked?"default":"pointer",display:"flex",gap:6,alignItems:"flex-start",userSelect:"none"}}>
                 <span style={{fontWeight:700,minWidth:14}}>{letter}</span>
                 <span dangerouslySetInnerHTML={{__html:opt.substring(3)}}/>
@@ -3906,22 +3471,6 @@ function RunningTest({qs,timeMin,lvl,selChs,onFinish,saveDone,user}){
     const testKey="test_"+Date.now();
     const result={score,total:qs.length,pct,subject:lvl,chapters:selChs,date:new Date().toLocaleDateString("en-IN"),qs,answers};
     saveDone(testKey,result);
-    // Log wrong answers to Firebase
-    if(user&&window.__db){
-      qs.forEach((q,i)=>{
-        const chosen=answers[i];
-        if(chosen&&chosen!==q.r){
-          const lk="wrong_"+Date.now()+"_"+i+"_"+(user.username||"");
-          window.__fbSetDoc(window.__fbDoc(window.__db,"wrongAnswers",lk),{
-            username:user.username,name:user.name,
-            chapter:q.c,subject:lvl,
-            question:(q.q||"").replace(/<[^>]+>/g,"").substring(0,120),
-            chosen,correct:q.r,section:q.s,
-            timestamp:new Date().toISOString(),source:"test"
-          });
-        }
-      });
-    }
     onFinish(result);
   };
 
