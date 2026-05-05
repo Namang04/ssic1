@@ -1227,13 +1227,24 @@ function Login({onLogin,usersDB}){
 }
 
 // ── DASHBOARD ──
-function Dashboard({user,testsDB,studentsDB,attendanceDB,setTab}){
+function Dashboard({user,testsDB,studentsDB,setTab}){
   const isAdmin=user.role==="admin";
   const totalStudents=Object.values(studentsDB.data).reduce((a,b)=>a+(b?.list||[]).length,0);
   const totalTests=Object.keys(testsDB.data).length;
-  const todayStr=today();
-  const todayAttendance=Object.values(attendanceDB.data).filter(a=>a.date===todayStr);
-  const classesMarkedToday=[...new Set(todayAttendance.map(a=>a.cls))].length;
+  // Test participation stats: total possible attempts vs actual attempts across all tests
+  const participationStats=useMemo(()=>{
+    let totalSlots=0,filledSlots=0;
+    Object.values(testsDB.data).forEach(t=>{
+      const students=studentsDB.data[safeId(t.cls)]?.list||[];
+      students.forEach(s=>{
+        totalSlots++;
+        if(t.rows?.[s]!==undefined&&t.rows?.[s]!=="")filledSlots++;
+      });
+    });
+    const missed=totalSlots-filledSlots;
+    const pct=totalSlots?Math.round((filledSlots/totalSlots)*100):0;
+    return{totalSlots,filledSlots,missed,pct};
+  },[testsDB.data,studentsDB.data]);
   const recentTests=Object.values(testsDB.data).sort((a,b)=>(b.at||"").localeCompare(a.at||"")).slice(0,5);
   const problemTopics=useMemo(()=>{
     const m={};
@@ -1262,7 +1273,7 @@ function Dashboard({user,testsDB,studentsDB,attendanceDB,setTab}){
       <div className="grid4" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14}}>
         <StatCard label="Total Students" val={totalStudents} icon="👨‍🎓" color="#1a2e6c" sub="Across all classes" onClick={()=>setTab("students")}/>
         <StatCard label="Tests Recorded" val={totalTests} icon="📋" color="#1d4ed8" sub="All subjects" onClick={()=>setTab("class")}/>
-        <StatCard label="Attendance Today" val={classesMarkedToday} icon="✅" color="#16a34a" sub={`${SCHOOL.classes.length - classesMarkedToday} classes pending`} onClick={()=>setTab("attendance")}/>
+        <StatCard label="Test Participation" val={participationStats.pct+"%"} icon="📋" color={participationStats.pct>=85?"#16a34a":participationStats.pct>=70?"#d97706":"#dc2626"} sub={`${participationStats.missed} test${participationStats.missed===1?"":"s"} missed${participationStats.missed>0?" — needs makeup":""}`} onClick={()=>setTab("participation")}/>
         <StatCard label="Problem Topics" val={problemTopics.length} icon="⚠️" color={problemTopics.length>0?"#dc2626":"#16a34a"} sub="Needs revision" onClick={()=>setTab("class")}/>
       </div>
 
@@ -1309,7 +1320,7 @@ function Dashboard({user,testsDB,studentsDB,attendanceDB,setTab}){
         <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
           {[
             {label:"Enter Marks",icon:"✏️",tab:"enter",color:"#1a2e6c"},
-            {label:"Attendance",icon:"✅",tab:"attendance",color:"#16a34a"},
+            {label:"Test Participation",icon:"📋",tab:"participation",color:"#16a34a"},
             {label:"Class Progress",icon:"📊",tab:"class",color:"#1d4ed8"},
             {label:"Student Report",icon:"👤",tab:"student",color:"#7c3aed"},
             ...(isAdmin?[{label:"Admin Panel",icon:"⚙️",tab:"admin",color:"#d97706"}]:[]),
@@ -1562,6 +1573,150 @@ function Attendance({user,attendanceDB,studentsDB}){
             <div style={{fontSize:12,color:"#64748b"}}>{present}/{students.length} present · {fmtDate(date)}{existing&&<span style={{marginLeft:8,color:"#16a34a"}}>· Last saved: {fmtTime(existing.savedAt)}</span>}</div>
             <Btn onClick={handleSave} v={saved?"ok":"pri"} style={{padding:"11px 28px",fontSize:14}}>{saved?"✓ Saved!":"Save Attendance"}</Btn>
           </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── TEST PARTICIPATION ──
+function TestParticipation({user,testsDB,studentsDB}){
+  const isAdmin=user.role==="admin";
+  const aC=isAdmin?SCHOOL.classes:(user.classes||[]);
+  const[cls,setCls]=useState(aC[0]||"");
+  const aS=cls?(SCHOOL.subjects[cls]||[]).filter(s=>isAdmin||(user.subjects||[]).includes(s)):[];
+  const[subj,setSubj]=useState(aS[0]||"");
+  useEffect(()=>{setSubj(aS[0]||"");setFilterSec("");},[cls]);
+  const allStudents=studentsDB.data[safeId(cls)]?.list||[];
+  const classSections=studentsDB.data[safeId(cls)]?.sections||{};
+  const availSections=[...new Set(Object.values(classSections).filter(Boolean))].sort();
+  const[filterSec,setFilterSec]=useState("");
+  const students=filterSec?allStudents.filter(s=>classSections[s]===filterSec):allStudents;
+  // All tests for this class+subject, sorted by week
+  const rTests=useMemo(()=>Object.values(testsDB.data).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week),[testsDB.data,cls,subj]);
+  // Per-student participation stats
+  const stats=useMemo(()=>students.map(s=>{
+    const given=rTests.filter(t=>t.rows?.[s]!==undefined&&t.rows?.[s]!=="").length;
+    const missed=rTests.length-given;
+    const missedTests=rTests.filter(t=>t.rows?.[s]===undefined||t.rows?.[s]==="").map(t=>({week:t.week,date:t.testDate}));
+    const pct=rTests.length?Math.round((given/rTests.length)*100):0;
+    return{name:s,sec:classSections[s]||"-",given,missed,total:rTests.length,pct,missedTests};
+  }),[students,rTests,classSections]);
+  // Per-test absence stats
+  const testStats=useMemo(()=>rTests.map(test=>{
+    const absent=students.filter(s=>test.rows?.[s]===undefined||test.rows?.[s]==="");
+    return{week:test.week,date:test.testDate,absentCount:absent.length,absentList:absent};
+  }),[rTests,students]);
+  // Aggregate
+  const totalSlots=stats.reduce((a,s)=>a+s.total,0);
+  const filledSlots=stats.reduce((a,s)=>a+s.given,0);
+  const missedSlots=totalSlots-filledSlots;
+  const partPct=totalSlots?Math.round((filledSlots/totalSlots)*100):0;
+  const studentsWithMissed=stats.filter(s=>s.missed>0).length;
+  const printReport=()=>{
+    const w=window.open("","_blank");
+    const rows=[...stats].sort((a,b)=>b.missed-a.missed||a.name.localeCompare(b.name));
+    w.document.write(`<html><head><title>Test Participation</title><style>body{font-family:Arial,sans-serif;padding:20px}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #ddd;padding:8px;text-align:center}th{background:#1a2e6c;color:#fff}.miss{color:#dc2626;font-weight:700}.ok{color:#16a34a;font-weight:700}.list{text-align:left;font-size:11px;color:#64748b}</style></head><body>`);
+    w.document.write(`<h2>Stepping Stone Inter College</h2>`);
+    w.document.write(`<p><strong>Test Participation Report — ${cls} · ${subj}</strong> | ${rTests.length} tests recorded | ${partPct}% participation | ${missedSlots} total misses</p>`);
+    w.document.write(`<table><tr><th>Roll</th><th>Student</th><th>Section</th><th>Given</th><th>Missed</th><th>%</th><th>Missed Weeks</th></tr>`);
+    rows.forEach((s,i)=>{
+      const cls_=s.missed===0?"ok":"miss";
+      const missedWeeks=s.missedTests.map(t=>`Wk ${t.week}`).join(", ")||"—";
+      w.document.write(`<tr><td>${i+1}</td><td style="text-align:left">${s.name}</td><td>${s.sec}</td><td class="ok">${s.given}/${s.total}</td><td class="${cls_}">${s.missed}</td><td class="${cls_}">${s.pct}%</td><td class="list">${missedWeeks}</td></tr>`);
+    });
+    w.document.write(`</table>`);
+    w.document.write(`<p style="color:#94a3b8;font-size:12px;margin-top:20px">Generated by ${user.name} — Stepping Stone Inter College</p></body></html>`);
+    w.document.close();w.print();
+  };
+  if(testsDB.loading||studentsDB.loading)return<Spinner/>;
+  return(
+    <div className="fi" style={{display:"flex",flexDirection:"column",gap:18}}>
+      <Card style={{padding:20}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:14,alignItems:"end"}}>
+          <div><Lbl c="Class"/><Sel value={cls} onChange={setCls} options={aC.map(c=>({v:c,l:c}))}/></div>
+          <div><Lbl c="Subject"/><Sel value={subj} onChange={setSubj} options={aS.map(s=>({v:s,l:s}))}/></div>
+          <Btn onClick={printReport} v="ghost" style={{whiteSpace:"nowrap"}}>🖨️ Print Report</Btn>
+        </div>
+      </Card>
+      {rTests.length===0?<Empty icon="📋" title={`No tests recorded for ${cls} · ${subj}`} sub="Enter marks first to track participation."/>:(
+        <>
+          <div className="grid4" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14}}>
+            <StatCard label="Tests Recorded" val={rTests.length} icon="📋" color="#1a2e6c" sub={`Across ${students.length} students`}/>
+            <StatCard label="Participation Rate" val={partPct+"%"} icon="✅" color={partPct>=85?"#16a34a":partPct>=70?"#d97706":"#dc2626"} sub={`${filledSlots}/${totalSlots} attempts`}/>
+            <StatCard label="Tests Missed" val={missedSlots} icon="⚠️" color={missedSlots===0?"#16a34a":"#dc2626"} sub={missedSlots===0?"All caught up":"Pending makeups"}/>
+            <StatCard label="Students Affected" val={studentsWithMissed} icon="👤" color={studentsWithMissed===0?"#16a34a":"#d97706"} sub={`Of ${students.length} students`}/>
+          </div>
+          {availSections.length>0&&<div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+            <span style={{fontSize:11,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:1}}>Filter by Section:</span>
+            {[{v:"",l:"All Sections"},...availSections.map(s=>({v:s,l:`Section ${s}`}))].map(opt=>(
+              <button key={opt.v} onClick={()=>setFilterSec(opt.v)} style={{
+                padding:"5px 14px",borderRadius:20,border:"1.5px solid "+(filterSec===opt.v?"#1a2e6c":"#e2e8f0"),
+                background:filterSec===opt.v?"#1a2e6c":"#fff",
+                color:filterSec===opt.v?"#fff":"#64748b",
+                fontSize:12,fontWeight:600,cursor:"pointer"}}>{opt.l}</button>
+            ))}
+          </div>}
+          {/* Per-student participation table */}
+          <Card>
+            <div style={{padding:"14px 20px",borderBottom:"1.5px solid #e2e8f0",background:"#f8fafc",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{fontWeight:700,fontSize:14,color:"#1a2e6c"}}>👤 Per-Student Participation — {cls} · {subj}</div>
+              <div style={{fontSize:11,color:"#64748b"}}>Sorted: most missed first</div>
+            </div>
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse"}}>
+                <thead><tr style={{background:"#f8fafc"}}>
+                  <th style={{padding:"10px 12px",textAlign:"center",fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase"}}>Roll</th>
+                  <th style={{padding:"10px 20px",textAlign:"left",fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase"}}>Student</th>
+                  <th style={{padding:"10px 12px",textAlign:"center",fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase"}}>Sec</th>
+                  <th style={{padding:"10px 16px",textAlign:"center",fontSize:10,fontWeight:700,color:"#16a34a",textTransform:"uppercase"}}>Given</th>
+                  <th style={{padding:"10px 16px",textAlign:"center",fontSize:10,fontWeight:700,color:"#dc2626",textTransform:"uppercase"}}>Missed</th>
+                  <th style={{padding:"10px 16px",textAlign:"center",fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase"}}>%</th>
+                  <th style={{padding:"10px 20px",textAlign:"left",fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase"}}>Missed Tests (Pending Makeup)</th>
+                </tr></thead>
+                <tbody>
+                  {[...stats].sort((a,b)=>b.missed-a.missed||a.name.localeCompare(b.name)).map((s,i)=>(
+                    <tr key={s.name} style={{borderTop:"1px solid #f1f5f9",background:i%2===0?"#fff":"#fafbfd"}}>
+                      <td style={{padding:"10px 12px",textAlign:"center",fontSize:12,color:"#94a3b8",fontWeight:700}}>{i+1}</td>
+                      <td style={{padding:"10px 20px",fontWeight:500,fontSize:13,color:"#1e293b",whiteSpace:"nowrap"}}>{s.name}</td>
+                      <td style={{padding:"10px 12px",textAlign:"center"}}>{s.sec!=="-"?<span style={{background:"#eff6ff",color:"#1a2e6c",borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700}}>{s.sec}</span>:<span style={{color:"#cbd5e1"}}>—</span>}</td>
+                      <td style={{padding:"10px 16px",textAlign:"center",fontFamily:"monospace",fontSize:13,fontWeight:700,color:"#16a34a"}}>{s.given}/{s.total}</td>
+                      <td style={{padding:"10px 16px",textAlign:"center",fontFamily:"monospace",fontSize:13,fontWeight:700,color:s.missed===0?"#16a34a":"#dc2626"}}>{s.missed===0?"✓ 0":s.missed}</td>
+                      <td style={{padding:"10px 16px",textAlign:"center"}}>{s.total>0?<span style={{background:s.pct>=85?"#dcfce7":s.pct>=70?"#fef3c7":"#fee2e2",color:s.pct>=85?"#166534":s.pct>=70?"#92400e":"#991b1b",borderRadius:6,padding:"2px 10px",fontSize:11,fontWeight:700}}>{s.pct}%</span>:<span style={{color:"#cbd5e1"}}>—</span>}</td>
+                      <td style={{padding:"10px 20px",fontSize:12,color:s.missed>0?"#dc2626":"#16a34a"}}>{s.missed===0?"✓ All tests given":s.missedTests.map(t=>`Wk ${t.week}`).join(", ")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+          {/* Per-test absence table */}
+          <Card>
+            <div style={{padding:"14px 20px",borderBottom:"1.5px solid #e2e8f0",background:"#f8fafc"}}>
+              <div style={{fontWeight:700,fontSize:14,color:"#1a2e6c"}}>📅 Per-Test Absence — Who Missed Each Test</div>
+              <div style={{fontSize:11,color:"#64748b",marginTop:2}}>Use this to follow up on individual makeups</div>
+            </div>
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse"}}>
+                <thead><tr style={{background:"#f8fafc"}}>
+                  <th style={{padding:"10px 16px",textAlign:"center",fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase"}}>Week</th>
+                  <th style={{padding:"10px 16px",textAlign:"center",fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase"}}>Date</th>
+                  <th style={{padding:"10px 16px",textAlign:"center",fontSize:10,fontWeight:700,color:"#dc2626",textTransform:"uppercase"}}>Missed</th>
+                  <th style={{padding:"10px 20px",textAlign:"left",fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase"}}>Students Pending Makeup</th>
+                </tr></thead>
+                <tbody>
+                  {testStats.map((t,i)=>(
+                    <tr key={t.week} style={{borderTop:"1px solid #f1f5f9",background:i%2===0?"#fff":"#fafbfd"}}>
+                      <td style={{padding:"10px 16px",textAlign:"center",fontWeight:700,fontSize:13,color:"#1a2e6c"}}>W{t.week}</td>
+                      <td style={{padding:"10px 16px",textAlign:"center",fontSize:12,color:"#64748b"}}>{fmtDate(t.date)||"—"}</td>
+                      <td style={{padding:"10px 16px",textAlign:"center",fontFamily:"monospace",fontSize:13,fontWeight:700,color:t.absentCount===0?"#16a34a":"#dc2626"}}>{t.absentCount===0?"✓ 0":t.absentCount}</td>
+                      <td style={{padding:"10px 20px",fontSize:12,color:t.absentCount>0?"#dc2626":"#16a34a"}}>{t.absentCount===0?"✓ All students gave the test":t.absentList.join(", ")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
         </>
       )}
     </div>
@@ -1936,7 +2091,7 @@ function ClassProgress({user,testsDB,studentsDB}){
   const[filterSec,setFilterSec]=useState("");
   const students=filterSec?allStudents.filter(s=>classSections[s]===filterSec):allStudents;
   const rTests=useMemo(()=>Object.values(testsDB.data).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week),[testsDB.data,cls,subj]);
-  const stats=useMemo(()=>students.map(s=>{const sc=rTests.filter(t=>t.rows?.[s]!==undefined&&t.rows?.[s]!=="").map(t=>({week:t.week,p:pct(Number(t.rows[s]),t.total),date:t.testDate}));const avg=sc.length?Math.round(sc.reduce((a,b)=>a+b.p,0)/sc.length):null;const trend=sc.length>=2?sc[sc.length-1].p-sc[0].p:0;const roll=allStudents.indexOf(s)+1;const sec=classSections[s]||"-";return{name:s,sc,avg,trend,roll,sec};}),[students,rTests,allStudents,classSections]);
+  const stats=useMemo(()=>students.map(s=>{const sc=rTests.filter(t=>t.rows?.[s]!==undefined&&t.rows?.[s]!=="").map(t=>({week:t.week,p:pct(Number(t.rows[s]),t.total),date:t.testDate}));const avg=sc.length?Math.round(sc.reduce((a,b)=>a+b.p,0)/sc.length):null;const trend=sc.length>=2?sc[sc.length-1].p-sc[0].p:0;const roll=allStudents.indexOf(s)+1;const sec=classSections[s]||"-";const given=sc.length;const missed=rTests.length-given;const missedWeeks=rTests.filter(t=>t.rows?.[s]===undefined||t.rows?.[s]==="").map(t=>t.week);return{name:s,sc,avg,trend,roll,sec,given,missed,missedWeeks};}),[students,rTests,allStudents,classSections]);
   const absentPerTest=useMemo(()=>rTests.map(test=>students.filter(s=>test.rows?.[s]===undefined||test.rows?.[s]==="").length),[rTests,students]);
   const classAvg=useMemo(()=>{const all=stats.flatMap(s=>s.sc.map(x=>x.p));return all.length?Math.round(all.reduce((a,b)=>a+b,0)/all.length):null;},[stats]);
   const problemTopics=useMemo(()=>{const m={};rTests.forEach(t=>{const fc=students.filter(s=>pct(Number(t.rows?.[s]??0),t.total)<50).length;if(fc>=students.length*.4)(t.topics||[]).forEach(tp=>{m[tp]=(m[tp]||0)+1;});});return Object.entries(m).sort((a,b)=>b[1]-a[1]);},[rTests,students]);
@@ -2018,6 +2173,7 @@ function ClassProgress({user,testsDB,studentsDB}){
                   <th style={{padding:"10px 20px",textAlign:"left",fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase",whiteSpace:"nowrap"}}>Student</th><th style={{padding:"8px 12px",textAlign:"center",fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase"}}>Sec</th>
                   {rTests.map(t=><th key={t.week} style={{padding:"8px 12px",textAlign:"center",fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase",whiteSpace:"nowrap"}}>W{t.week}<br/><span style={{fontSize:9,fontWeight:400}}>{fmtDate(t.testDate)}</span></th>)}
                   <th style={{padding:"10px 16px",textAlign:"center",fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase"}}>Avg</th>
+                  <th style={{padding:"10px 16px",textAlign:"center",fontSize:10,fontWeight:700,color:"#dc2626",textTransform:"uppercase"}}>Missed</th>
                   <th style={{padding:"10px 16px",textAlign:"center",fontSize:10,fontWeight:700,color:"#64748b",textTransform:"uppercase"}}>Trend</th>
                 </tr></thead>
                 <tbody>
@@ -2028,14 +2184,16 @@ function ClassProgress({user,testsDB,studentsDB}){
                       <td style={{padding:"8px 12px",textAlign:"center"}}>{ss.sec!=="-"?<span style={{background:"#eff6ff",color:"#1a2e6c",borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700}}>{ss.sec}</span>:<span style={{color:"#cbd5e1",fontSize:11}}>—</span>}</td>
                       {rTests.map((test,idx)=>{const sc=ss.sc.find(x=>x.week===test.week);const g=sc?gradeOf(sc.p):null;return<td key={idx} style={{padding:"10px 12px",textAlign:"center"}}>{sc?<span style={{fontFamily:"monospace",fontSize:12,fontWeight:700,color:g.c}}>{sc.p}%</span>:<span style={{color:"#e2e8f0",fontSize:12}}>A</span>}</td>;})}
                       <td style={{padding:"10px 16px",textAlign:"center"}}>{ss.avg!==null?<GBadge p={ss.avg}/>:<span style={{color:"#cbd5e1"}}>—</span>}</td>
+                      <td style={{padding:"10px 16px",textAlign:"center",fontFamily:"monospace",fontSize:13,fontWeight:700,color:ss.missed===0?"#16a34a":"#dc2626"}} title={ss.missed>0?`Missed weeks: ${ss.missedWeeks.join(", ")}`:"All tests given"}>{ss.missed===0?"✓":`${ss.missed}/${rTests.length}`}</td>
                       <td style={{padding:"10px 16px",textAlign:"center",fontSize:12,fontWeight:700,color:ss.trend>5?"#16a34a":ss.trend<-5?"#dc2626":"#64748b"}}>{ss.trend>5?`↑ +${ss.trend}%`:ss.trend<-5?`↓ ${ss.trend}%`:"→ Stable"}</td>
                     </tr>
                   ))}
                   <tr style={{background:"#FEF2F2",borderTop:"2px solid #FECACA"}}>
                     <td style={{padding:"6px 12px",textAlign:"center",fontSize:10,fontWeight:700,color:"#991B1B"}}>—</td>
-                    <td style={{padding:"6px 20px",textAlign:"left",fontSize:11,fontWeight:700,color:"#991B1B",whiteSpace:"nowrap"}}>🚫 Absent</td>
+                    <td colSpan={2} style={{padding:"6px 20px",textAlign:"left",fontSize:11,fontWeight:700,color:"#991B1B",whiteSpace:"nowrap"}}>🚫 Absent</td>
                     {absentPerTest.map((n,i)=><td key={i} style={{padding:"6px 12px",textAlign:"center",fontSize:12,fontWeight:700,color:n>0?"#DC2626":"#16A34A"}}>{n>0?n:"✓"}</td>)}
                     <td style={{padding:"6px 16px",textAlign:"center",fontSize:11,fontWeight:700,color:"#991B1B"}}>{absentPerTest.reduce((a,b)=>a+b,0)} total</td>
+                    <td></td>
                     <td></td>
                   </tr>
                 </tbody>
@@ -3064,7 +3222,7 @@ function App(){
     {id:"dashboard",label:"Dashboard",icon:"🏠"},
     {id:"students",label:"Students",icon:"👨‍🎓"},
     {id:"topics",label:"Topics",icon:"📝"},
-    {id:"attendance",label:"Attendance",icon:"✅"},
+    {id:"participation",label:"Test Participation",icon:"📋"},
     {id:"enter",label:"Enter Marks",icon:"✏️"},
     {id:"overview",label:"Overview",icon:"📈"},
     {id:"class",label:"Progress",icon:"📊"},
@@ -3103,10 +3261,10 @@ function App(){
       </div>
       {/* Content */}
       <div style={{maxWidth:1060,margin:"24px auto",padding:"0 16px 0"}}>
-        {tab==="dashboard"&&!isParent&&<Dashboard user={user} testsDB={testsDB} studentsDB={studentsDB} attendanceDB={attendanceDB} setTab={setTab}/>}
+        {tab==="dashboard"&&!isParent&&<Dashboard user={user} testsDB={testsDB} studentsDB={studentsDB} setTab={setTab}/>}
         {tab==="students"&&!isParent&&<ManageStudents studentsDB={studentsDB}/>}
         {tab==="topics"&&!isParent&&<ManageTopics topicsDB={topicsDB}/>}
-        {tab==="attendance"&&!isParent&&<Attendance user={user} attendanceDB={attendanceDB} studentsDB={studentsDB}/>}
+        {tab==="participation"&&!isParent&&<TestParticipation user={user} testsDB={testsDB} studentsDB={studentsDB}/>}
         {tab==="enter"&&!isParent&&<EnterMarks user={user} testsDB={testsDB} topicsDB={topicsDB} studentsDB={studentsDB}/>}
         {tab==="overview"&&!isParent&&<ClassOverview user={user} testsDB={testsDB} studentsDB={studentsDB}/>}
       {tab==="class"&&!isParent&&<ClassProgress user={user} testsDB={testsDB} studentsDB={studentsDB}/>}
