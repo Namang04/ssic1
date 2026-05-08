@@ -2854,7 +2854,7 @@ function QuestionBank({user}){
   }
 
   function buildByMarks(target){
-    const d=QB_DATA[lvl];
+    const d=QB_DATA[lvl]||[];
     const bp={
       20:{mcq:6,ar:0,vsa:2,sa:2,la:0,cs:0},
       30:{mcq:8,ar:2,vsa:2,sa:2,la:1,cs:0},
@@ -2882,7 +2882,7 @@ function QuestionBank({user}){
   }
 
   function buildByChapter(ch){
-    const d=QB_DATA[lvl];
+    const d=QB_DATA[lvl]||[];
     const pool=d.filter(q=>q.c===ch);
     let budget=chMarkTarget;
     const items=[];
@@ -2998,7 +2998,7 @@ function QuestionBank({user}){
               {cls.replace("Class ","")} {subj.split(" ")[0]} · Soon
             </span>
           ))}
-          <span style={{background:"#B8860B",color:"#fff",borderRadius:20,padding:"5px 13px",fontSize:12,fontWeight:700}}>{QB_DATA[lvl].length} Q's</span>
+          <span style={{background:"#B8860B",color:"#fff",borderRadius:20,padding:"5px 13px",fontSize:12,fontWeight:700}}>{(QB_DATA[lvl]||[]).length} Q's</span>
         </div>
       </div>
 
@@ -3096,7 +3096,7 @@ function QuestionBank({user}){
             <Lbl c="Filter"/>
             <select value={filterCh} onChange={e=>setFilterCh(e.target.value)} style={{padding:"6px 28px 6px 10px",borderRadius:8,border:"1.5px solid #e2e8f0",fontSize:12,color:"#64748b",background:"#fff",cursor:"pointer"}}>
               <option value="">All Chapters</option>
-              {QB_CHAPTERS.map(c=><option key={c}>{c}</option>)}
+              {[...new Set((QB_DATA[lvl]||[]).map(q=>q.c))].sort().map(c=><option key={c}>{c}</option>)}
             </select>
             <select value={filterSec} onChange={e=>setFilterSec(e.target.value)} style={{padding:"6px 28px 6px 10px",borderRadius:8,border:"1.5px solid #e2e8f0",fontSize:12,color:"#64748b",background:"#fff",cursor:"pointer"}}>
               <option value="">All Sections</option>
@@ -3231,24 +3231,29 @@ function QuestionBank({user}){
             </div>
           </Card>
 
-          {/* Coverage chart */}
+          {/* Coverage chart — dynamic, class-aware */}
           <Card style={{padding:"12px 14px"}}>
             <div style={{fontWeight:700,fontSize:11,color:"#1a2e6c",marginBottom:8}}>📊 CBSE Chapter Coverage</div>
-            {QB_CHAPTERS.map(ch=>{
-              const cnt=QB_DATA[lvl].filter(q=>q.c===ch).length;
-              const wt=QB_CBSE_WT[ch]||0;
-              return(
-                <div key={ch} style={{marginBottom:5}}>
-                  <div style={{display:"flex",justifyContent:"space-between",fontSize:10,marginBottom:2}}>
-                    <span style={{color:"#475569",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"68%"}}>{ch}</span>
-                    <span style={{color:"#94a3b8",flexShrink:0,fontSize:9}}>{cnt}q · {wt}%</span>
+            {(() => {
+              const allQ = QB_DATA[lvl]||[];
+              const chs = [...new Set(allQ.map(q=>q.c))].sort();
+              if (chs.length === 0) return <div style={{fontSize:11,color:"#94a3b8",fontStyle:"italic"}}>No chapter data available for this subject yet.</div>;
+              return chs.map(ch=>{
+                const cnt = allQ.filter(q=>q.c===ch).length;
+                const wt = (typeof QB_CBSE_WT!=="undefined" && QB_CBSE_WT[ch]) || 0;
+                return(
+                  <div key={ch} style={{marginBottom:5}}>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:10,marginBottom:2}}>
+                      <span style={{color:"#475569",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"68%"}}>{ch}</span>
+                      <span style={{color:"#94a3b8",flexShrink:0,fontSize:9}}>{cnt}q{wt?" · "+wt+"%":""}</span>
+                    </div>
+                    <div style={{height:4,background:"#f1f5f9",borderRadius:99}}>
+                      <div style={{width:`${Math.min(cnt/12*100,100)}%`,height:"100%",background:cnt>=8?"#16a34a":cnt>=5?"#1a2e6c":"#d97706",borderRadius:99,transition:"width .4s"}}/>
+                    </div>
                   </div>
-                  <div style={{height:4,background:"#f1f5f9",borderRadius:99}}>
-                    <div style={{width:`${Math.min(cnt/12*100,100)}%`,height:"100%",background:cnt>=8?"#16a34a":cnt>=5?"#1a2e6c":"#d97706",borderRadius:99,transition:"width .4s"}}/>
-                  </div>
-                </div>
-              );
-            })}
+                );
+              });
+            })()}
           </Card>
         </div>
       </div>
