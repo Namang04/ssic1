@@ -4791,20 +4791,20 @@ function ManageTopics({user,usersDB,topicsDB}){
 }
 
 // ── ATTENDANCE ──
-function Attendance({user,attendanceDB,studentsDB}){
+function Attendance({user,attendanceDB,studentsDB,usersDB}){
   const ROMAN_MAP={"I":"1","II":"2","III":"3","IV":"4","V":"5","VI":"6","VII":"7","VIII":"8","IX":"9","X":"10","XI":"11","XII":"12"};
   const CLASS_SECTIONS={"Class 1":["A"],"Class 2":["A"],"Class 3":["A"],"Class 4":["A"],"Class 5":["A"],"Class 6":["A","B"],"Class 7":["A","B"],"Class 8":["A","B"],"Class 9":["A","B"],"Class 10":["A","B"],"Class 11":["A","B","C","D"],"Class 12":["A","B","C","D"]};
   const isMob=useIsMobile();
 
   const toClassKey=(c)=>{
+    if(c.startsWith("Class "))return c.split("-")[0].trim();
     const roman=c.split("-")[0].split("(")[0].trim();
     const num=ROMAN_MAP[roman];
     return num?"Class "+num:c;
   };
   const toSection=(c)=>{
-    // "6-A" → "A", "11-AB" → "AB", "10-B" → "B"
     const parts=c.split("-");
-    return parts.length>1?parts[1]:"A";
+    return parts.length>1?parts[parts.length-1]:"A";
   };
 
   // Build class list
@@ -6639,7 +6639,7 @@ const TL_CLASSES = {
 };
 
 const TL_SUBJECTS = [
-  'English Language','English Literature','Hindi','Mathematics',
+  'Mathematics','English','Hindi',
   'Science','Physics','Chemistry','Biology','Social Studies',
   'History','Geography','Civics','Economics','Commerce',
   'Accounts','Business Studies','Computer Science','Information Technology',
@@ -6736,6 +6736,8 @@ function TimetablePanel({user}){
   const[loading,setLoading]=useState(true);
   const[saving,setSaving]=useState(false);
   const[msg,setMsg]=useState("");
+  const[editEntry,setEditEntry]=useState(null);
+  const[editSaving,setEditSaving]=useState(false);
 
   useEffect(()=>{
     let unsub1=null,unsub2=null;
@@ -7227,10 +7229,19 @@ function MyDailyLog({user,tlStyle}){
     ? (TL_CLASSES[cls]||["A"])
     : assigned.filter(a=>a.cls===cls).map(a=>a.section);
   const assignedSubjects = (user.subjects&&user.subjects.length>0)
-    ? user.subjects : TL_SUBJECTS;
+    ? user.subjects.map(s=>(s==='English Language'||s==='English Literature')?'English':s) : TL_SUBJECTS;
   const today=new Date().toISOString().split("T")[0];
   const[date,setDate]=useState(today);
-  const[subject,setSubject]=useState(TL_SUBJECTS[0]);
+  const[subject,setSubject]=useState(()=>{const s=user.subjects&&user.subjects.length>0?user.subjects[0]:null;return s&&s!=='English Language'&&s!=='English Literature'?s:(s?'English':TL_SUBJECTS[0]);});
+  // Re-sync subject when Firebase user data loads
+  useEffect(()=>{
+    if(user.subjects&&user.subjects.length>0){
+      const s=user.subjects[0];
+      const norm=(s==='English Language'||s==='English Literature')?'English':s;
+      setSubject(norm);
+    }
+  },[user.subjects]);
+
   const[rows,setRows]=useState(()=>{const raw=(user.assignedClasses&&user.assignedClasses[0]);const a=raw?(typeof raw==="string"?{cls:raw.split("-")[0],section:raw.split("-").slice(1).join("-")}:raw):null;return [{id:0,period:"1",cls:a?a.cls:"10",section:a?a.section:"A",chapno:"",topic:"",hw:""}];});
   const[saving,setSaving]=useState(false);
   const[msg,setMsg]=useState("");
@@ -7255,7 +7266,7 @@ function MyDailyLog({user,tlStyle}){
     return()=>{if(unsub)unsub();};
   },[user.username]);
 
-  const addRow=()=>setRows(r=>[...r,{id:Date.now(),period:String(r.length+1),cls:"X",section:"A",chapno:"",topic:"",hw:""}]);
+  const addRow=()=>setRows(r=>{const raw=(user.assignedClasses&&user.assignedClasses[0]);const a=raw?(typeof raw==="string"?{cls:raw.split("-")[0],section:raw.split("-").slice(1).join("-")}:raw):null;return [...r,{id:Date.now(),period:String(r.length+1),cls:a?a.cls:"10",section:a?a.section:"A",chapno:"",topic:"",hw:""}];});
   const removeRow=(id)=>setRows(r=>r.filter(x=>x.id!==id));
   const updateRow=(id,field,val)=>setRows(r=>r.map(x=>x.id===id?{...x,[field]:val}:x));
 
@@ -7275,7 +7286,7 @@ function MyDailyLog({user,tlStyle}){
         });
       }
       setMsg(`✓ ${valid.length} period(s) saved!`);
-      setRows([{id:0,period:"1",cls:"X",section:"A",chapno:"",topic:"",hw:""}]);
+      setRows(()=>{const raw=(user.assignedClasses&&user.assignedClasses[0]);const a=raw?(typeof raw==="string"?{cls:raw.split("-")[0],section:raw.split("-").slice(1).join("-")}:raw):null;return [{id:0,period:"1",cls:a?a.cls:"10",section:a?a.section:"A",chapno:"",topic:"",hw:""}];});
     }catch(e){setMsg("❌ Error: "+e.message);}
     setSaving(false);
   };
@@ -7345,7 +7356,7 @@ function MyDailyLog({user,tlStyle}){
           ):(
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
               <thead><tr style={{background:"#0d1b2a"}}>
-                {["Date","Class","Period","Subject","Chapter","Topic","H.W."].map(h=>(
+                {["Date","Class","Period","Subject","Chapter","Topic","H.W.",""].map(h=>(
                   <th key={h} style={{padding:"9px 12px",textAlign:"left",color:"#fbbf24",fontSize:10,fontWeight:700,letterSpacing:.8,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>
                 ))}
               </tr></thead>
@@ -7359,6 +7370,7 @@ function MyDailyLog({user,tlStyle}){
                     <td style={{padding:"9px 12px",color:"#64748b"}}>{e.chapterNo||"—"}</td>
                     <td style={{padding:"9px 12px",color:"#1e293b",fontWeight:500}}>{e.topic}</td>
                     <td style={{padding:"9px 12px",color:"#64748b",maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{e.hw||"—"}</td>
+                    <td style={{padding:"9px 6px"}}><button onClick={function(){if(window.confirm("Delete this entry?")){window.__fbDeleteDoc(window.__fbDoc(window.__db,"teacherLogs",e.__id));}}} style={{background:"#fee2e2",border:"none",borderRadius:6,padding:"4px 8px",fontSize:12,cursor:"pointer",color:"#dc2626",fontWeight:700}}>✕</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -7379,7 +7391,7 @@ function LessonPlanForm({user,tlStyle}){
   const lpCanViewAll = user.role==="admin"||user.role==="vp";
   const lpClassList = lpCanViewAll ? Object.keys(TL_CLASSES) : [...new Set(lpAssigned.map(a=>a.cls))];
   const lpAssignedSections = (cls) => lpCanViewAll ? (TL_CLASSES[cls]||["A"]) : lpAssigned.filter(a=>a.cls===cls).map(a=>a.section);
-  const lpSubjects = (user.subjects&&user.subjects.length>0) ? user.subjects : TL_SUBJECTS;
+  const lpSubjects = (user.subjects&&user.subjects.length>0) ? user.subjects.map(s=>(s==='English Language'||s==='English Literature')?'English':s) : TL_SUBJECTS;
   const today=new Date().toISOString().split("T")[0];
   const[form,setForm]=useState(()=>{const raw=(user.assignedClasses&&user.assignedClasses[0]);const a=raw?(typeof raw==="string"?{cls:raw.split("-")[0],section:raw.split("-").slice(1).join("-")}:raw):null;const s=user.subjects&&user.subjects[0];return {subject:s||TL_SUBJECTS[0],cls:a?a.cls:"10",section:a?a.section:"A",chapno:"",topic:"",periods:"",dateFrom:today,dateTo:"",aids:"",objectives:"",method:"",assignments:"",other:""};});
   const[saving,setSaving]=useState(false);
@@ -7484,7 +7496,7 @@ function LessonPlanForm({user,tlStyle}){
           ):myLPs.length===0?(
             <div style={{padding:32,textAlign:"center",color:"#94a3b8",fontSize:13}}>No lesson plans submitted yet.</div>
           ):(
-            myLPs.map(lp=><LPCard key={lp.__id} lp={lp}/>)
+            myLPs.map(lp=><LPCard key={lp.__id} lp={lp} user={user}/>)
           )}
         </div>
       </div>
@@ -7492,8 +7504,45 @@ function LessonPlanForm({user,tlStyle}){
   );
 }
 
-function LPCard({lp}){
+
+</script>
+<script type="text/babel">
+function LPCard({lp, user}){
   const[open,setOpen]=useState(false);
+  const[editing,setEditing]=useState(false);
+  const[form,setForm]=useState(null);
+  const[saving,setSaving]=useState(false);
+  const canEdit=user&&(user.role==="admin"||user.role==="vp"||lp.teacherId===user.username);
+
+  function openEdit(e){
+    e.stopPropagation();
+    setForm({
+      topic:lp.topic||"",
+      chapterNo:lp.chapterNo||"",
+      objectives:lp.objectives||"",
+      aids:lp.aids||"",
+      method:lp.method||"",
+      assignments:lp.assignments||"",
+      other:lp.other||""
+    });
+    setEditing(true);
+  }
+
+  async function saveEdit(){
+    if(!window.__db||!form)return;
+    setSaving(true);
+    try{
+      await window.__fbSetDoc(window.__fbDoc(window.__db,"lessonPlans",lp.__id),{
+        ...lp,...form,editedAt:new Date().toISOString()
+      });
+      setEditing(false);
+    }catch(e){}
+    setSaving(false);
+  }
+
+  const inp={width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"8px 11px",fontSize:13,fontFamily:"Sora,sans-serif",outline:"none"};
+  const ta={...inp,resize:"vertical",minHeight:64};
+
   return(
     <div style={{background:"#f8fafc",borderRadius:10,border:"1.5px solid #e2e8f0",marginBottom:10,overflow:"hidden"}}>
       <div onClick={()=>setOpen(o=>!o)} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",cursor:"pointer"}}>
@@ -7502,6 +7551,7 @@ function LPCard({lp}){
           <div style={{fontSize:10,color:"#64748b",marginTop:3,lineHeight:1.6}}>{lp.subject} · Class {lp.class} {lp.section}<br/>{lp.teacherName} · {lp.periods||"?"} periods</div>
         </div>
         <span style={{background:"#fdf9ee",color:"#1a2e45",borderRadius:20,padding:"2px 10px",fontSize:10,fontWeight:700}}>Lesson Plan</span>
+        {canEdit&&<button onClick={openEdit} style={{background:"#e2e8f0",border:"none",borderRadius:6,padding:"4px 10px",fontSize:11,cursor:"pointer",color:"#0d1b2a",fontWeight:600,fontFamily:"Sora,sans-serif"}}>Edit</button>}
         <span style={{fontSize:14,color:"#94a3b8"}}>{open?"▲":"▼"}</span>
       </div>
       {open&&(
@@ -7514,9 +7564,50 @@ function LPCard({lp}){
           ):null)}
         </div>
       )}
+
+      {/* Edit Modal */}
+      {editing&&(
+        <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,.5)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16,overflowY:"auto"}}>
+          <div style={{background:"#fff",borderRadius:14,padding:22,width:"100%",maxWidth:520,boxShadow:"0 20px 60px rgba(0,0,0,.3)",maxHeight:"90vh",overflowY:"auto"}}>
+            <div style={{fontWeight:700,fontSize:15,color:"#0d1b2a",marginBottom:4}}>Edit Lesson Plan</div>
+            <div style={{fontSize:12,color:"#64748b",marginBottom:16}}>{lp.subject} · Class {lp.class} {lp.section}</div>
+            {[
+              ["CHAPTER NO.","chapterNo","input"],
+              ["TOPIC","topic","input"],
+              ["OBJECTIVES","objectives","textarea"],
+              ["TEACHING AIDS","aids","textarea"],
+              ["METHODOLOGY","method","textarea"],
+              ["ASSIGNMENTS","assignments","textarea"],
+              ["REMARKS","other","textarea"]
+            ].map(function(x){
+              var label=x[0],key=x[1],type=x[2];
+              return(
+                <div key={key} style={{marginBottom:12}}>
+                  <label style={{fontSize:10,fontWeight:700,color:"#64748b",display:"block",marginBottom:5,letterSpacing:1}}>{label}</label>
+                  {type==="textarea"
+                    ?<textarea value={form[key]||""} onChange={e=>{var v=e.target.value;setForm(p=>({...p,[key]:v}));}} style={ta}/>
+                    :<input value={form[key]||""} onChange={e=>{var v=e.target.value;setForm(p=>({...p,[key]:v}));}} style={inp}/>
+                  }
+                </div>
+              );
+            })}
+            <div style={{display:"flex",gap:10,marginTop:8}}>
+              <button onClick={saveEdit} disabled={saving}
+                style={{background:"#0d1b2a",color:"#fff",border:"none",borderRadius:8,padding:"10px 24px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"Sora,sans-serif",opacity:saving?0.6:1}}>
+                {saving?"Saving...":"Save Changes"}
+              </button>
+              <button onClick={()=>setEditing(false)}
+                style={{background:"#f1f5f9",color:"#64748b",border:"none",borderRadius:8,padding:"10px 20px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"Sora,sans-serif"}}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
 
 // ─── Class Log View ──────────────────────────────────────
 function ClassLogView({user,tlStyle,isAdmin}){
@@ -7526,6 +7617,8 @@ function ClassLogView({user,tlStyle,isAdmin}){
   const[filterSec,setFilterSec]=useState("");
   const[allLogs,setAllLogs]=useState([]);
   const[loading,setLoading]=useState(true);
+  const[editEntry,setEditEntry]=useState(null); // {__id, topic, hw, chapterNo}
+  const[editSaving,setEditSaving]=useState(false);
 
   useEffect(()=>{
     let unsub=null;
@@ -7535,15 +7628,22 @@ function ClassLogView({user,tlStyle,isAdmin}){
       unsub=window.__fbOnSnapshot(col,snap=>{
         const all=[];
         snap.forEach(d=>{const v=d.data();v.__id=d.id;all.push(v);});
-        setAllLogs(all);setLoading(false);
+        // Teachers only see their own logs; admin sees all
+        const filtered=isAdmin?all:all.filter(e=>e.teacherId===user.username);
+        filtered.sort((a,b)=>b.date.localeCompare(a.date));
+        setAllLogs(filtered);setLoading(false);
       });
     };
     if(window.__fbReady)init();
     else window.addEventListener("fbready",init,{once:true});
     return()=>{if(unsub)unsub();};
-  },[]);
+  },[user.username,isAdmin]);
 
-  const secs=filterCls?(TL_CLASSES[filterCls]||["A"]):[];
+  const filterClsList=isAdmin
+    ? [...new Set(allLogs.map(l=>l.class).filter(Boolean))].sort()
+    : (user.assignedClasses||[]).map(c=>typeof c==="string"?c.split("-")[0]:c.cls).filter((v,i,a)=>a.indexOf(v)===i);
+
+  const filterSecList=filterCls?(TL_CLASSES[filterCls]||["A"]):[];
 
   let logs=allLogs.filter(l=>l.date===date);
   if(filterCls) logs=logs.filter(l=>l.class===filterCls);
@@ -7552,84 +7652,139 @@ function ClassLogView({user,tlStyle,isAdmin}){
   // Group by class+section
   const groups={};
   logs.forEach(l=>{
-    const k=`Class ${l.class} ${l.section}`;
+    const k="Class "+(l.class||"?")+" "+(l.section||"");
     if(!groups[k]) groups[k]=[];
     groups[k].push(l);
   });
   Object.values(groups).forEach(g=>g.sort((a,b)=>Number(a.period)-Number(b.period)));
 
-  const isMob=useIsMobile();
-  const fmtDate=(d)=>{try{return new Date(d+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"});}catch{return d;}};
+  const saveEdit=async()=>{
+    if(!editEntry||!window.__db)return;
+    setEditSaving(true);
+    try{
+      await window.__fbSetDoc(window.__fbDoc(window.__db,"teacherLogs",editEntry.__id),{
+        ...editEntry,
+        topic:editEntry.topic,
+        hw:editEntry.hw,
+        chapterNo:editEntry.chapterNo,
+        editedAt:new Date().toISOString()
+      });
+      setEditEntry(null);
+    }catch(e){}
+    setEditSaving(false);
+  };
+
+  if(loading)return<div style={{padding:32,textAlign:"center",color:"#94a3b8"}}>Loading...</div>;
 
   return(
-    <div>
-      {/* Filters */}
-      <div style={{...tlStyle.wrap}}>
-        <div style={tlStyle.header}><span style={{fontSize:18}}>📒</span><span style={tlStyle.headerTitle}>Class Log</span>{!isMob&&<span style={{marginLeft:"auto",fontSize:11,color:"rgba(255,255,255,.5)"}}>Auto-assembled from teacher entries</span>}</div>
-        <div style={{...tlStyle.body,paddingBottom:0}}>
-          <div style={{display:"grid",gridTemplateColumns:isMob?"1fr 1fr":"auto auto auto",gap:10,flexWrap:"wrap",marginBottom:16}}>
-            <div style={{minWidth:140}}><label style={tlStyle.label}>Date</label><input type="date" value={date} onChange={e=>setDate(e.target.value)} style={tlStyle.input}/></div>
-            <div style={{minWidth:140}}><label style={tlStyle.label}>Class</label>
-              <select value={filterCls} onChange={e=>{setFilterCls(e.target.value);setFilterSec("");}} style={tlStyle.select}>
-                <option value="">All Classes</option>
-                {Object.keys(TL_CLASSES).map(c=><option key={c} value={c}>Class {c}</option>)}
-              </select>
-            </div>
-            {filterCls&&<div style={{minWidth:120}}><label style={tlStyle.label}>Section</label>
-              <select value={filterSec} onChange={e=>setFilterSec(e.target.value)} style={tlStyle.select}>
-                <option value="">All Sections</option>
-                {secs.map(s=><option key={s}>{s}</option>)}
-              </select>
-            </div>}
+    <div style={tlStyle.wrap}>
+      <div style={tlStyle.header}>
+        <span style={{fontSize:20}}>📋</span>
+        <span style={tlStyle.headerTitle}>{isAdmin?"Class Log — All Teachers":"My Class Log"}</span>
+      </div>
+      <div style={tlStyle.body}>
+        {/* Filters */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:16}}>
+          <div style={tlStyle.field}>
+            <label style={tlStyle.label}>Date</label>
+            <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={tlStyle.input}/>
+          </div>
+          <div style={tlStyle.field}>
+            <label style={tlStyle.label}>Class</label>
+            <select value={filterCls} onChange={e=>{setFilterCls(e.target.value);setFilterSec("");}} style={tlStyle.select}>
+              <option value="">All Classes</option>
+              {filterClsList.map(c=><option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <div style={tlStyle.field}>
+            <label style={tlStyle.label}>Section</label>
+            <select value={filterSec} onChange={e=>setFilterSec(e.target.value)} style={tlStyle.select}>
+              <option value="">All Sections</option>
+              {filterSecList.map(s=><option key={s}>{s}</option>)}
+            </select>
           </div>
         </div>
+
+        {Object.keys(groups).length===0?(
+          <div style={{padding:32,textAlign:"center",color:"#94a3b8"}}>
+            No entries for {date}{filterCls?" in Class "+filterCls:""}
+          </div>
+        ):(
+          Object.entries(groups).map(([grp,entries])=>(
+            <div key={grp} style={{marginBottom:20}}>
+              <div style={{fontWeight:700,fontSize:13,color:"#0d1b2a",marginBottom:8,borderBottom:"2px solid #0d1b2a",paddingBottom:4}}>{grp}</div>
+              <div style={{overflowX:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                  <thead><tr style={{background:"#0d1b2a"}}>
+                    {["P","Subject",isAdmin?"Teacher":"Chapter","Topic","HW",""].map(h=>(
+                      <th key={h} style={{padding:"8px 10px",textAlign:"left",color:"#fbbf24",fontSize:10,fontWeight:700,letterSpacing:.8,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {entries.map((e,i)=>(
+                      <tr key={e.__id} style={{borderBottom:"1px solid #f1f5f9",background:i%2===0?"#fff":"#f8fafc"}}>
+                        <td style={{padding:"8px 10px",fontWeight:800,color:"#0d1b2a"}}>{e.period}</td>
+                        <td style={{padding:"8px 10px",color:"#1e293b",fontWeight:600}}>{e.subject}</td>
+                        <td style={{padding:"8px 10px",color:"#475569"}}>{isAdmin?e.teacherName:(e.chapterNo?"Ch."+e.chapterNo:"—")}</td>
+                        <td style={{padding:"8px 10px",color:"#1e293b",maxWidth:160,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{e.topic}</td>
+                        <td style={{padding:"8px 10px",color:"#475569",maxWidth:120,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{e.hw||"—"}</td>
+                        <td style={{padding:"8px 10px"}}>
+                          {(isAdmin||e.teacherId===user.username)&&(
+                            <button onClick={()=>setEditEntry({...e})}
+                              style={{background:"#f1f5f9",border:"none",borderRadius:6,padding:"4px 10px",fontSize:11,cursor:"pointer",color:"#0d1b2a",fontWeight:600,fontFamily:"Sora,sans-serif"}}>Edit</button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))
+        )}
       </div>
 
-      {loading?(
-        <div style={{textAlign:"center",padding:40,color:"#94a3b8"}}>Loading…</div>
-      ):Object.keys(groups).length===0?(
-        <div style={{...tlStyle.wrap}}>
-          <div style={{padding:40,textAlign:"center",color:"#94a3b8",fontSize:13}}>
-            <div style={{fontSize:32,marginBottom:8}}>📒</div>
-            No entries found for {fmtDate(date)}{filterCls?` · Class ${filterCls}`:""}.
+      {/* Edit Modal */}
+      {editEntry&&(
+        <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,.5)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div style={{background:"#fff",borderRadius:14,padding:24,width:"100%",maxWidth:480,boxShadow:"0 20px 60px rgba(0,0,0,.3)"}}>
+            <div style={{fontWeight:700,fontSize:16,color:"#0d1b2a",marginBottom:4}}>Edit Log Entry</div>
+            <div style={{fontSize:12,color:"#64748b",marginBottom:16}}>
+              Period {editEntry.period} | {editEntry.subject} | Class {editEntry.class} {editEntry.section}
+            </div>
+            <div style={{marginBottom:12}}>
+              <label style={{fontSize:10,fontWeight:700,color:"#64748b",display:"block",marginBottom:5,letterSpacing:1}}>CHAPTER NO.</label>
+              <input value={editEntry.chapterNo||""} onChange={e=>setEditEntry(p=>({...p,chapterNo:e.target.value}))}
+                style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"Sora,sans-serif",outline:"none"}}/>
+            </div>
+            <div style={{marginBottom:12}}>
+              <label style={{fontSize:10,fontWeight:700,color:"#64748b",display:"block",marginBottom:5,letterSpacing:1}}>TOPIC TAUGHT</label>
+              <input value={editEntry.topic||""} onChange={e=>setEditEntry(p=>({...p,topic:e.target.value}))}
+                style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"Sora,sans-serif",outline:"none"}}/>
+            </div>
+            <div style={{marginBottom:20}}>
+              <label style={{fontSize:10,fontWeight:700,color:"#64748b",display:"block",marginBottom:5,letterSpacing:1}}>HOMEWORK GIVEN</label>
+              <input value={editEntry.hw||""} onChange={e=>setEditEntry(p=>({...p,hw:e.target.value}))}
+                placeholder="Leave blank if none"
+                style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"Sora,sans-serif",outline:"none"}}/>
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={saveEdit} disabled={editSaving}
+                style={{background:"#0d1b2a",color:"#fff",border:"none",borderRadius:8,padding:"10px 24px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"Sora,sans-serif",opacity:editSaving?0.6:1}}>
+                {editSaving?"Saving...":"Save Changes"}
+              </button>
+              <button onClick={()=>setEditEntry(null)}
+                style={{background:"#f1f5f9",color:"#64748b",border:"none",borderRadius:8,padding:"10px 20px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"Sora,sans-serif"}}>
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
-      ):(
-        Object.entries(groups).map(([grpName,entries])=>(
-          <div key={grpName} style={{...tlStyle.wrap}}>
-            <div style={{background:"#0d1b2a",padding:"12px 18px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <span style={{fontWeight:800,fontSize:15,color:"#fbbf24"}}>{grpName}</span>
-              <span style={{fontSize:11,color:"rgba(255,255,255,.5)"}}>{fmtDate(date)}</span>
-            </div>
-            <div style={{overflowX:"auto"}}>
-              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-                <thead><tr style={{background:"#0d1b2a"}}>
-                  {["Period","Subject","Teacher","Chapter","Topic Taught","Homework"].map(h=>(
-                    <th key={h} style={{padding:"8px 12px",textAlign:"left",color:"#fbbf24",fontSize:10,fontWeight:700,letterSpacing:.8,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>
-                  ))}
-                </tr></thead>
-                <tbody>
-                  {entries.map((e,i)=>(
-                    <tr key={e.__id} style={{borderBottom:"1px solid #f1f5f9",background:i%2===0?"#fff":"#f8fafc"}}>
-                      <td style={{padding:"9px 12px",fontWeight:800,color:"#0d1b2a",fontSize:13}}>P{e.period}</td>
-                      <td style={{padding:"9px 12px",color:"#1e293b",fontWeight:600}}>{e.subject}</td>
-                      <td style={{padding:"9px 12px",color:"#475569"}}>{e.teacherName}</td>
-                      <td style={{padding:"9px 12px",color:"#64748b"}}>{e.chapterNo||"—"}</td>
-                      <td style={{padding:"9px 12px",color:"#1e293b",fontWeight:500}}>{e.topic}</td>
-                      <td style={{padding:"9px 12px",color:"#64748b",maxWidth:200}}>{e.hw||"—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        ))
       )}
     </div>
   );
 }
 
-// ─── All Lesson Plans (Admin) ────────────────────────────
 function AllLessonPlans({tlStyle}){
   const isMob=useIsMobile();
   const[allLPs,setAllLPs]=useState([]);
