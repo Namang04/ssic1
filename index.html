@@ -4420,7 +4420,7 @@ const gradeOf=p=>{
 };
 const safeId=s=>s.replace(/[^a-zA-Z0-9]/g,"_");
 const getTeacherClasses=(user)=>{if(!user||user.role==="admin"||user.role==="vp")return SCHOOL.classes;const cls=user.classes||[];if(!cls.length)return SCHOOL.classes;return [...new Set(cls.map(function(c){return c.split("-")[0].trim();}))];};
-const getTeacherSubjects=(user,cls)=>{if(!user||user.role==="admin"||user.role==="vp")return SCHOOL.subjects[cls]||[];const subjs=user.subjects||[];const all=SCHOOL.subjects[cls]||[];if(!subjs.length)return all;return all.filter(function(s){return subjs.indexOf(s)>=0;});};
+const getTeacherSubjects=(user,cls)=>{if(!user||user.role==="admin"||user.role==="vp")return SCHOOL.subjects[cls]||[];const subjs=(user.subjects||[]).map(function(s){return(s==="English Language"||s==="English Literature")?"English":s;});const all=SCHOOL.subjects[cls]||[];if(!subjs.length)return all;return all.filter(function(s){return subjs.indexOf(s)>=0;});};
 const today=()=>new Date().toISOString().split("T")[0];
 const fmtDate=d=>{if(!d)return"-";const p=d.split("-");return p[2]+"/"+p[1]+"/"+p[0];};
 const fmtTime=iso=>{if(!iso)return"";const d=new Date(iso);return d.toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"});};
@@ -6160,8 +6160,8 @@ function QuestionBank({user}){
     ? user.qbankClasses
     : (user.classes||[]).map(function(c){return c.split("-")[0].trim();}).filter(function(c,i,a){return a.indexOf(c)===i;});
   const userSubjects=(user.qbankSubjects&&user.qbankSubjects.length>0)
-    ? user.qbankSubjects
-    : (user.subjects||[]);
+    ? user.qbankSubjects.map(function(s){return(s==="English Language"||s==="English Literature")?"English":s;})
+    : (user.subjects||[]).map(function(s){return(s==="English Language"||s==="English Literature")?"English":s;});
 
   const accessibleCombos=isAdmin
     ? Object.keys({...QB_READY,...QB_COMING}).map(k=>{const[c,...rest]=k.split("|");return{cls:c,subj:rest.join("|")};})
@@ -6669,7 +6669,7 @@ function useIsMobile(){
 
 // ─── Default subject colors (shared across schedules) ───
 const DEFAULT_SUBJECT_COLORS = {
-  "Mathematics":"#3b82f6","English Language":"#8b5cf6","English Literature":"#7c3aed",
+  "Mathematics":"#3b82f6","English":"#8b5cf6",
   "Hindi":"#f59e0b","Science":"#10b981","Physics":"#06b6d4","Chemistry":"#f97316",
   "Biology":"#22c55e","Social Studies":"#ec4899","History":"#a16207","Geography":"#0891b2",
   "Civics":"#6366f1","Economics":"#d97706","Commerce":"#854d0e","Accounts":"#1d4ed8",
@@ -7737,6 +7737,7 @@ function App(){
     {id:"attendance-grp", label:"Attendance", icon:"🗹", single:"attendance"},
     ...(isAdmin?[{id:"assign-grp",label:"Assign",icon:"🔧",single:"assign"},{id:"timetable-grp",label:"Timetable",icon:"🗓️",single:"timetable"}]:[]),
     ...(!isAdmin&&!isParent?[{id:"mytimetable-grp",label:"My Timetable",icon:"🗓️",single:"mytimetable"}]:[]),
+    {id:"notices-grp", label:"Notices", icon:"📢", single:"notices"},
     {id:"leave-grp", label:"Leave", icon:"🏖️", single:"leave"},
     {id:"account-grp", label:"Account", icon:"🔐", single:"account"},
   ];
@@ -7822,6 +7823,7 @@ function App(){
         {tab==="attendance"&&!isParent&&<Attendance user={user} attendanceDB={attendanceDB} studentsDB={studentsDB} usersDB={usersDB}/>}
         {tab==="assign"&&isAdmin&&<AssignPanel usersDB={usersDB}/>}
         {tab==="timetable"&&isAdmin&&<TimetablePanel user={user}/>}
+        {tab==="notices"&&!isParent&&<NoticeBoard user={user}/>}
         {tab==="leave"&&!isParent&&<LeavePanel user={user}/>}
         {tab==="mytimetable"&&!isAdmin&&!isParent&&<MyTimetablePanel user={user}/>}
       </div>
@@ -9032,7 +9034,7 @@ function AssignPanel(props) {
   var usersDB = props.usersDB;
   var CLASSES = ["Class 6","Class 7","Class 8","Class 9","Class 10","Class 11","Class 12"];
   var SECTIONS = ["A","B","C","D"];
-  var SUBJECTS = ["Mathematics","Science","Physics","Chemistry","Biology","English Language","English Literature","Hindi","Social Studies","History","Geography","Political Science","Economics","Accounts","Business Studies","Computer Science","Information Technology","Physical Education","Sanskrit","General Knowledge","Moral Science","Art & Craft"];
+  var SUBJECTS = ["Mathematics","Science","Physics","Chemistry","Biology","English","Hindi","Social Studies","History","Geography","Political Science","Economics","Accounts","Business Studies","Computer Science","Information Technology","Physical Education","Sanskrit","General Knowledge","Moral Science","Art & Craft"];
 
   var teachers = Object.entries(DEFAULT_USERS).filter(function(e){ return e[1].role==="teacher"; });
 
@@ -9348,11 +9350,112 @@ function AllLeaves(props){
   var user=props.user; var leaveDB=props.leaveDB;
   var fs=useState("pending"); var filter=fs[0]; var setFilter=fs[1];
   var svs=useState(""); var saving=svs[0]; var setSaving=svs[1];
-  var sbs=useState({}); var subs=sbs[0]; var setSubs=sbs[1];
+  var ttState=useState({}); var timetables=ttState[0]; var setTimetables=ttState[1];
+  var gsState=useState(null); var gs=gsState[0]; var setGs=gsState[1];
+  var ttLoaded=useState(false); var isTTL=ttLoaded[0]; var setTTL=ttLoaded[1];
+  // perPeriodSubs[leaveId][dayName][periodNo] = teacherName
+  var ppsState=useState({}); var pps=ppsState[0]; var setPps=ppsState[1];
+
+  useEffect(function(){
+    if(isTTL||!window.__db)return;
+    function init(){
+      if(!window.__db)return;
+      window.__fbOnSnapshot(window.__fbCollection(window.__db,"timetables"),function(snap){
+        var t={};snap.forEach(function(d){t[d.id]=d.data();});setTimetables(t);setTTL(true);
+      });
+      window.__fbOnSnapshot(window.__fbCollection(window.__db,"timetableSettings"),function(snap){
+        snap.forEach(function(d){if(d.id==="global")setGs(d.data());});
+      });
+    }
+    if(window.__fbReady)init();
+    else window.addEventListener("fbready",init,{once:true});
+  },[]);
+
+  // Get all periods an absent teacher has during their leave dates
+  function getAbsentPeriods(teacherName, leaveFrom, leaveTo){
+    var DAYS=["Mon","Tue","Wed","Thu","Fri","Sat"];
+    var result={};
+    var from=new Date(leaveFrom); var to=new Date(leaveTo);
+    var cur=new Date(from);
+    while(cur<=to){
+      var dayShort=cur.toLocaleDateString("en-US",{weekday:"short"});
+      if(DAYS.indexOf(dayShort)>=0){
+        Object.keys(timetables).forEach(function(ttKey){
+          var tt=timetables[ttKey];
+          var parts=ttKey.replace("Class_","").split("_");
+          var cls="Class "+parts[0]; var sec=parts[1]||"A";
+          var dayTT=tt[dayShort]||{};
+          // Get period schedule if available, otherwise use all keys in dayTT
+          var periodTimes={};
+          if(gs&&gs.schedules){
+            var sched=gs.schedules.find(function(s){return s.assignedClasses&&s.assignedClasses.indexOf(parts[0])>=0;})||gs.schedules[0];
+            if(sched&&sched.periods){sched.periods.forEach(function(p){periodTimes[p.no]=p.time||"";});}
+          }
+          Object.keys(dayTT).forEach(function(pNo){
+            var cell=dayTT[pNo];
+            if(!cell)return;
+            var teacher=typeof cell==="object"?(cell.teacher||""):cell;
+            if(teacher===teacherName){
+              if(!result[dayShort])result[dayShort]=[];
+              result[dayShort].push({
+                period:pNo, time:periodTimes[pNo]||"",
+                subject:typeof cell==="object"?(cell.subject||""):cell,
+                cls:cls, section:sec
+              });
+            }
+          });
+        });
+      }
+      cur.setDate(cur.getDate()+1);
+    }
+    // Sort each day's periods
+    Object.keys(result).forEach(function(d){
+      result[d].sort(function(a,b){return Number(a.period)-Number(b.period);});
+    });
+    return result;
+  }
+
+  // Check if a substitute teacher has a conflict for a specific period on a day
+  function hasConflict(subName, dayName, periodNo){
+    var found=false;
+    Object.keys(timetables).forEach(function(ttKey){
+      var tt=timetables[ttKey];
+      var dayTT=tt[dayName]||{};
+      // Check both string and number period keys
+      var cell=dayTT[periodNo]||dayTT[String(periodNo)]||dayTT[Number(periodNo)];
+      if(!cell)return;
+      var teacher=typeof cell==="object"?(cell.teacher||""):cell;
+      if(teacher===subName)found=true;
+    });
+    return found;
+  }
+
+  function setPeriodSub(lid,day,period,subName){
+    setPps(function(prev){
+      var n=Object.assign({},prev);
+      if(!n[lid])n[lid]={};
+      if(!n[lid][day])n[lid][day]={};
+      n[lid][day][period]=subName;
+      return n;
+    });
+  }
+
+  function saveAllSubs(l){
+    var periodSubs=pps[l.id]||{};
+    setSaving(l.id);
+    leaveDB.set(l.id,Object.assign({},l,{periodSubstitutes:periodSubs,substitute:"Multiple (see periods)"}))
+      .then(function(){setSaving("");})
+      .catch(function(){setSaving("");});
+  }
+
+  var DAYS_ORDER=["Mon","Tue","Wed","Thu","Fri","Sat"];
+  var teachers=Object.entries(DEFAULT_USERS||{}).filter(function(e){return e[1].role==="teacher";});
   var counts={pending:0,approved:0,rejected:0};
   Object.values(leaveDB.data||{}).forEach(function(l){if(counts[l.status]!==undefined)counts[l.status]++;});
   var all=Object.values(leaveDB.data||{}).filter(function(l){return filter==="all"||l.status===filter;}).sort(function(a,b){return b.appliedAt.localeCompare(a.appliedAt);});
+
   if(leaveDB.loading)return <div style={{padding:32,textAlign:"center",color:"#94a3b8"}}>Loading...</div>;
+
   return(
     <div>
       <div style={{display:"flex",gap:6,marginBottom:16,flexWrap:"wrap"}}>
@@ -9364,40 +9467,99 @@ function AllLeaves(props){
           </button>;
         })}
       </div>
+
       {!all.length&&<div style={{background:"#fff",borderRadius:12,border:"1.5px solid #e2e8f0",padding:32,textAlign:"center",color:"#94a3b8"}}>No {filter} requests.</div>}
-      {all.map(function(l){return(
-        <div key={l.id} style={{background:"#fff",borderRadius:12,border:"1.5px solid #e2e8f0",marginBottom:12,overflow:"hidden"}}>
-          <div style={{padding:"14px 18px",borderBottom:"1px solid #f1f5f9",display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:8}}>
-            <div>
-              <div style={{fontWeight:700,fontSize:14,color:"#0d1b2a"}}>{l.teacherName}</div>
-              <div style={{fontSize:12,color:"#64748b",marginTop:2}}>{l.type} | {l.from}{l.from!==l.to?" to "+l.to:""} | {l.days} day{l.days>1?"s":""}</div>
-              <div style={{fontSize:12,color:"#475569",marginTop:4,fontStyle:"italic"}}>"{l.reason}"</div>
+
+      {all.map(function(l){
+        var absentPeriods=l.status==="approved"?getAbsentPeriods(l.teacherName,l.from,l.to):{};
+        var hasPeriods=Object.keys(absentPeriods).length>0;
+        var savedPeriodSubs=l.periodSubstitutes||{};
+        var currentPPS=pps[l.id]||savedPeriodSubs;
+        var totalPeriods=Object.values(absentPeriods).reduce(function(a,arr){return a+arr.length;},0);
+        var assignedCount=Object.values(currentPPS).reduce(function(a,day){return a+Object.values(day).filter(function(v){return v;}).length;},0);
+
+        return(
+          <div key={l.id} style={{background:"#fff",borderRadius:12,border:"1.5px solid #e2e8f0",marginBottom:14,overflow:"hidden"}}>
+            {/* Header */}
+            <div style={{padding:"14px 18px",borderBottom:"1px solid #f1f5f9",display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:8}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:14,color:"#0d1b2a"}}>{l.teacherName}</div>
+                <div style={{fontSize:12,color:"#64748b",marginTop:2}}>{l.type} | {l.from}{l.from!==l.to?" to "+l.to:""} | {l.days} day{l.days>1?"s":""}</div>
+                <div style={{fontSize:12,color:"#475569",marginTop:4,fontStyle:"italic"}}>"{l.reason}"</div>
+              </div>
+              <StatusBadge status={l.status}/>
             </div>
-            <StatusBadge status={l.status}/>
+
+            {/* Actions */}
+            <div style={{padding:"12px 18px",background:"#f8fafc"}}>
+              {l.status==="pending"&&(
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={function(){setSaving(l.id);leaveDB.set(l.id,Object.assign({},l,{status:"approved",reviewedAt:new Date().toISOString(),reviewedBy:user.name})).then(function(){setSaving("");});}} disabled={saving===l.id}
+                    style={{background:"#16a34a",color:"#fff",border:"none",borderRadius:7,padding:"8px 18px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"Sora,sans-serif"}}>Approve</button>
+                  <button onClick={function(){setSaving(l.id);leaveDB.set(l.id,Object.assign({},l,{status:"rejected",reviewedAt:new Date().toISOString(),reviewedBy:user.name})).then(function(){setSaving("");});}} disabled={saving===l.id}
+                    style={{background:"#dc2626",color:"#fff",border:"none",borderRadius:7,padding:"8px 18px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"Sora,sans-serif"}}>Reject</button>
+                </div>
+              )}
+
+              {l.status==="approved"&&(
+                <div>
+                  {!isTTL&&<div style={{fontSize:12,color:"#94a3b8",marginBottom:8}}>Loading timetable...</div>}
+                  {isTTL&&!hasPeriods&&(
+                    <div style={{fontSize:12,color:"#64748b",fontStyle:"italic"}}>No periods found for {l.teacherName} in the timetable. Make sure the timetable cells have the teacher name exactly as "{l.teacherName}".</div>
+                  )}
+                  {isTTL&&hasPeriods&&(
+                    <div>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                        <div style={{fontWeight:700,fontSize:13,color:"#0d1b2a"}}>Assign Substitutes by Period</div>
+                        <div style={{fontSize:11,color:"#64748b"}}>{assignedCount}/{totalPeriods} assigned</div>
+                      </div>
+
+                      {DAYS_ORDER.filter(function(d){return absentPeriods[d]&&absentPeriods[d].length>0;}).map(function(day){
+                        return(
+                          <div key={day} style={{marginBottom:14}}>
+                            <div style={{fontSize:11,fontWeight:800,color:"#0d1b2a",letterSpacing:1,marginBottom:8,textTransform:"uppercase"}}>{day}</div>
+                            {absentPeriods[day].map(function(p){
+                              var assigned=(currentPPS[day]&&currentPPS[day][p.period])||"";
+                              var conflict=assigned?hasConflict(assigned,day,p.period):false;
+                              return(
+                                <div key={p.period} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap",background:"#fff",borderRadius:8,border:"1.5px solid "+(conflict?"#f59e0b":"#e2e8f0"),padding:"8px 12px"}}>
+                                  <div style={{width:32,height:32,borderRadius:8,background:"#0d1b2a",color:"#c9a84c",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:11,flexShrink:0}}>P{p.period}</div>
+                                  <div style={{flex:1,minWidth:140}}>
+                                    <div style={{fontWeight:700,fontSize:12,color:"#0d1b2a"}}>{p.subject}</div>
+                                    <div style={{fontSize:10,color:"#64748b"}}>{p.cls} Sec {p.section}{p.time?" | "+p.time:""}</div>
+                                  </div>
+                                  <select value={assigned} onChange={function(e){setPeriodSub(l.id,day,p.period,e.target.value);}}
+                                    style={{flex:1,minWidth:150,border:"1.5px solid "+(conflict?"#f59e0b":"#e2e8f0"),borderRadius:7,padding:"7px 10px",fontSize:12,fontFamily:"Sora,sans-serif",outline:"none",background:conflict?"#fffbeb":"#fff"}}>
+                                    <option value="">— Assign substitute —</option>
+                                    {teachers.filter(function(e){return e[0]!==l.teacherId;}).map(function(e){
+                                      return <option key={e[0]} value={e[1].name}>{e[1].name}</option>;
+                                    })}
+                                  </select>
+                                  {conflict&&<span style={{fontSize:10,color:"#92400e",background:"#fef3c7",borderRadius:20,padding:"2px 8px",fontWeight:700,whiteSpace:"nowrap"}}>Has period!</span>}
+                                  {assigned&&!conflict&&<span style={{fontSize:10,color:"#16a34a",fontWeight:700,whiteSpace:"nowrap"}}>Free</span>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })}
+
+                      <button onClick={function(){saveAllSubs(l);}} disabled={saving===l.id}
+                        style={{background:"#0d1b2a",color:"#fff",border:"none",borderRadius:8,padding:"10px 24px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"Sora,sans-serif",opacity:saving===l.id?0.6:1}}>
+                        {saving===l.id?"Saving...":"Save Substitutes"}
+                      </button>
+                      {l.periodSubstitutes&&Object.keys(l.periodSubstitutes).length>0&&(
+                        <span style={{fontSize:12,color:"#16a34a",fontWeight:600,marginLeft:12}}>Saved</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+              {l.status==="rejected"&&<div style={{fontSize:12,color:"#94a3b8"}}>Rejected by {l.reviewedBy}</div>}
+            </div>
           </div>
-          <div style={{padding:"12px 18px",background:"#f8fafc"}}>
-            {l.status==="pending"&&(
-              <div style={{display:"flex",gap:8}}>
-                <button onClick={function(){setSaving(l.id);leaveDB.set(l.id,Object.assign({},l,{status:"approved",reviewedAt:new Date().toISOString(),reviewedBy:user.name})).then(function(){setSaving("");});}} disabled={saving===l.id} style={{background:"#16a34a",color:"#fff",border:"none",borderRadius:7,padding:"8px 18px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"Sora,sans-serif"}}>Approve</button>
-                <button onClick={function(){setSaving(l.id);leaveDB.set(l.id,Object.assign({},l,{status:"rejected",reviewedAt:new Date().toISOString(),reviewedBy:user.name})).then(function(){setSaving("");});}} disabled={saving===l.id} style={{background:"#dc2626",color:"#fff",border:"none",borderRadius:7,padding:"8px 18px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"Sora,sans-serif"}}>Reject</button>
-              </div>
-            )}
-            {l.status==="approved"&&(
-              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-                <span style={{fontSize:11,fontWeight:700,color:"#64748b"}}>Substitute:</span>
-                <select value={subs[l.id]||l.substitute||""} onChange={function(e){var v=e.target.value;var lid=l.id;setSubs(function(prev){var n={};Object.assign(n,prev);n[lid]=v;return n;});}}
-                  style={{flex:1,minWidth:160,border:"1.5px solid #e2e8f0",borderRadius:8,padding:"7px 10px",fontSize:12,fontFamily:"Sora,sans-serif",outline:"none",background:"#fff"}}>
-                  <option value="">Select substitute teacher...</option>
-                  {Object.entries(DEFAULT_USERS||{}).filter(function(e){return e[1].role==="teacher"&&e[0]!==l.teacherId;}).map(function(e){return <option key={e[0]} value={e[1].name}>{e[1].name}</option>;})}
-                </select>
-                <button onClick={function(){var s=subs[l.id]||"";if(!s)return;setSaving(l.id+"s");leaveDB.set(l.id,Object.assign({},l,{substitute:s})).then(function(){setSaving("");});}} style={{background:"#c9a84c",color:"#0d1b2a",border:"none",borderRadius:7,padding:"8px 16px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"Sora,sans-serif"}}>Assign</button>
-                {l.substitute&&<span style={{fontSize:12,color:"#16a34a",fontWeight:600}}>Current: {l.substitute}</span>}
-              </div>
-            )}
-            {l.status==="rejected"&&<div style={{fontSize:12,color:"#94a3b8"}}>Rejected by {l.reviewedBy}</div>}
-          </div>
-        </div>
-      );})}
+        );
+      })}
     </div>
   );
 }
@@ -9427,6 +9589,232 @@ function TodayAbsences(props){
             }
           </div>
         );})}
+    </div>
+  );
+}
+</script>
+
+<script type="text/babel">
+function NoticeBoard(props) {
+  var user = props.user;
+  var noticesDB = useFirestore("notices");
+  var isAdmin = user.role === "admin" || user.role === "vp";
+  var tabSt = useState(isAdmin ? "post" : "board");
+  var tab = tabSt[0]; var setTab = tabSt[1];
+  var tabs = isAdmin
+    ? [{id:"board",label:"Board"},{id:"post",label:"Post Notice"},{id:"readlog",label:"Who Read"}]
+    : [{id:"board",label:"Notice Board"}];
+  return (
+    <div>
+      <div style={{display:"flex",gap:6,marginBottom:16,background:"#fff",borderRadius:12,padding:6,border:"1.5px solid #e2e8f0",overflowX:"auto"}}>
+        {tabs.map(function(t){
+          return <button key={t.id} onClick={function(){setTab(t.id);}}
+            style={{padding:"8px 16px",borderRadius:8,border:"none",background:tab===t.id?"#0d1b2a":"transparent",color:tab===t.id?"#fff":"#64748b",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"Sora,sans-serif",whiteSpace:"nowrap"}}>{t.label}</button>;
+        })}
+      </div>
+      {tab==="board"&&<NoticeBoardView user={user} noticesDB={noticesDB} isAdmin={isAdmin}/>}
+      {tab==="post"&&isAdmin&&<NoticePost user={user} noticesDB={noticesDB}/>}
+      {tab==="readlog"&&isAdmin&&<NoticeReadLog noticesDB={noticesDB}/>}
+    </div>
+  );
+}
+
+function NoticePost(props) {
+  var user = props.user; var noticesDB = props.noticesDB;
+  var s1=useState(""); var title=s1[0]; var setTitle=s1[1];
+  var s2=useState(""); var body=s2[0]; var setBody=s2[1];
+  var s3=useState("General"); var type=s3[0]; var setType=s3[1];
+  var s4=useState("All"); var audience=s4[0]; var setAudience=s4[1];
+  var s5=useState(false); var saving=s5[0]; var setSaving=s5[1];
+  var s6=useState(""); var msg=s6[0]; var setMsg=s6[1];
+  var inp = {width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"10px 12px",fontSize:13,fontFamily:"Sora,sans-serif",outline:"none",background:"#f8fafc"};
+  var TYPES = ["General","Academic","Exam","Holiday","Event","Urgent"];
+  var AUDIENCES = ["All","Class Teachers","Subject Teachers","Senior Staff"];
+  var TYPE_COLORS = {General:"#0d1b2a",Academic:"#2563eb",Exam:"#7c3aed",Holiday:"#16a34a",Event:"#c9a84c",Urgent:"#dc2626"};
+
+  function post() {
+    if (!title.trim() || !body.trim()) { setMsg("Please fill title and message."); return; }
+    setSaving(true); setMsg("");
+    var key = "notice_" + Date.now();
+    noticesDB.set(key, {
+      id: key, title: title.trim(), body: body.trim(),
+      type: type, audience: audience,
+      postedBy: user.name, postedAt: new Date().toISOString(),
+      readBy: [], active: true
+    }).then(function(){
+      setMsg("Notice posted!"); setTitle(""); setBody(""); setSaving(false);
+    }).catch(function(){ setMsg("Error posting."); setSaving(false); });
+  }
+
+  return (
+    <div style={{background:"#fff",borderRadius:12,border:"1.5px solid #e2e8f0",overflow:"hidden",marginBottom:16}}>
+      <div style={{background:"#0d1b2a",padding:"12px 18px",color:"#fff",fontWeight:700,fontSize:14}}>Post New Notice / Circular</div>
+      <div style={{padding:18}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+          <div>
+            <label style={{fontSize:10,fontWeight:700,color:"#64748b",display:"block",marginBottom:5,letterSpacing:1}}>TYPE</label>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {TYPES.map(function(t){
+                var active = type===t;
+                return <button key={t} onClick={function(){setType(t);}}
+                  style={{padding:"5px 12px",borderRadius:20,border:"2px solid "+(active?TYPE_COLORS[t]:"#e2e8f0"),background:active?TYPE_COLORS[t]:"#fff",color:active?"#fff":"#64748b",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"Sora,sans-serif"}}>{t}</button>;
+              })}
+            </div>
+          </div>
+          <div>
+            <label style={{fontSize:10,fontWeight:700,color:"#64748b",display:"block",marginBottom:5,letterSpacing:1}}>FOR</label>
+            <select value={audience} onChange={function(e){setAudience(e.target.value);}} style={inp}>
+              {AUDIENCES.map(function(a){return <option key={a}>{a}</option>;})}
+            </select>
+          </div>
+        </div>
+        <div style={{marginBottom:14}}>
+          <label style={{fontSize:10,fontWeight:700,color:"#64748b",display:"block",marginBottom:5,letterSpacing:1}}>TITLE</label>
+          <input value={title} onChange={function(e){setTitle(e.target.value);}} placeholder="Notice title..." style={inp}/>
+        </div>
+        <div style={{marginBottom:18}}>
+          <label style={{fontSize:10,fontWeight:700,color:"#64748b",display:"block",marginBottom:5,letterSpacing:1}}>MESSAGE</label>
+          <textarea value={body} onChange={function(e){setBody(e.target.value);}} placeholder="Write the full notice or circular here..." style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"10px 12px",fontSize:13,fontFamily:"Sora,sans-serif",outline:"none",resize:"vertical",minHeight:120,background:"#f8fafc"}}/>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <button onClick={post} disabled={saving} style={{background:"#0d1b2a",color:"#fff",border:"none",borderRadius:8,padding:"11px 28px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"Sora,sans-serif",opacity:saving?0.6:1}}>
+            {saving?"Posting...":"Post Notice"}
+          </button>
+          {msg&&<span style={{fontSize:13,fontWeight:600,color:msg.indexOf("Error")>=0?"#ef4444":"#16a34a"}}>{msg}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NoticeBoardView(props) {
+  var user = props.user; var noticesDB = props.noticesDB; var isAdmin = props.isAdmin;
+  var savingState = useState(""); var markingRead = savingState[0]; var setMarkingRead = savingState[1];
+  var TYPE_COLORS = {General:"#0d1b2a",Academic:"#2563eb",Exam:"#7c3aed",Holiday:"#16a34a",Event:"#c9a84c",Urgent:"#dc2626"};
+
+  if (noticesDB.loading) return <div style={{padding:32,textAlign:"center",color:"#94a3b8"}}>Loading...</div>;
+
+  var notices = Object.values(noticesDB.data||{})
+    .filter(function(n){return n.active!==false;})
+    .sort(function(a,b){return b.postedAt.localeCompare(a.postedAt);});
+
+  if (!notices.length) return (
+    <div style={{background:"#fff",borderRadius:12,border:"1.5px solid #e2e8f0",padding:48,textAlign:"center"}}>
+      <div style={{fontSize:40,marginBottom:12}}>📢</div>
+      <div style={{fontWeight:700,color:"#0d1b2a",fontSize:15,marginBottom:6}}>No notices yet</div>
+      <div style={{fontSize:13,color:"#94a3b8"}}>Notices and circulars posted by the Director will appear here.</div>
+    </div>
+  );
+
+  function markRead(notice) {
+    var readBy = notice.readBy || [];
+    if (readBy.indexOf(user.username) >= 0) return;
+    setMarkingRead(notice.id);
+    var newReadBy = readBy.concat([user.username]);
+    noticesDB.set(notice.id, Object.assign({}, notice, {readBy: newReadBy}))
+      .then(function(){setMarkingRead("");})
+      .catch(function(){setMarkingRead("");});
+  }
+
+  return (
+    <div>
+      {notices.map(function(n){
+        var readBy = n.readBy || [];
+        var hasRead = readBy.indexOf(user.username) >= 0;
+        var col = TYPE_COLORS[n.type] || "#0d1b2a";
+        var date = n.postedAt ? new Date(n.postedAt).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"}) : "";
+        return (
+          <div key={n.id} style={{background:"#fff",borderRadius:12,border:"2px solid "+(hasRead?"#e2e8f0":col+"44"),marginBottom:12,overflow:"hidden",opacity:hasRead?0.85:1}}>
+            <div style={{background:col,padding:"10px 18px",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+              <span style={{fontWeight:800,fontSize:13,color:"#fff",flex:1}}>{n.title}</span>
+              <span style={{background:"rgba(255,255,255,.2)",color:"#fff",borderRadius:20,padding:"2px 10px",fontSize:10,fontWeight:700}}>{n.type}</span>
+              {!isAdmin&&!hasRead&&<span style={{background:"#fee2e2",color:"#dc2626",borderRadius:20,padding:"2px 10px",fontSize:10,fontWeight:700}}>NEW</span>}
+              {!isAdmin&&hasRead&&<span style={{background:"rgba(255,255,255,.2)",color:"#fff",borderRadius:20,padding:"2px 10px",fontSize:10,fontWeight:600}}>Read</span>}
+            </div>
+            <div style={{padding:"14px 18px"}}>
+              <div style={{fontSize:13,color:"#1e293b",lineHeight:1.7,whiteSpace:"pre-wrap",marginBottom:12}}>{n.body}</div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+                <div style={{fontSize:11,color:"#94a3b8"}}>
+                  Posted by {n.postedBy} on {date}
+                  {n.audience&&n.audience!=="All"?" · For: "+n.audience:""}
+                </div>
+                {!isAdmin&&!hasRead&&(
+                  <button onClick={function(){markRead(n);}} disabled={markingRead===n.id}
+                    style={{background:"#0d1b2a",color:"#fff",border:"none",borderRadius:8,padding:"7px 16px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"Sora,sans-serif",opacity:markingRead===n.id?0.6:1}}>
+                    {markingRead===n.id?"Marking...":"Mark as Read"}
+                  </button>
+                )}
+                {isAdmin&&(
+                  <div style={{fontSize:11,color:"#64748b",fontWeight:600}}>
+                    {readBy.length} teacher{readBy.length!==1?"s":""} read
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function NoticeReadLog(props) {
+  var noticesDB = props.noticesDB;
+  var selState = useState("");
+  var selId = selState[0]; var setSel = selState[1];
+  if (noticesDB.loading) return <div style={{padding:32,textAlign:"center",color:"#94a3b8"}}>Loading...</div>;
+
+  var notices = Object.values(noticesDB.data||{})
+    .filter(function(n){return n.active!==false;})
+    .sort(function(a,b){return b.postedAt.localeCompare(a.postedAt);});
+
+  var selNotice = selId ? (noticesDB.data||{})[selId] : notices[0];
+  var teachers = Object.entries(DEFAULT_USERS).filter(function(e){return e[1].role==="teacher";});
+
+  if (!notices.length) return <div style={{background:"#fff",borderRadius:12,border:"1.5px solid #e2e8f0",padding:32,textAlign:"center",color:"#94a3b8"}}>No notices posted yet.</div>;
+
+  return (
+    <div>
+      <div style={{marginBottom:14}}>
+        <label style={{fontSize:10,fontWeight:700,color:"#64748b",display:"block",marginBottom:6,letterSpacing:1}}>SELECT NOTICE</label>
+        <select value={selId||""} onChange={function(e){setSel(e.target.value);}}
+          style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"10px 12px",fontSize:13,fontFamily:"Sora,sans-serif",outline:"none",background:"#fff"}}>
+          {notices.map(function(n){
+            var date = n.postedAt ? new Date(n.postedAt).toLocaleDateString("en-IN",{day:"numeric",month:"short"}) : "";
+            return <option key={n.id} value={n.id}>{n.title} ({date})</option>;
+          })}
+        </select>
+      </div>
+      {selNotice&&(
+        <div style={{background:"#fff",borderRadius:12,border:"1.5px solid #e2e8f0",overflow:"hidden"}}>
+          <div style={{background:"#0d1b2a",padding:"12px 18px",display:"flex",alignItems:"center",gap:12}}>
+            <span style={{fontWeight:700,fontSize:14,color:"#fff",flex:1}}>{selNotice.title}</span>
+            <span style={{background:"#c9a84c",color:"#0d1b2a",borderRadius:20,padding:"3px 14px",fontSize:12,fontWeight:700}}>
+              {(selNotice.readBy||[]).length}/{teachers.length} read
+            </span>
+          </div>
+          <div style={{padding:0}}>
+            {teachers.map(function(e,i){
+              var uname = e[0]; var tdata = e[1];
+              var hasRead = (selNotice.readBy||[]).indexOf(uname) >= 0;
+              return (
+                <div key={uname} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 18px",borderBottom:"1px solid #f1f5f9",background:i%2===0?"#fff":"#f8fafc"}}>
+                  <div style={{width:32,height:32,borderRadius:"50%",background:hasRead?"#dcfce7":"#fee2e2",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0}}>
+                    {hasRead?"✓":"✗"}
+                  </div>
+                  <div style={{flex:1,fontSize:13,fontWeight:500,color:"#1e293b"}}>{tdata.name}</div>
+                  <span style={{fontSize:11,fontWeight:700,color:hasRead?"#16a34a":"#dc2626"}}>
+                    {hasRead?"Read":"Not read"}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{padding:"10px 18px",background:"#f8fafc",fontSize:12,color:"#64748b",borderTop:"1px solid #f1f5f9"}}>
+            {(selNotice.readBy||[]).length} of {teachers.length} teachers have read this notice
+          </div>
+        </div>
+      )}
     </div>
   );
 }
