@@ -4419,20 +4419,8 @@ const gradeOf=p=>{
   return{l:"D",c:"#dc2626",bg:"#fee2e2"};
 };
 const safeId=s=>s.replace(/[^a-zA-Z0-9]/g,"_");
-const getTeacherClasses=(user)=>{
-  if(!user||user.role==="admin"||user.role==="vp")return SCHOOL.classes;
-  const cls=user.classes||[];
-  if(!cls.length)return SCHOOL.classes;
-  // "Class 7-A" -> "Class 7", deduplicated
-  return [...new Set(cls.map(function(c){return c.split("-")[0].trim();}))];
-};
-const getTeacherSubjects=(user,cls)=>{
-  if(!user||user.role==="admin"||user.role==="vp")return SCHOOL.subjects[cls]||[];
-  const subjs=user.subjects||[];
-  const all=SCHOOL.subjects[cls]||[];
-  if(!subjs.length)return all;
-  return all.filter(function(s){return subjs.indexOf(s)>=0;});
-};
+const getTeacherClasses=(user)=>{if(!user||user.role==="admin"||user.role==="vp")return SCHOOL.classes;const cls=user.classes||[];if(!cls.length)return SCHOOL.classes;return [...new Set(cls.map(function(c){return c.split("-")[0].trim();}))];};
+const getTeacherSubjects=(user,cls)=>{if(!user||user.role==="admin"||user.role==="vp")return SCHOOL.subjects[cls]||[];const subjs=user.subjects||[];const all=SCHOOL.subjects[cls]||[];if(!subjs.length)return all;return all.filter(function(s){return subjs.indexOf(s)>=0;});};
 const today=()=>new Date().toISOString().split("T")[0];
 const fmtDate=d=>{if(!d)return"-";const p=d.split("-");return p[2]+"/"+p[1]+"/"+p[0];};
 const fmtTime=iso=>{if(!iso)return"";const d=new Date(iso);return d.toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"});};
@@ -4803,100 +4791,106 @@ function ManageTopics({user,usersDB,topicsDB}){
 }
 
 // ── ATTENDANCE ──
-function Attendance({user,attendanceDB,studentsDB,usersDB}){
+function Attendance({user,attendanceDB,studentsDB}){
+  const ROMAN_MAP={"I":"1","II":"2","III":"3","IV":"4","V":"5","VI":"6","VII":"7","VIII":"8","IX":"9","X":"10","XI":"11","XII":"12"};
   const CLASS_SECTIONS={"Class 1":["A"],"Class 2":["A"],"Class 3":["A"],"Class 4":["A"],"Class 5":["A"],"Class 6":["A","B"],"Class 7":["A","B"],"Class 8":["A","B"],"Class 9":["A","B"],"Class 10":["A","B"],"Class 11":["A","B","C","D"],"Class 12":["A","B","C","D"]};
   const isMob=useIsMobile();
-  const isAdmin=user.role==="admin"||user.role==="vp";
 
-  // Get teacher's assigned classes from Firebase usersDB
-  // Format stored: ["Class 7-A","Class 7-B","Class 10-A"] by AssignPanel
-  const teacherAssigned=useMemo(()=>{
-    if(isAdmin)return null;
-    const d=usersDB.data&&usersDB.data[user.username];
-    return d?d.classes||[]:[];
-  },[usersDB.data,user.username,isAdmin]);
-
-  // Build class list
-  const aC=useMemo(()=>{
-    if(isAdmin)return SCHOOL.classes;
-    if(!teacherAssigned||!teacherAssigned.length)return SCHOOL.classes;
-    return [...new Set(teacherAssigned.map(c=>c.split("-")[0].trim()))];
-  },[isAdmin,teacherAssigned]);
-
-  // Build sections for a class
-  const getSections=(cls)=>{
-    if(isAdmin)return CLASS_SECTIONS[cls]||["A"];
-    if(!teacherAssigned||!teacherAssigned.length)return CLASS_SECTIONS[cls]||["A"];
-    const secs=teacherAssigned.filter(c=>c.split("-")[0].trim()===cls).map(c=>c.split("-")[1]).filter(Boolean);
-    return secs.length>0?secs:CLASS_SECTIONS[cls]||["A"];
+  const toClassKey=(c)=>{
+    const roman=c.split("-")[0].split("(")[0].trim();
+    const num=ROMAN_MAP[roman];
+    return num?"Class "+num:c;
+  };
+  const toSection=(c)=>{
+    // "6-A" → "A", "11-AB" → "AB", "10-B" → "B"
+    const parts=c.split("-");
+    return parts.length>1?parts[1]:"A";
   };
 
-  const[cls,setCls]=useState(()=>aC[0]||"Class 6");
+  // Build class list
+  const rawClasses=user.role==="admin"?SCHOOL.classes:(user.classes||SCHOOL.classes);
+  const aC=user.role==="admin"?rawClasses:[...new Set(rawClasses.map(toClassKey))];
+
+  // Build section list for selected class
+  const getSections=(cls)=>{
+    if(user.role==="admin") return CLASS_SECTIONS[cls]||["A"];
+    // For teacher: get sections they're assigned to for this class
+    const teacherSecs=(user.classes||[])
+      .filter(c=>toClassKey(c)===cls)
+      .map(c=>toSection(c));
+    return teacherSecs.length>0?[...new Set(teacherSecs)]:(CLASS_SECTIONS[cls]||["A"]);
+  };
+
+  const[cls,setCls]=useState(aC[0]||"Class 6");
   const[sec,setSec]=useState(()=>getSections(aC[0]||"Class 6")[0]||"A");
   const[date,setDate]=useState(today());
   const[status,setStatus]=useState({});
   const[saved,setSaved]=useState(false);
   const[saving,setSaving]=useState(false);
 
-  // Update sec when cls changes
-  useEffect(()=>{const s=getSections(cls);setSec(s[0]||"A");},[cls,teacherAssigned]);
-
+  // Key includes section: "Class 6-A__2026-05-11"
   const attKey=cls+"-"+sec+"__"+date;
-  const allClassStudents=(studentsDB.data[safeId(cls)]&&studentsDB.data[safeId(cls)].list)||[];
-  const sectionMap=(studentsDB.data[safeId(cls)]&&studentsDB.data[safeId(cls)].sections)||{};
+  // Get all students in class, then filter by section assignment
+  const allClassStudents=(studentsDB.data[safeId(cls)]?.list)||[];
+  const sectionMap=(studentsDB.data[safeId(cls)]?.sections)||{};
+  // If no sections assigned yet, show all students (backward compat)
   const hasSections=Object.keys(sectionMap).length>0;
-  const students=hasSections?allClassStudents.filter(function(s){return sectionMap[s]===sec;}):allClassStudents;
+  const students=hasSections
+    ? allClassStudents.filter(s=>sectionMap[s]===sec)
+    : allClassStudents;
 
   const existing=attendanceDB.data[safeId(attKey)];
   useEffect(()=>{
     if(existing){setStatus(existing.status||{});}
-    else{const s={};students.forEach(function(st){s[st]="P";});setStatus(s);}
-  },[attKey,existing&&existing.savedAt,students.length]);
+    else{const s={};students.forEach(st=>s[st]="P");setStatus(s);}
+  },[attKey,existing?.savedAt,students.length]);
 
   const setS=(s,v)=>setStatus(p=>({...p,[s]:v}));
-  const markAll=(v)=>{const s={};students.forEach(function(st){s[st]=v;});setStatus(s);};
+  const markAll=(v)=>{const s={};students.forEach(st=>s[st]=v);setStatus(s);};
   const handleSave=async()=>{
     setSaving(true);
-    await attendanceDB.set(safeId(attKey),{cls:cls,section:sec,date:date,status:status,by:user.name,savedAt:new Date().toISOString()});
+    await attendanceDB.set(safeId(attKey),{cls,section:sec,date,status,by:user.name,savedAt:new Date().toISOString()});
     setSaved(true);setSaving(false);setTimeout(()=>setSaved(false),2500);
   };
 
-  const present=Object.values(status).filter(function(v){return v==="P";}).length;
-  const absent=Object.values(status).filter(function(v){return v==="A";}).length;
-  const late=Object.values(status).filter(function(v){return v==="L";}).length;
+  const present=Object.values(status).filter(v=>v==="P").length;
+  const absent=Object.values(status).filter(v=>v==="A").length;
+  const late=Object.values(status).filter(v=>v==="L").length;
   const sections=getSections(cls);
 
   if(attendanceDB.loading||studentsDB.loading)return<Spinner/>;
   return(
     <div className="fi" style={{display:"flex",flexDirection:"column",gap:16}}>
+
+      {/* Filters */}
       <Card style={{padding:18}}>
         <div style={{display:"grid",gridTemplateColumns:isMob?"1fr 1fr":"1fr 1fr 1fr",gap:12}}>
           <div>
             <Lbl c="Class"/>
-            <Sel value={cls} onChange={function(v){setCls(v);}} options={aC}/>
+            <Sel value={cls} onChange={v=>{setCls(v);const s=getSections(v);setSec(s[0]||"A");}} options={aC}/>
           </div>
           <div>
             <Lbl c="Section"/>
             <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:4}}>
-              {sections.map(function(s){return(
-                <button key={s} onClick={function(){setSec(s);}}
+              {sections.map(s=>(
+                <button key={s} onClick={()=>setSec(s)}
                   style={{padding:"8px 16px",borderRadius:8,border:"2px solid "+(sec===s?"#0d1b2a":"#e2e8f0"),background:sec===s?"#0d1b2a":"#fff",color:sec===s?"#fff":"#64748b",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"Sora,sans-serif"}}>
                   {s}
                 </button>
-              );})}
+              ))}
             </div>
           </div>
           <div style={{gridColumn:isMob?"1 / -1":"auto"}}>
             <Lbl c="Date"/>
-            <input type="date" value={date} onChange={function(e){setDate(e.target.value);}}
+            <input type="date" value={date} onChange={e=>setDate(e.target.value)}
               style={{width:"100%",padding:"9px 12px",borderRadius:9,border:"1.5px solid #e2e8f0",fontSize:13,outline:"none",fontFamily:"Sora,sans-serif"}}/>
           </div>
         </div>
+        {/* Header info */}
         <div style={{marginTop:12,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
           <span style={{background:"#0d1b2a",color:"#c9a84c",borderRadius:20,padding:"3px 14px",fontSize:12,fontWeight:700}}>{cls} — Section {sec}</span>
           <span style={{fontSize:12,color:"#64748b"}}>{students.length} students</span>
-          {!hasSections&&students.length>0&&<span style={{fontSize:11,color:"#f59e0b",fontWeight:600}}>No sections assigned — showing all students</span>}
-          {existing&&<span style={{fontSize:11,color:"#16a34a",fontWeight:600}}>Saved by {existing.by}</span>}
+          {existing&&<span style={{fontSize:11,color:"#16a34a",fontWeight:600}}>✓ Saved by {existing.by}</span>}
         </div>
       </Card>
 
@@ -4904,56 +4898,65 @@ function Attendance({user,attendanceDB,studentsDB,usersDB}){
         <Card style={{padding:32,textAlign:"center"}}>
           <div style={{fontSize:32,marginBottom:8}}>👨‍🎓</div>
           <div style={{fontWeight:700,color:"#0d1b2a",marginBottom:4}}>No students in {cls} — Section {sec}</div>
-          <div style={{fontSize:13,color:"#64748b"}}>Add students in Test Tracker → Students. Then assign sections there.</div>
+          <div style={{fontSize:13,color:"#64748b"}}>Add students in the Students tab under Test Tracker.</div>
         </Card>
       ):(
         <>
+          {/* Summary cards */}
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
-            {[["Present","P","#dcfce7","#16a34a"],["Absent","A","#fee2e2","#dc2626"],["Late","L","#fef9c3","#ca8a04"]].map(function(x){return(
-              <div key={x[1]} style={{background:x[2],borderRadius:12,padding:"12px 16px",borderTop:"3px solid "+x[3]}}>
-                <div style={{fontSize:10,fontWeight:700,color:"#1a2e45",textTransform:"uppercase",letterSpacing:1}}>{x[0]}</div>
-                <div style={{fontSize:28,fontWeight:800,color:x[3],fontFamily:"monospace"}}>{x[1]==="P"?present:x[1]==="A"?absent:late}</div>
+            {[["Present","P","#dcfce7","#16a34a"],[" Absent","A","#fee2e2","#dc2626"],["Late","L","#fef9c3","#ca8a04"]].map(([label,val,bg,col])=>(
+              <div key={val} style={{background:bg,borderRadius:12,padding:"12px 16px",borderTop:"3px solid "+col}}>
+                <div style={{fontSize:10,fontWeight:700,color:"#1a2e45",textTransform:"uppercase",letterSpacing:1}}>{label}</div>
+                <div style={{fontSize:28,fontWeight:800,color:col,fontFamily:"monospace"}}>
+                  {val==="P"?present:val==="A"?absent:late}
+                </div>
               </div>
-            );})}
+            ))}
           </div>
+
+          {/* Mark all shortcuts */}
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             <span style={{fontSize:12,color:"#64748b",alignSelf:"center"}}>Mark all:</span>
-            {[["Present","P","#16a34a"],["Absent","A","#dc2626"],["Late","L","#ca8a04"]].map(function(x){return(
-              <button key={x[1]} onClick={function(){markAll(x[1]);}}
-                style={{padding:"6px 14px",borderRadius:8,border:"1.5px solid "+x[2],background:"white",color:x[2],fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"Sora,sans-serif"}}>
-                {x[0]}
+            {[["✓ Present","P","#16a34a"],["✗ Absent","A","#dc2626"],["⏱ Late","L","#ca8a04"]].map(([label,val,col])=>(
+              <button key={val} onClick={()=>markAll(val)}
+                style={{padding:"6px 14px",borderRadius:8,border:"1.5px solid "+col,background:"white",color:col,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"Sora,sans-serif"}}>
+                {label}
               </button>
-            );})}
+            ))}
           </div>
+
+          {/* Student list */}
           <Card style={{padding:0,overflow:"hidden"}}>
             <div style={{background:"#0d1b2a",padding:"10px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <span style={{color:"#c9a84c",fontWeight:700,fontSize:13}}>Student List</span>
-              <span style={{color:"rgba(255,255,255,.45)",fontSize:11}}>{cls} — Sec {sec} — {date}</span>
+              <span style={{color:"rgba(255,255,255,.45)",fontSize:11}}>{cls} — Sec {sec} · {date}</span>
             </div>
-            {students.map(function(st,i){
+            {students.map((st,i)=>{
               const v=status[st]||"P";
               return(
                 <div key={st} style={{display:"flex",alignItems:"center",padding:"10px 16px",borderBottom:"1px solid #f1f5f9",background:i%2===0?"#fff":"#f8fafc"}}>
                   <div style={{width:28,height:28,borderRadius:"50%",background:"#0d1b2a",color:"#c9a84c",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,marginRight:12,flexShrink:0}}>{i+1}</div>
                   <div style={{flex:1,fontSize:13,fontWeight:500,color:"#1e293b"}}>{st}</div>
                   <div style={{display:"flex",gap:6}}>
-                    {[["P","✓","#16a34a","#dcfce7"],["A","✗","#dc2626","#fee2e2"],["L","⏱","#ca8a04","#fef9c3"]].map(function(x){return(
-                      <button key={x[0]} onClick={function(){setS(st,x[0]);}}
-                        style={{width:34,height:34,borderRadius:8,border:"2px solid "+(v===x[0]?x[2]:"#e2e8f0"),background:v===x[0]?x[3]:"#fff",color:v===x[0]?x[2]:"#94a3b8",fontSize:14,fontWeight:700,cursor:"pointer"}}>
-                        {x[1]}
+                    {[["P","✓","#16a34a","#dcfce7"],["A","✗","#dc2626","#fee2e2"],["L","⏱","#ca8a04","#fef9c3"]].map(([val,icon,col,bg])=>(
+                      <button key={val} onClick={()=>setS(st,val)}
+                        style={{width:34,height:34,borderRadius:8,border:"2px solid "+(v===val?col:"#e2e8f0"),background:v===val?bg:"#fff",color:v===val?col:"#94a3b8",fontSize:14,fontWeight:700,cursor:"pointer",transition:"all .1s"}}>
+                        {icon}
                       </button>
-                    );})}
+                    ))}
                   </div>
                 </div>
               );
             })}
           </Card>
+
+          {/* Save button */}
           <div style={{display:"flex",alignItems:"center",gap:12,paddingBottom:24}}>
             <button onClick={handleSave} disabled={saving}
               style={{background:"#0d1b2a",color:"#fff",border:"none",borderRadius:10,padding:"13px 32px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"Sora,sans-serif",opacity:saving?.6:1}}>
-              {saving?"Saving...":"Save Attendance"}
+              {saving?"Saving…":"💾 Save Attendance"}
             </button>
-            {saved&&<span style={{color:"#16a34a",fontWeight:700,fontSize:13}}>Saved!</span>}
+            {saved&&<span style={{color:"#16a34a",fontWeight:700,fontSize:13}}>✓ Saved successfully!</span>}
           </div>
         </>
       )}
@@ -6152,8 +6155,13 @@ function qbShuffle(arr){const a=[...arr];for(let i=a.length-1;i>0;i--){const j=M
 
 function QuestionBank({user}){
   const isAdmin=user.role==="admin";
-  const userClasses=user.classes||[];
-  const userSubjects=user.subjects||[];
+  // QB uses 'Class 9' format; teacher classes may be 'Class 9-A'
+  const userClasses=(user.qbankClasses&&user.qbankClasses.length>0)
+    ? user.qbankClasses
+    : (user.classes||[]).map(function(c){return c.split("-")[0].trim();}).filter(function(c,i,a){return a.indexOf(c)===i;});
+  const userSubjects=(user.qbankSubjects&&user.qbankSubjects.length>0)
+    ? user.qbankSubjects
+    : (user.subjects||[]);
 
   const accessibleCombos=isAdmin
     ? Object.keys({...QB_READY,...QB_COMING}).map(k=>{const[c,...rest]=k.split("|");return{cls:c,subj:rest.join("|")};})
@@ -7727,9 +7735,8 @@ function App(){
       {id:"teacherlog", label:"Log & Plans", icon:"✏️"},
     ]},
     {id:"attendance-grp", label:"Attendance", icon:"🗹", single:"attendance"},
-    ...(isAdmin?[{id:"assign-grp", label:"Assign", icon:"🔧", single:"assign"}]:[]),
-    ...(isAdmin?[{id:"timetable-grp", label:"Timetable", icon:"🗓️", single:"timetable"}]:[]),
-    ...(!isAdmin&&!isParent?[{id:"mytimetable-grp", label:"My Timetable", icon:"🗓️", single:"mytimetable"}]:[]),
+    ...(isAdmin?[{id:"assign-grp",label:"Assign",icon:"🔧",single:"assign"},{id:"timetable-grp",label:"Timetable",icon:"🗓️",single:"timetable"}]:[]),
+    ...(!isAdmin&&!isParent?[{id:"mytimetable-grp",label:"My Timetable",icon:"🗓️",single:"mytimetable"}]:[]),
     {id:"leave-grp", label:"Leave", icon:"🏖️", single:"leave"},
     {id:"account-grp", label:"Account", icon:"🔐", single:"account"},
   ];
@@ -9051,6 +9058,10 @@ function AssignPanel(props) {
 
   var qbSt = useState(false);
   var selQbank = qbSt[0]; var setSelQbank = qbSt[1];
+  var qbClsSt = useState([]);
+  var selQbCls = qbClsSt[0]; var setSelQbCls = qbClsSt[1];
+  var qbSubjSt = useState([]);
+  var selQbSubj = qbSubjSt[0]; var setSelQbSubj = qbSubjSt[1];
 
   // Reload when teacher changes
   useEffect(function(){
@@ -9058,6 +9069,8 @@ function AssignPanel(props) {
     setSelCls(d.classes || []);
     setSelSubj(d.subjects || []);
     setSelQbank(d.qbank === true);
+    setSelQbCls(d.qbankClasses || []);
+    setSelQbSubj(d.qbankSubjects || []);
   }, [selTeacher, usersDB.data]);
 
   function toggleCls(cls, sec) {
@@ -9086,6 +9099,8 @@ function AssignPanel(props) {
       classes: selCls,
       subjects: selSubj,
       qbank: selQbank,
+      qbankClasses: selQbCls,
+      qbankSubjects: selQbSubj,
       updatedAt: new Date().toISOString()
     };
     usersDB.set(selTeacher, data).then(function(){
@@ -9168,6 +9183,40 @@ function AssignPanel(props) {
             </div>
           </div>
 
+          <div style={{background:"#fff",borderRadius:12,border:"1.5px solid #e2e8f0",overflow:"hidden",marginBottom:14}}>
+            <div style={{background:"#0d1b2a",padding:"12px 16px",color:"#fff",fontWeight:700,fontSize:14}}>Permissions</div>
+            <div style={{padding:16}}>
+              <div style={{display:"flex",alignItems:"center",gap:12,cursor:"pointer",marginBottom:selQbank?16:0}} onClick={function(){setSelQbank(!selQbank);}}>
+                <div style={{width:44,height:24,borderRadius:99,background:selQbank?"#16a34a":"#e2e8f0",position:"relative",flexShrink:0}}>
+                  <div style={{width:20,height:20,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:selQbank?22:2,boxShadow:"0 1px 3px rgba(0,0,0,.2)"}}/>
+                </div>
+                <div>
+                  <div style={{fontWeight:700,fontSize:13,color:"#0d1b2a"}}>Question Bank Access</div>
+                  <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{selQbank?"QB enabled — select which classes and subjects below":"Disabled — teacher cannot see the Question Bank"}</div>
+                </div>
+              </div>
+              {selQbank&&(
+                <div>
+                  <div style={{fontSize:11,fontWeight:700,color:"#64748b",letterSpacing:1,marginBottom:8}}>QB CLASSES</div>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14}}>
+                    {CLASSES.map(function(cls){
+                      var active=selQbCls.indexOf(cls)>=0;
+                      return <button key={cls} onClick={function(){setSelQbCls(active?selQbCls.filter(function(c){return c!==cls;}):[...selQbCls,cls]);}}
+                        style={{padding:"5px 14px",borderRadius:20,border:"1.5px solid "+(active?"#0d1b2a":"#e2e8f0"),background:active?"#0d1b2a":"#fff",color:active?"#c9a84c":"#64748b",fontSize:12,fontWeight:active?700:400,cursor:"pointer",fontFamily:"Sora,sans-serif"}}>{cls}</button>;
+                    })}
+                  </div>
+                  <div style={{fontSize:11,fontWeight:700,color:"#64748b",letterSpacing:1,marginBottom:8}}>QB SUBJECTS</div>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                    {SUBJECTS.map(function(s){
+                      var active=selQbSubj.indexOf(s)>=0;
+                      return <button key={s} onClick={function(){setSelQbSubj(active?selQbSubj.filter(function(x){return x!==s;}):[...selQbSubj,s]);}}
+                        style={{padding:"5px 12px",borderRadius:20,border:"1.5px solid "+(active?"#c9a84c":"#e2e8f0"),background:active?"#c9a84c":"#fff",color:active?"#0d1b2a":"#64748b",fontSize:12,fontWeight:active?700:400,cursor:"pointer",fontFamily:"Sora,sans-serif"}}>{s}</button>;
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
           <div style={{display:"flex",alignItems:"center",gap:12,paddingBottom:24}}>
             <button onClick={save} disabled={saving}
               style={{background:"#0d1b2a",color:"#fff",border:"none",borderRadius:10,padding:"12px 32px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"Sora,sans-serif",opacity:saving?0.6:1}}>
