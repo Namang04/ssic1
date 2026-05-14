@@ -4387,6 +4387,8 @@ const DEFAULT_USERS={
   "lm.pandey":{"password":"gc@lm.pandey","role":"teacher","name":"Mr. L.M. Pandey"},
   "rajni.singh":{"password":"gc@rajni.singh","role":"teacher","name":"Ms. Rajni Singh"},
   mubashra:{"password":"gc@mubashra","role":"teacher","name":"Ms. Mubashra"},
+  saima2:{"password":"gc@saima2","role":"teacher","name":"Ms. Saima (2)"},
+  deepanjali:{"password":"gc@deepanjali","role":"teacher","name":"Ms. Deepanjali"},
   suryansh:{"password":"Study@2027","role":"student","name":"Suryansh Pandey (10A)"},
   alaina:{"password":"Study@2027","role":"student","name":"Alaina (10A)"},
   krishna:{"password":"Study@2027","role":"student","name":"Krishna Jaiswal (10B)"},
@@ -4420,7 +4422,7 @@ const gradeOf=p=>{
 };
 const safeId=s=>s.replace(/[^a-zA-Z0-9]/g,"_");
 const getTeacherClasses=(user)=>{if(!user||user.role==="admin"||user.role==="vp")return SCHOOL.classes;const cls=user.classes||[];if(!cls.length)return SCHOOL.classes;return [...new Set(cls.map(function(c){return c.split("-")[0].trim();}))];};
-const getTeacherSubjects=(user,cls)=>{if(!user||user.role==="admin"||user.role==="vp")return SCHOOL.subjects[cls]||[];const subjs=(user.subjects||[]).map(function(s){return(s==="English Language"||s==="English Literature")?"English":s;});const all=SCHOOL.subjects[cls]||[];if(!subjs.length)return all;return all.filter(function(s){return subjs.indexOf(s)>=0;});};
+const getTeacherSubjects=(user,cls)=>{if(!user||user.role==="admin"||user.role==="vp")return SCHOOL.subjects[cls]||[];const subjs=(user.subjects||[]).map(function(s){if(s==="English Language"||s==="English Literature")return "English";if(s==="Social Studies")return "Social Science";if(s==="Accounts")return "Accountancy";if(s==="Information Technology")return "Computer Science";return s;});const all=SCHOOL.subjects[cls]||[];if(!subjs.length)return all;return all.filter(function(s){return subjs.indexOf(s)>=0;});};
 const today=()=>new Date().toISOString().split("T")[0];
 const fmtDate=d=>{if(!d)return"-";const p=d.split("-");return p[2]+"/"+p[1]+"/"+p[0];};
 const fmtTime=iso=>{if(!iso)return"";const d=new Date(iso);return d.toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"});};
@@ -6157,15 +6159,23 @@ function QuestionBank({user}){
   const isAdmin=user.role==="admin";
   // QB uses 'Class 9' format; teacher classes may be 'Class 9-A'
   const userClasses=(user.qbankClasses&&user.qbankClasses.length>0)
-    ? user.qbankClasses
+    ? user.qbankClasses.map(function(c){return c.split("-")[0].trim();})
     : (user.classes||[]).map(function(c){return c.split("-")[0].trim();}).filter(function(c,i,a){return a.indexOf(c)===i;});
   const userSubjects=(user.qbankSubjects&&user.qbankSubjects.length>0)
-    ? user.qbankSubjects.map(function(s){return(s==="English Language"||s==="English Literature")?"English":s;})
-    : (user.subjects||[]).map(function(s){return(s==="English Language"||s==="English Literature")?"English":s;});
+    ? user.qbankSubjects.map(function(s){if(s==="English Language"||s==="English Literature")return "English";if(s==="Social Studies")return "Social Science";if(s==="Accounts")return "Accountancy";if(s==="Information Technology")return "Computer Science";return s;})
+    : (user.subjects||[]).map(function(s){if(s==="English Language"||s==="English Literature")return "English";if(s==="Social Studies")return "Social Science";if(s==="Accounts")return "Accountancy";if(s==="Information Technology")return "Computer Science";return s;});
 
+  const normQBSubj=(cls,s)=>{
+    if((cls==="Class 9"||cls==="Class 10")&&
+       (s==="Physics"||s==="Chemistry"||s==="Biology"))return "Science";
+    return s;
+  };
   const accessibleCombos=isAdmin
     ? Object.keys({...QB_READY,...QB_COMING}).map(k=>{const[c,...rest]=k.split("|");return{cls:c,subj:rest.join("|")};})
-    : userClasses.flatMap(cls=>userSubjects.map(subj=>({cls,subj})));
+    : userClasses.flatMap(function(cls){
+        const subjs=userSubjects.map(function(s){return normQBSubj(cls,s);});
+        return [...new Set(subjs)].map(function(subj){return {cls:cls,subj:subj};});
+      });
 
   const readyCombos=accessibleCombos.filter(({cls,subj})=>QB_READY[cls+"|"+subj]);
   const comingSoonCombos=accessibleCombos.filter(({cls,subj})=>!QB_READY[cls+"|"+subj]&&QB_COMING[cls+"|"+subj]);
@@ -9189,7 +9199,7 @@ function AssignPanel(props) {
   var usersDB = props.usersDB;
   var CLASSES = ["Class 6","Class 7","Class 8","Class 9","Class 10","Class 11","Class 12"];
   var SECTIONS = ["A","B","C","D"];
-  var SUBJECTS = ["Mathematics","Science","Physics","Chemistry","Biology","English","Hindi","Social Studies","History","Geography","Political Science","Economics","Accounts","Business Studies","Computer Science","Information Technology","Physical Education","Sanskrit","General Knowledge","Moral Science","Art & Craft"];
+  var SUBJECTS = ["Mathematics","Science","Physics","Chemistry","Biology","English","Hindi","Social Science","History","Geography","Political Science","Economics","Accountancy","Business Studies","Computer Science","Computer","Physical Education","Sanskrit","Psychology","Sociology","Social Studies","General Knowledge","Moral Science","Art & Craft"];
 
   var teachers = Object.entries(DEFAULT_USERS).filter(function(e){ return e[1].role==="teacher"; });
 
