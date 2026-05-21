@@ -9147,7 +9147,19 @@ const DEFAULT_USERS={
   shifa:{"password":"Study@2027","role":"student","name":"Shifa Sheikh (10A)"},
   kajal:{"password":"Study@2027","role":"student","name":"Kajal Maddheshiya (10B)"},
   rajveer:{"password":"Study@2027","role":"student","name":"Rajveer Singh (10B)"},
-  ajitesh:{"password":"Study@2027","role":"student","name":"Ajitesh Kumar (10A)"}
+  ajitesh:{"password":"Study@2027","role":"student","name":"Ajitesh Kumar (10A)"},
+  avnish:{"password":"Study@2028","role":"student","name":"Avnish Kumar Gupta (12 Maths+Comp)"},
+  iramwasi:{"password":"Study@2028","role":"student","name":"Iram Wasi (12 Commerce)"},
+  rajkumar:{"password":"Study@2028","role":"student","name":"Raj Kumar Yadav (12 Maths+Comp)"},
+  ananta:{"password":"Study@2028","role":"student","name":"Ananta Tripathi (12 Maths+Comp)"},
+  navyarai:{"password":"Study@2028","role":"student","name":"Navya Rai (12 Commerce+Comp)"},
+  nirbhay:{"password":"Study@2028","role":"student","name":"Nirbhay Gupta (12 Maths+Comp)"},
+  akansha:{"password":"Study@2028","role":"student","name":"Akansha Dubey (12 Commerce)"},
+  aleena:{"password":"Study@2028","role":"student","name":"Aleena Naushad (12 Bio)"},
+  avinash:{"password":"Study@2028","role":"student","name":"Avinash Mishra (12 Maths+Comp)"},
+  sarakhan:{"password":"Study@2028","role":"student","name":"Sara Khan (12 Bio)"},
+  aryanyadav:{"password":"Study@2028","role":"student","name":"Aryan Yadav (12 Maths+Comp)"},
+  kartik:{"password":"Study@2028","role":"student","name":"Kartik Gupta (12 Commerce)"},
 };
 
 const pct=(m,t)=>t?Math.round((m/t)*100):0;
@@ -12724,9 +12736,16 @@ function App(){
   const attendanceDB=useFirestore("attendance");
   const usersDB=useFirestore("users");
   const wrongDB=useFirestore("wrongAnswers");
+  const noticesDB=useFirestore("notices");
   const handleUpdateUser=updated=>setUser(updated);
   if(!user)return<Login onLogin={u=>{setUser(u);setTab(u.role==="parent"?"parent":u.role==="student"?"student":"dashboard");}} usersDB={usersDB}/>;
   const isParent=user.role==="parent",isAdmin=user.role==="admin",isStudent=user.role==="student";
+  // Unread notices badge
+  const unreadNotices = !isAdmin ? Object.values(noticesDB.data||{}).filter(function(n){
+    if(!n.active)return false;
+    var readBy=n.readBy||[];
+    return readBy.indexOf(user.username)<0 && readBy.indexOf(user.name)<0;
+  }).length : 0;
   if(isStudent) return <StudentPortal user={user}/>;
   // ── Grouped nav structure ──
   const NAV_GROUPS = isParent ? [
@@ -12798,7 +12817,18 @@ function App(){
                 borderBottom:isActive?"2.5px solid #c9a84c":"2.5px solid transparent",
                 cursor:"pointer",display:"flex",alignItems:"center",gap:5,whiteSpace:"nowrap",
                 transition:"all .15s",fontFamily:"Sora,sans-serif"}}>
-              <span>{g.icon}</span><span className="tab-label">{g.label}</span>
+              <span style={{position:"relative",display:"inline-flex",alignItems:"center"}}>
+                {g.icon}
+                {g.single==="notices" && unreadNotices>0 && (
+                  <span style={{position:"absolute",top:-6,right:-8,background:"#dc2626",color:"#fff",
+                    borderRadius:"50%",width:16,height:16,fontSize:9,fontWeight:800,
+                    display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1,
+                    boxShadow:"0 0 0 2px #0d1b2a"}}>
+                    {unreadNotices>9?"9+":unreadNotices}
+                  </span>
+                )}
+              </span>
+              <span className="tab-label">{g.label}</span>
             </button>
           );
         })}
@@ -13230,7 +13260,28 @@ function ChangePassword({user,onBack}){
 function StudentPortal({user}){
   const[view,setView]=useState("home"); // home | qbank | test | result | password
   const[testResult,setTestResult]=useState(null);
-  const subj_map={std:"📘 Maths Std",bas:"📗 Maths Basic",sci:"🔬 Science",sst:"🗺️ SST"};
+  const nameStr12=user.name||"";
+  const is12sp=nameStr12.indexOf("(12 ")>=0;
+  const is11sp=nameStr12.indexOf("(11 ")>=0;
+  const stream12sp=is12sp?(nameStr12.match(/\(12 ([^)]+)\)/)||[])[1]||"":"";
+  const stream11sp=is11sp?(nameStr12.match(/\(11 ([^)]+)\)/)||[])[1]||"":"";
+  const streamSP=stream12sp||stream11sp;
+  const isMathsSP=streamSP.toLowerCase().indexOf("maths")>=0||streamSP.toLowerCase().indexOf("math")>=0;
+  const isBioSP=streamSP.toLowerCase().indexOf("bio")>=0;
+  const isCommSP=streamSP.toLowerCase().indexOf("comm")>=0;
+  const hasCompSP=streamSP.toLowerCase().indexOf("comp")>=0;
+  var subj_map;
+  if(is12sp||is11sp){
+    var yr2=is12sp?"12":"11";
+    var sm={};
+    if(isMathsSP){sm["mat"+yr2]="📘 Mathematics";sm["phy"+yr2]="⚛️ Physics";sm["chem"+yr2]="🧪 Chemistry";}
+    if(isBioSP){sm["bio"+yr2]="🌿 Biology";sm["phy"+yr2]="⚛️ Physics";sm["chem"+yr2]="🧪 Chemistry";}
+    if(isCommSP){sm["acc"+yr2]="📒 Accountancy";sm["bst"+yr2]="🏢 Business Studies";sm["eco"+yr2]="📊 Economics";}
+    if(hasCompSP&&!isBioSP)sm["mat"+yr2]="📘 Mathematics";
+    subj_map=sm;
+  } else {
+    subj_map={std:"📘 Maths Std",bas:"📗 Maths Basic",sci:"🔬 Science",sst:"🗺️ SST"};
+  }
 
   // Load done/saved from localStorage
   const storageKey="ss_student_"+user.username;
@@ -13257,7 +13308,11 @@ function StudentPortal({user}){
           <div style={{width:36,height:36,borderRadius:"50%",background:"#c9a84c",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,color:"#0d1b2a",fontSize:16}}>S</div>
           <div>
             <div style={{color:"#fff",fontWeight:700,fontSize:14}}>Stepping Stone Greencity</div>
-            <div style={{color:"rgba(255,255,255,0.5)",fontSize:11}}>Student Portal — Class 10</div>
+            <div style={{color:"rgba(255,255,255,0.5)",fontSize:11}}>
+              {is12sp?"Student Portal — Class 12 ("+streamSP+")":
+               is11sp?"Student Portal — Class 11 ("+streamSP+")":
+               "Student Portal — Class 10"}
+            </div>
           </div>
         </div>
         <div style={{color:"rgba(255,255,255,0.7)",fontSize:12}}>Welcome, <b style={{color:"#fbbf24"}}>{user.name}</b></div>
@@ -13364,7 +13419,21 @@ function StudentPortal({user}){
 function StudentQB({user,onBack,saved,saveDone}){
   const userClasses=user.classes||[];
   const isCls9=userClasses.includes("Class 9")&&!userClasses.includes("Class 10");
-  const[lvl,setLvl]=useState(isCls9?"m9":"std");
+  const _n=user.name||"";
+  const is12=_n.indexOf("(12 ")>=0;
+  const is11=_n.indexOf("(11 ")>=0;
+  const _s12=(is12?(_n.match(/\(12 ([^)]+)\)/)||[])[1]||"":"");
+  const _s11=(is11?(_n.match(/\(11 ([^)]+)\)/)||[])[1]||"":"");
+  const _stream=(_s12||_s11).toLowerCase();
+  const isMaths=_stream.indexOf("maths")>=0||_stream.indexOf("math")>=0;
+  const isBio=_stream.indexOf("bio")>=0;
+  const isComm=_stream.indexOf("comm")>=0;
+  const hasComp=_stream.indexOf("comp")>=0;
+  function _defLvl(){
+    if(is12||is11){var yr=is12?"12":"11";if(isMaths)return"mat"+yr;if(isBio)return"bio"+yr;if(isComm)return"acc"+yr;return"mat"+yr;}
+    return isCls9?"m9":"std";
+  }
+  const[lvl,setLvl]=useState(_defLvl);
   const[sciSub,setSciSub]=useState("");
   const[filterCh,setFilterCh]=useState("");
   const[filterSec,setFilterSec]=useState("");
@@ -13391,9 +13460,20 @@ function StudentQB({user,onBack,saved,saveDone}){
   }),[data,filterCh,filterSec,filterDiff,search,showDone,saved]);
 
   const doneCount=data.filter((_,i)=>saved["done_"+lvl+"_"+i]).length;
-  const subjLabels=isCls9
-    ? {m9:"📘 Maths (IX)",s9:"🔬 Science (IX)",sst9:"🗺️ SST (IX)",e9:"📖 English (IX)"}
-    : {std:"📘 Maths Std",bas:"📗 Maths Basic",sci:"🔬 Science",sst:"🗺️ SST"};
+  var subjLabels;
+  if(is12||is11){
+    var yr=is12?"12":"11";
+    var labels={};
+    if(isMaths){labels["mat"+yr]="📘 Mathematics";labels["phy"+yr]="⚛️ Physics";labels["chem"+yr]="🧪 Chemistry";}
+    if(isBio){labels["bio"+yr]="🌿 Biology";labels["phy"+yr]="⚛️ Physics";labels["chem"+yr]="🧪 Chemistry";}
+    if(isComm){labels["acc"+yr]="📒 Accountancy";labels["bst"+yr]="🏢 Business Studies";labels["eco"+yr]="📊 Economics";}
+    if(hasComp&&!isBio){labels["mat"+yr]="📘 Mathematics";}
+    subjLabels=labels;
+  } else {
+    subjLabels=isCls9
+      ? {m9:"📘 Maths (IX)",s9:"🔬 Science (IX)",sst9:"🗺️ SST (IX)",e9:"📖 English (IX)"}
+      : {std:"📘 Maths Std",bas:"📗 Maths Basic",sci:"🔬 Science",sst:"🗺️ SST"};
+  }
   const diffColors={e:"#10b981",m:"#f59e0b",h:"#ef4444"};
   const diffLabels={e:"Easy",m:"Medium",h:"Hard"};
   const secLabels={A:"1 mark",B:"2–4 marks",C:"3 marks",D:"5 marks",E:"4 marks"};
@@ -13525,8 +13605,30 @@ function StudentQCard({q,isDone,onToggleDone,diffColors,diffLabels,user,lvl}){
 function PracticeTest({user,onBack,onFinish,saved,saveDone}){
   const userClasses=user.classes||[];
   const isCls9=userClasses.includes("Class 9")&&!userClasses.includes("Class 10");
+  // Detect Class 11/12 from name: "(12 Maths+Comp)", "(12 Bio)", "(12 Commerce)" etc.
+  const nameStr=user.name||"";
+  const is12=nameStr.indexOf("(12 ")>=0;
+  const is11=nameStr.indexOf("(11 ")>=0;
+  const stream12=is12?(nameStr.match(/\(12 ([^)]+)\)/)||[])[1]||"":"";
+  const stream11=is11?(nameStr.match(/\(11 ([^)]+)\)/)||[])[1]||"":"";
+  const stream=stream12||stream11;
+  const isMaths=(stream.toLowerCase().indexOf("maths")>=0||stream.toLowerCase().indexOf("math")>=0);
+  const isBio=(stream.toLowerCase().indexOf("bio")>=0);
+  const isComm=(stream.toLowerCase().indexOf("comm")>=0);
+  const hasComp=(stream.toLowerCase().indexOf("comp")>=0);
+  // Default QB key based on class and stream
+  function defaultLvl(){
+    if(is12||is11){
+      var yr=is12?"12":"11";
+      if(isMaths)return"mat"+yr;
+      if(isBio)return"bio"+yr;
+      if(isComm)return"acc"+yr;
+      return"mat"+yr;
+    }
+    return isCls9?"m9":"std";
+  }
   const[step,setStep]=useState("setup");
-  const[lvl,setLvl]=useState(isCls9?"m9":"std");
+  const[lvl,setLvl]=useState(defaultLvl);
   const[selChs,setSelChs]=useState([]);
   const[numQ,setNumQ]=useState(20);
   const[timeMin,setTimeMin]=useState(30);
@@ -13551,9 +13653,19 @@ function PracticeTest({user,onBack,onFinish,saved,saveDone}){
 
   if(step==="running") return <RunningTest qs={testQs} timeMin={timeMin} lvl={lvl} selChs={selChs} onFinish={onFinish} saveDone={saveDone} user={user}/>;
 
-  const subjLabels=isCls9
-    ? {m9:"📘 Maths (IX)",s9:"🔬 Science (IX)",sst9:"🗺️ SST (IX)",e9:"📖 English (IX)"}
-    : {std:"📘 Maths Std",bas:"📗 Maths Basic",sci:"🔬 Science",sst:"🗺️ SST"};
+  var subjLabels;
+  if(is12||is11){
+    var yr=is12?"12":"11"; var labels={};
+    if(isMaths){labels["mat"+yr]="📘 Mathematics";labels["phy"+yr]="⚛️ Physics";labels["chem"+yr]="🧪 Chemistry";}
+    if(isBio){labels["bio"+yr]="🌿 Biology";labels["phy"+yr]="⚛️ Physics";labels["chem"+yr]="🧪 Chemistry";}
+    if(isComm){labels["acc"+yr]="📒 Accountancy";labels["bst"+yr]="🏢 Business Studies";labels["eco"+yr]="📊 Economics";}
+    if(hasComp&&!isBio)labels["mat"+yr]="📘 Mathematics";
+    subjLabels=labels;
+  } else {
+    subjLabels=isCls9
+      ? {m9:"📘 Maths (IX)",s9:"🔬 Science (IX)",sst9:"🗺️ SST (IX)",e9:"📖 English (IX)"}
+      : {std:"📘 Maths Std",bas:"📗 Maths Basic",sci:"🔬 Science",sst:"🗺️ SST"};
+  }
 
   return(
     <div style={{minHeight:"100vh",background:"#f1f5f9"}}>
@@ -14818,6 +14930,17 @@ function NoticePost(props) {
 
 function NoticeBoardView(props) {
   var user = props.user; var noticesDB = props.noticesDB; var isAdmin = props.isAdmin;
+  // Auto-mark all unread notices as read when teacher opens the board
+  useEffect(function() {
+    if (isAdmin) return;
+    var notices = Object.values(noticesDB.data || {}).filter(function(n){ return n.active; });
+    notices.forEach(function(n) {
+      var readBy = n.readBy || [];
+      if (readBy.indexOf(user.username) < 0) {
+        noticesDB.set(n.id, Object.assign({}, n, { readBy: readBy.concat([user.username]) }));
+      }
+    });
+  }, []);
   var savingState = useState(""); var markingRead = savingState[0]; var setMarkingRead = savingState[1];
   var TYPE_COLORS = {General:"#0d1b2a",Academic:"#2563eb",Exam:"#7c3aed",Holiday:"#16a34a",Event:"#c9a84c",Urgent:"#dc2626"};
 
