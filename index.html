@@ -8335,7 +8335,7 @@ function DirectoryProfile({stu, testsDB, studentsDB, attendanceDB, wrongDB, fees
   const canEditDir=!!user&&(user.role==="admin"||user.role==="office");
   const isDir=!!user&&user.role==="admin"&&user.fees!==false; // only the director may edit a student's record
   const[editing,setEditing]=useState(false);const[eform,setEform]=useState({});const[emsg,setEmsg]=useState("");
-  const _canPII=isDir||(!!user&&user.role==="office"); // Aadhaar: Director + Office only — hidden from the VP
+  const _canPII=!!user&&(user.role==="admin"||user.role==="vp"||user.role==="office"); // Director, VP/Principal & Office see full student records — only fees are hidden from the VP
   // Every displayed head is editable here except: Admission no. (immutable key), Student ID (system id) and Age (derived from DOB).
   const EDITF=[["Name","name"],["Father","father"],["Mother","mother"],["Contact","contact"],["Alt phone","phone"],["Emergency","emergency"],["Email","email"],["Address","address"],["Gender","gender"],["Date of birth","dob"],["Nationality","nationality"],["Religion","religion"],["Category","category"],["Blood group","blood"],...(_canPII?[["Aadhaar","aadhar"]]:[]),["Class","cls"],["Section","section"],["Subjects","subjects"],["Previous school","prevSchool"],["Previous class","prevClass"],["Board roll","boardRoll"],["Scholar no.","scholarNo"],["Admission date","admDate"],["Type (Old/New)","oldNew"],["House","house"],["Concession","concession"],["Status (Studying/Left)","status"],["APAAR ID","apaarId"],["PEN no.","penNo"]];
   const inr=n=>"₹"+Number(n||0).toLocaleString("en-IN");
@@ -8837,7 +8837,7 @@ function DirectoryProfile({stu, testsDB, studentsDB, attendanceDB, wrongDB, fees
 
 // ── STUDENT RECORDS DIRECTORY (full admission details; Firestore-backed, office/director only) ──
 function StudentDirectory({user, dirDB, testsDB, studentsDB, attendanceDB, wrongDB, feesDB, canFees, academicRosterDB, studentLinksDB, jumpAdm, onJumpDone}){
-  const canEdit = user.role==="admin"||user.role==="office";
+  const canEdit = (user.role==="admin"&&user.fees!==false)||user.role==="office"; // import/edit/sync = Director + Office only (VP/Principal is read-only here)
   const[q,setQ]=useState("");
   const[clsFilter,setClsFilter]=useState("all");
   const[secFilter,setSecFilter]=useState("all");
@@ -8914,7 +8914,7 @@ function StudentDirectory({user, dirDB, testsDB, studentsDB, attendanceDB, wrong
   var GRADS=[["var(--ap-accent)","#4aa6ff"],["#7b61ff","#8f8aef"],["#16a34a","#56c98a"],["#d97706","#e9a64f"],["#d2342a","#f06a60"]];
   function initials(n){return String(n||"?").split(" ").filter(Boolean).map(function(w){return w[0];}).slice(0,2).join("").toUpperCase();}
   function fmtCls(s){var c=s.clsNum||s.cls||"";var clsLabel=(/^\d+$/.test(c)?"Class "+c:c);var sec=s.section?(" · "+normSection(clsLabel,s.section)):"";return clsLabel+sec;}
-  var _canPII=!!user&&(user.role==="office"||(user.role==="admin"&&user.fees!==false)); // Aadhaar: Director + Office only — hidden from the VP
+  var _canPII=!!user&&(user.role==="office"||user.role==="admin"||user.role==="vp"); // Director, VP/Principal & Office see full student records — only fees are hidden from the VP
   var FIELDS=[
     ["Personal",[["Gender","gender"],["Date of birth","dob"],["Age","age"],["Blood group","blood"],...(_canPII?[["Aadhaar","aadhar"]]:[]),["Religion","religion"],["Category","category"],["Nationality","nationality"]]],
     ["Family & contact",[["Father","father"],["Mother","mother"],["Contact","contact"],["Alt. phone","phone"],["Emergency","emergency"],["Email","email"],["Address","address"]]],
@@ -9135,7 +9135,8 @@ service cloud.firestore {
     // studentDirectory holds Aadhaar, DOB, address, phones, parent contacts, etc.
     // Previously any signed-in user could read it. Now READ and WRITE are limited
     // to admin + office. Teachers/VP must use academicRoster (no PII) below.
-    match /studentDirectory/{id} { allow read, write: if isAny(['admin','office']); }
+    // VP / Principal may READ student records (full directory, no fees); only Director + Office can write/import.
+    match /studentDirectory/{id} { allow read: if isAny(['admin','vp','office']); allow write: if isAny(['admin','office']); }
 
     // Academic data — any signed-in user reads; only staff write
     match /tests/{id}             { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
@@ -9248,7 +9249,9 @@ service cloud.firestore {
         ? get(/databases/$(database)/documents/accounts/$(request.auth.uid)).data.get('branches', ['greencity'])
         : [];
     }
-    function isDirector() { return role() == 'admin' && myBranches().hasAny(['all']); }
+    // The Director is the only 'admin' role (VP is 'vp', office is 'office'), so admin = reaches every branch.
+    // (Not gated on a branches:['all'] flag — that flag may be unset on older Director accounts and would wrongly lock the Director out of the new campuses.)
+    function isDirector() { return role() == 'admin'; }
     function inBranch(coll) { return isDirector() || myBranches().hasAny([coll.split('_')[0]]); }
     function baseOf(coll) { return coll.split('_').size() == 2 ? coll.split('_')[1] : ''; }
 
@@ -9257,6 +9260,10 @@ service cloud.firestore {
       allow read, write: if signedIn() && inBranch(bc)
         && (baseOf(bc) in ['studentDirectory','fees','counters','portalFees','salaries','paymentIntents'])
         && isAny(['admin','office']);
+    }
+    // A branch's VP / Principal may READ student records (no fees) — write/import stays Director + Office (above).
+    match /{bcd}/{idd} {
+      allow read: if signedIn() && inBranch(bcd) && baseOf(bcd) == 'studentDirectory' && isAny(['admin','vp','office']);
     }
     // Academic / operational / workflow for a branch — that branch's staff read; appropriate roles write
     match /{bc2}/{id2} {
@@ -14066,7 +14073,7 @@ function App(){
     ]}]:[]),
     ...(canFees?[{id:"fees-grp", label:"Fees", sec:"MAIN", single:"fees"}]:[]),
     ...(canFees?[{id:"salary-grp", label:"Salary", sec:"MAIN", single:"salary"}]:[]),
-    ...((isAdmin||isOffice)?[{id:"directory-grp", label:"Students", sec:"MAIN", children:[
+    ...((isAdmin||isOffice||user.role==="vp")?[{id:"directory-grp", label:"Students", sec:"MAIN", children:[
       {id:"directory", label:"Student Records"},
       ...(isAdmin?[{id:"admitcard", label:"Admit Cards"}]:[]),
     ]}]:[]),
@@ -14240,7 +14247,7 @@ function App(){
           ? <PrincipalDashboard user={user} attendanceDB={attendanceDB} staffAttDB={staffAttDB} leaveDB={leaveDB} disciplineDB={disciplineDB} complaintsDB={complaintsDB} testsDB={testsDB} feesDB={feesDB} dirDB={dirDB} academicRosterDB={academicRosterDB} usersDB={usersDB} noticesDB={noticesDB} metaDB={metaDB} setTab={setTab} mobile={viewMode==="mobile"} viewDate={viewDate}/>
           : <Dashboard user={user} testsDB={testsDB} studentsDB={studentsDB} attendanceDB={attendanceDB} academicRosterDB={academicRosterDB} dirDB={dirDB} noticesDB={noticesDB} ttDB={ttDB} ttSetDB={ttSetDB} usersDB={usersDB} setTab={setTab}/>)}
         {tab==="students"&&!isParent&&<ManageStudents user={user} usersDB={usersDB} studentsDB={studentsDB} testsDB={testsDB} academicRosterDB={academicRosterDB} studentLinksDB={studentLinksDB} dirDB={dirDB}/>}
-        {tab==="datacenter"&&isAdmin&&<DataCenter user={user} dirDB={dirDB} studentsDB={studentsDB} testsDB={testsDB} usersDB={usersDB} feesDB={feesDB} examsDB={examsDB} noticesDB={noticesDB} registrationsDB={registrationsDB} academicRosterDB={academicRosterDB} metaDB={metaDB} attendanceDB={attendanceDB} curSession={curSession} viewSession={viewSession} setViewSession={setViewSession} allSessions={allSessions}/>}
+        {tab==="datacenter"&&isDirector&&<DataCenter user={user} dirDB={dirDB} studentsDB={studentsDB} testsDB={testsDB} usersDB={usersDB} feesDB={feesDB} examsDB={examsDB} noticesDB={noticesDB} registrationsDB={registrationsDB} academicRosterDB={academicRosterDB} metaDB={metaDB} attendanceDB={attendanceDB} curSession={curSession} viewSession={viewSession} setViewSession={setViewSession} allSessions={allSessions}/>}
         {tab==="topics"&&!isParent&&<ManageTopics user={user} usersDB={usersDB} topicsDB={topicsDB}/>}
         {tab==="tracker"&&!isParent&&<TestTracker user={user} testsDB={testsDB} studentsDB={studentsDB} usersDB={usersDB} dirDB={dirDB}/>}
         {tab==="participation"&&!isParent&&<TestParticipation user={user} testsDB={testsDB} studentsDB={studentsDB} dirDB={dirDB}/>}
@@ -14253,7 +14260,7 @@ function App(){
         {tab==="fees"&&canFees&&<Fees user={user} feesDB={feesDB} studentsDB={studentsDB} academicRosterDB={academicRosterDB} dirDB={dirDB} metaDB={metaDB}/>}
         {tab==="salary"&&canFees&&<SalaryPanel user={user}/>}
         {tab==="admission"&&(isDirector||isOffice)&&<AdmissionForm user={user} studentsDB={studentsDB} dirDB={dirDB} academicRosterDB={academicRosterDB}/>}
-        {tab==="directory"&&(isAdmin||isOffice)&&<StudentDirectory user={user} dirDB={dirDB} testsDB={testsDB} studentsDB={studentsDB} attendanceDB={attendanceDB} wrongDB={wrongDB} feesDB={feesDB} canFees={canFees} academicRosterDB={academicRosterDB} studentLinksDB={studentLinksDB} jumpAdm={jumpAdm} onJumpDone={()=>setJumpAdm("")}/>}
+        {tab==="directory"&&(isAdmin||isOffice||user.role==="vp")&&<StudentDirectory user={user} dirDB={dirDB} testsDB={testsDB} studentsDB={studentsDB} attendanceDB={attendanceDB} wrongDB={wrongDB} feesDB={feesDB} canFees={canFees} academicRosterDB={academicRosterDB} studentLinksDB={studentLinksDB} jumpAdm={jumpAdm} onJumpDone={()=>setJumpAdm("")}/>}
         {tab==="registration"&&(isDirector||isOffice)&&<Registration user={user} registrationsDB={registrationsDB} setTab={setTab}/>}
         {tab==="admitcard"&&(isAdmin||isOffice)&&<AdmitCard user={user} dirDB={dirDB} setTab={setTab}/>}
         {tab==="exams"&&(isAdmin||isTeacher||isOffice)&&<Exams user={user} studentsDB={studentsDB} examsDB={examsDB} attendanceDB={attendanceDB} dirDB={dirDB} academicRosterDB={academicRosterDB} examClasses={isOffice?SCHOOL.classes:getTeacherClasses(user)} reportsOnly={isOffice}/>}
