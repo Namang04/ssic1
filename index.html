@@ -1764,7 +1764,7 @@ function PrincipalDashboard({user,attendanceDB,staffAttDB,leaveDB,disciplineDB,c
   const onLeaveToday=useMemo(()=>Object.values(leaveDB.data||{}).filter(l=>l&&l.status==="approved"&&String(l.from)<=td&&String(l.to)>=td),[leaveDB.data,td]);
   const _ctDoc=useSharedDoc("users","__classTeachers"); // VP can't list users either — read the shared map directly
   const ctMap=(_ctDoc&&_ctDoc.map)||((usersDB&&usersDB.data&&usersDB.data["__classTeachers"])||{}).map||{};
-  const teacherRows=useMemo(()=>Object.keys(ctMap).map(function(secKey){var who=ctMap[secKey];var cl=secKey.split("-")[0].trim();var sec=secKey.split("-").slice(1).join("-").trim();var lbl=cl+(sec?" · "+normSection(cl,sec):"");var u=usersDB&&usersDB.data&&usersDB.data[who];return{section:secKey,teacher:(u&&u.name)||who,att:!!markedSet[lbl]};}).sort((a,b)=>(a.att?1:0)-(b.att?1:0)||String(a.section).localeCompare(String(b.section),undefined,{numeric:true})),[ctMap,markedSet,usersDB&&usersDB.data]);
+  const teacherRows=useMemo(()=>Object.keys(ctMap).map(function(secKey){var who=ctMap[secKey];var cl=secKey.split("-")[0].trim();var sec=secKey.split("-").slice(1).join("-").trim();var lbl=cl+(sec?" · "+normSection(cl,sec):"");var u=usersDB&&usersDB.data&&usersDB.data[safeId(who)];return{section:secKey,teacher:(u&&u.name)||who,att:!!markedSet[lbl]};}).sort((a,b)=>(a.att?1:0)-(b.att?1:0)||String(a.section).localeCompare(String(b.section),undefined,{numeric:true})),[ctMap,markedSet,usersDB&&usersDB.data]);
   const ctDone=teacherRows.filter(r=>r.att).length;
   const intervention=useMemo(()=>(health.flatChronic||[]).slice(0,8),[health]);
   const checklist=[
@@ -3809,7 +3809,7 @@ function ImportStaff({usersDB, curSession, card, btn}){
   }
   async function doImport(){if(!preview||!preview.staff.length)return;if(!window.confirm("Add/update "+preview.staff.length+" staff accounts? Existing usernames are updated. Passwords aren't changed here."))return;
     setBusy(true);var n=0;
-    try{for(var i=0;i<preview.staff.length;i++){var s=preview.staff[i];var cur=usersDB.data[s.username]||{};
+    try{for(var i=0;i<preview.staff.length;i++){var s=preview.staff[i];var cur=usersDB.data[safeId(s.username)]||{}; // safeId so a dotted username merges into its real doc (keeps subjects/branches/class-teacher)
       await usersDB.set(s.username,Object.assign({},cur,{username:s.username,name:s.name,role:s.role,classes:s.classes,phone:s.phone,email:s.email,active:true}));n++;setMsg("Saved "+n+" / "+preview.staff.length+"…");}
       setMsg("✓ Saved "+n+" staff. Set their passwords via Admin → Reset Password (or they set one on first login).");}
     catch(e){setMsg("❌ "+((e&&e.message)||"write failed")+".");}
@@ -9429,7 +9429,7 @@ function AccountsPanel({user,usersDB,studentsDB,dirDB,academicRosterDB}){
     Object.entries(usersDB.data||{}).forEach(([k,v])=>{if(!v||!v.role&&!v.name)return;const un=(v.username||k).toLowerCase();if(m[un]){m[un]={...m[un],name:v.name||m[un].name,role:v.role||m[un].role};}else{m[un]={username:un,name:v.name||un,role:v.role||"",system:false};}});
     return Object.values(m).sort((a,b)=>(a.name||"").localeCompare(b.name||""));
   },[usersDB.data]);
-  const taken=u=>!!DEFAULT_USERS[u]||!!(usersDB.data&&usersDB.data[u])||!!acctByUser[u];
+  const taken=u=>!!DEFAULT_USERS[u]||!!(usersDB.data&&usersDB.data[safeId(u)])||!!acctByUser[u];
 
   const addUser=async()=>{
     setMsg(null);
@@ -10387,7 +10387,7 @@ function AccountSettings({user,usersDB,onUpdate}){
   const handleSave=async()=>{
     setErr("");
     if(!currentPass){setErr("Enter current password to confirm.");return;}
-    const stored=usersDB.data[user.username]||DEFAULT_USERS[user.username]||{};
+    const stored=usersDB.data[safeId(user.username)]||DEFAULT_USERS[user.username]||{};
     // Verify current password — prefer secure auth, fall back to the legacy stored value.
     let verified=false;
     if(window.__authSignIn){try{await window.__authSignIn(AUTH_EMAIL(user.username),currentPass);verified=true;}catch(e){verified=false;}}
@@ -15935,8 +15935,10 @@ function AssignPanel(props) {
   var msgState = useState("");
   var msg = msgState[0]; var setMsg = msgState[1];
 
-  // Load teacher's current assignments from Firebase (usersDB collection)
-  var teacherData = (usersDB.data && usersDB.data[selTeacher]) || {};
+  // Load teacher's current assignments from Firebase (usersDB collection).
+  // usersDB docs are keyed by safeId(username) — a dotted username ("abhishek.rai") lives under "abhishek_rai",
+  // so we MUST read/write by safeId or the save round-trips to a different doc and the reload wipes it to zero.
+  var teacherData = (usersDB.data && usersDB.data[safeId(selTeacher)]) || {};
   var currentClasses = teacherData.classes || [];
   var currentSubjects = teacherData.subjects || [];
 
@@ -15965,7 +15967,7 @@ function AssignPanel(props) {
 
   // Reload when teacher changes
   useEffect(function(){
-    var d = (usersDB.data && usersDB.data[selTeacher]) || {};
+    var d = (usersDB.data && usersDB.data[safeId(selTeacher)]) || {};
     setSelCls(d.classes || []);
     setSelSubj(d.subjects || []);
     setSelQbank(d.qbank === true);
@@ -15995,7 +15997,7 @@ function AssignPanel(props) {
     if (!selTeacher) return;
     setSaving(true); setMsg("");
     // MERGE into the existing user doc (don't overwrite) so phone/email/active and other profile fields survive.
-    var cur = (usersDB.data && usersDB.data[selTeacher]) || {};
+    var cur = (usersDB.data && usersDB.data[safeId(selTeacher)]) || {};
     var teacher = cur.name ? cur : (DEFAULT_USERS[selTeacher] || {});
     var data = Object.assign({}, cur, {
       username: cur.username || selTeacher,
@@ -16026,7 +16028,7 @@ function AssignPanel(props) {
       usersDB.set("__classTeachers", { map: ctm, updatedAt: new Date().toISOString() })
     ];
     Object.keys(affected).forEach(function(ph){
-      var phDoc = (usersDB.data && usersDB.data[ph]) || DEFAULT_USERS[ph] || {};
+      var phDoc = (usersDB.data && usersDB.data[safeId(ph)]) || DEFAULT_USERS[ph] || {};
       var phSecs = Object.keys(ctm).filter(function(k){ return ctm[k] === ph; });
       writes.push(usersDB.set(ph, Object.assign({}, phDoc, { username: phDoc.username || ph, classTeacherOf: phSecs, updatedAt: new Date().toISOString() })));
     });
@@ -16067,7 +16069,7 @@ function AssignPanel(props) {
   }
 
   var classTeacherMap = ((usersDB.data && usersDB.data["__classTeachers"]) || {}).map || {};
-  function ctNameOf(un){ var v=(usersDB.data&&usersDB.data[un])||DEFAULT_USERS[un]; return (v&&v.name)||un; }
+  function ctNameOf(un){ var v=(usersDB.data&&usersDB.data[safeId(un)])||DEFAULT_USERS[un]; return (v&&v.name)||un; }
   var ctTeacherName = (teacherData && teacherData.name) || (DEFAULT_USERS[selTeacher] && DEFAULT_USERS[selTeacher].name) || selTeacher;
 
   return (
