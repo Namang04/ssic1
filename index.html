@@ -741,7 +741,25 @@ const DEFAULT_FEE_STRUCTURE={
 // Shared fee math — used by the Fees page, the student profile, and the multi-branch importer so every screen
 // shows the SAME annual fee/balance. Per-stream 11/12 fee + admission fee for NEW students (Fee List 2026-27).
 const STU_ADMISSION_FEE={"Class 1":4000,"Class 2":4000,"Class 3":5000,"Class 4":5000,"Class 5":5000,"Class 6":5000,"Class 7":5000,"Class 8":5000,"Class 9":6000,"Class 10":0,"Class 11":6000,"Class 12":0,"Class SIP":0};
+// ── PER-BRANCH fee structure. Greencity uses the defaults above; Surajkund has its OWN fees (2026-27 Fee List PDF).
+// Installments power the due-now/overdue math; admission (new students) + 11/12 stream fees feed the full-year annual.
+const __SK_DUE=["2026-04-01","2026-07-10","2026-10-10","2027-01-01"];
+function __skInst(a){return a.map(function(amt,i){return {name:["I","II","III","IV"][i]+" Installment",due:__SK_DUE[i],amount:amt};});}
+const __BRANCH_FEE_CLASSES={surajkund:(function(){var c={};
+  ["Nursery","LKG","UKG"].forEach(function(k){c[k]=__skInst([12400,5200,5200,5200]);});
+  ["Class 1","Class 2"].forEach(function(k){c[k]=__skInst([12500,6500,6500,6500]);});
+  ["Class 3","Class 4","Class 5"].forEach(function(k){c[k]=__skInst([12500,7500,7500,7500]);});
+  ["Class 6","Class 7","Class 8"].forEach(function(k){c[k]=__skInst([12500,9300,9300,9300]);});
+  c["Class 9"]=__skInst([12500,12500,12500,12500]); c["Class 10"]=__skInst([18000,13000,13000,13000]);
+  c["Class 11"]=__skInst([20500,14500,14500,14500]); c["Class 12"]=__skInst([23500,15000,15000,15000]);
+  return c;})()};
+const __BRANCH_ADMISSION={surajkund:{Nursery:3500,LKG:3500,UKG:3500,"Class 1":4000,"Class 2":4000,"Class 3":4000,"Class 4":4000,"Class 5":4000,"Class 6":4500,"Class 7":4500,"Class 8":4500,"Class 9":5000,"Class 10":5000,"Class 11":5000,"Class 12":5000}};
+const __BRANCH_STREAM={surajkund:{"11":{A:64000,B:64000,C:62500,D:62500},"12":{A:68500,B:68500,C:67000,D:67000}}}; // base (= installment sum, no admission); studentAnnualFee adds admission for new
+function __feeClasses(){var b=window.__currentBranch||"greencity";return __BRANCH_FEE_CLASSES[b]||DEFAULT_FEE_STRUCTURE;}
+function __admFee(cls){var b=window.__currentBranch||"greencity";var m=__BRANCH_ADMISSION[b];return (m&&m[cls]!=null)?m[cls]:(STU_ADMISSION_FEE[cls]||0);}
 function streamFeeOf(cn,sec){var s=String(sec||"").toUpperCase();var comp=s.indexOf("COMP")>=0;
+  if(cn==="11"||cn==="12"){var bs=__BRANCH_STREAM[window.__currentBranch||"greencity"];
+    if(bs&&bs[cn]){var L=/^[ABCD]/.test(s)?s.charAt(0):normSection("Class "+cn,sec);return bs[cn][L]!=null?bs[cn][L]:bs[cn]["A"];}}
   if(cn==="11")return comp?66000:64000;
   if(cn==="12"){var sci=s.indexOf("MATH")>=0||s.indexOf("BIO")>=0||s.indexOf("PCM")>=0||s.indexOf("PCB")>=0||s.charAt(0)==="A"||s.charAt(0)==="B";return sci?(comp?71500:69500):(comp?70000:68000);}
   return null;}
@@ -762,8 +780,8 @@ function normSection(cls,sec){
   return s;
 }
 function studentAnnualFee(cls,sec,oldNew,structure){var cn=String(cls).replace("Class ","").trim();var sf=streamFeeOf(cn,sec);
-  var base=(sf!=null)?sf:(((structure||DEFAULT_FEE_STRUCTURE)[cls]||[]).reduce(function(a,h){return a+Number(h.amount||0);},0));
-  var adm=(String(oldNew||"").toLowerCase()==="new")?(STU_ADMISSION_FEE[cls]||0):0;return base+adm;}
+  var base=(sf!=null)?sf:(((structure||__feeClasses())[cls]||[]).reduce(function(a,h){return a+Number(h.amount||0);},0));
+  var adm=(String(oldNew||"").toLowerCase()==="new")?__admFee(cls):0;return base+adm;}
 // Due-by-now from installment due dates. If NO head has a due date → returns hasDates:false (caller treats the
 // whole annual as due now = original behaviour). A head with a fine adds it only when that installment is overdue
 // AND not yet covered by the amount paid (cumulative). today = "YYYY-MM-DD".
@@ -2066,7 +2084,7 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
   // Fees & collection (director only)
   const fin=useMemo(()=>{if(!canFees)return null;
     // EXACTLY mirrors the Fees page agg/payInfo so the dashboard can never show a different number.
-    const structure=Object.assign({},DEFAULT_FEE_STRUCTURE,(feesDB.data.__structure&&feesDB.data.__structure.classes)||{});
+    const structure=Object.assign({},__feeClasses(),(feesDB.data.__structure&&feesDB.data.__structure.classes)||{});
     const order=__DIR_ORDER;
     const useClasses=[];order.forEach(cn=>{const doc=dirDB&&dirDB.data&&dirDB.data["dir_"+cn];if(doc&&(doc.students||[]).some(s=>String(s.status||"").toLowerCase()!=="left"))useClasses.push(__clsTokLabel(cn));});
     const classes=useClasses.length?useClasses:SCHOOL.classes;
@@ -2153,7 +2171,7 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
     return out;
   },[pendingLeaves,subsNeeded,stu,fin,chronic,canFees]);
   const aging=useMemo(()=>{if(!canFees||!fin)return null;
-    const structure=Object.assign({},DEFAULT_FEE_STRUCTURE,(feesDB.data.__structure&&feesDB.data.__structure.classes)||{});
+    const structure=Object.assign({},__feeClasses(),(feesDB.data.__structure&&feesDB.data.__structure.classes)||{});
     const rosterFor=c=>{const d=academicRosterDB&&academicRosterDB.data&&academicRosterDB.data[safeId(c)];if(d&&Array.isArray(d.students)&&d.students.length)return d.students.map(s=>({admNo:String(s.admNo||""),name:s.name}));return ((studentsDB.data[safeId(c)]||{}).list||[]).map(nm=>({admNo:"",name:nm}));};
     const payByAdm={},payByName={};
     Object.keys(feesDB.data||{}).forEach(id=>{if(id.startsWith("__"))return;const p=feesDB.data[id];if(!p||p.disc)return;const amt=Number(p.amount||0);if(p.admNo)payByAdm[p.cls+"||"+String(p.admNo)]=(payByAdm[p.cls+"||"+String(p.admNo)]||0)+amt;payByName[p.cls+"||"+nmKey(p.student)]=(payByName[p.cls+"||"+nmKey(p.student)]||0)+amt;});
@@ -2725,7 +2743,7 @@ function OfficeDashboard({user, dirDB, feesDB, academicRosterDB, attendanceDB, s
     return{all,studying,left,fresh};
   },[dirDB.data]);
   const dues=useMemo(()=>{
-    const structure=Object.assign({},DEFAULT_FEE_STRUCTURE,(feesDB.data.__structure&&feesDB.data.__structure.classes)||{});
+    const structure=Object.assign({},__feeClasses(),(feesDB.data.__structure&&feesDB.data.__structure.classes)||{});
     const annualFor=c=>(structure[c]||[]).reduce((a,h)=>a+Number(h.amount||0),0);
     const payByAdm={},payByName={};
     Object.keys(feesDB.data||{}).forEach(id=>{if(id.startsWith("__"))return;const p=feesDB.data[id];if(!p||p.disc)return;const amt=Number(p.amount||0);
@@ -6098,7 +6116,7 @@ function StudentProfile({user,testsDB,studentsDB,attendanceDB,wrongDB,feesDB,can
     if(padm&&dirDB&&dirDB.data){Object.keys(dirDB.data).forEach(function(k){if(k.indexOf("dir_")!==0)return;((dirDB.data[k]||{}).students||[]).forEach(function(s){if(String(s.admNo)===padm)rec=s;});});}
     const section=(rec&&rec.section)||sections[student]||"";
     const oldNew=(rec&&rec.oldNew)||"";
-    const struct=Object.assign({},DEFAULT_FEE_STRUCTURE,(feesDB.data.__structure&&feesDB.data.__structure.classes)||{});
+    const struct=Object.assign({},__feeClasses(),(feesDB.data.__structure&&feesDB.data.__structure.classes)||{});
     const annual=studentAnnualFee(cls,section,oldNew,struct);
     const ps=Object.keys(feesDB.data||{}).filter(id=>!id.startsWith("__")).map(id=>feesDB.data[id]).filter(p=>p&&((padm&&p.admNo&&String(p.admNo)===padm)||(p.cls===cls&&nmKey(p.student)===nmKey(student))));
     if(annual===0&&ps.length===0)return null;
@@ -7705,7 +7723,7 @@ function Fees({user,feesDB,studentsDB,academicRosterDB,dirDB,metaDB}){
   const[lastReceipt,setLastReceipt]=useState(null); // success card after a collection
   const[concMsg,setConcMsg]=useState("");
 
-  const structure={...DEFAULT_FEE_STRUCTURE,...(feesDB.data.__structure?.classes||{})};
+  const structure={...__feeClasses(),...(feesDB.data.__structure?.classes||{})};
   const payments=useMemo(()=>Object.keys(feesDB.data).filter(id=>!id.startsWith("__")).map(id=>({id,...feesDB.data[id]})),[feesDB.data]);
   const annualFor=c=>(structure[c]||[]).reduce((a,h)=>a+Number(h.amount||0),0);
   // ONE fee formula for the whole app — delegate to the global studentAnnualFee (stream + admission-fee aware)
@@ -7852,7 +7870,7 @@ td.r,th.r{text-align:right}
       const _newCash=paidBefore+(isConc?0:amt);
       const _newConc=concGiven+(isConc?amt:0);
       const _bal=Math.max(0,ann-wv-_newConc-_newCash);
-      const _pstruct=Object.assign({},DEFAULT_FEE_STRUCTURE,(feesDB.data.__structure&&feesDB.data.__structure.classes)||{});
+      const _pstruct=Object.assign({},__feeClasses(),(feesDB.data.__structure&&feesDB.data.__structure.classes)||{});
       const _pdn=feeDueNow(_pstruct[cls]||[],_newCash,today());
       const _overdue=Math.max(0,(_pdn.hasDates?_pdn.dueAmt+_pdn.fineAmt:ann)-wv-_newConc-_newCash);
       const _status=(ann>0&&_bal<=0)?"cleared":((_newCash>0||_newConc>0)?"partial":"unpaid");
@@ -8393,7 +8411,7 @@ function DirectoryProfile({stu, testsDB, studentsDB, attendanceDB, wrongDB, fees
   // plain structure-sum that under-counted Class 11/12 streams and admission fees.
   const fees=useMemo(()=>{ if(!canFees||!feesDB||!clsNum)return null;
     const feeCls=/sip/i.test(clsNum)?"Class SIP":("Class "+clsNum);
-    const struct=Object.assign({},DEFAULT_FEE_STRUCTURE,(feesDB.data.__structure&&feesDB.data.__structure.classes)||{});
+    const struct=Object.assign({},__feeClasses(),(feesDB.data.__structure&&feesDB.data.__structure.classes)||{});
     const annual=studentAnnualFee(feeCls,stu.section,stu.oldNew,struct);
     const ps=Object.keys(feesDB.data||{}).filter(id=>!id.startsWith("__")).map(id=>Object.assign({id},feesDB.data[id])).filter(p=>p&&((adm&&p.admNo&&String(p.admNo)===adm)||(p.cls===feeCls&&nmKey(p.student)===nmKey(aName))));
     if(annual===0&&ps.length===0)return null;
@@ -8854,7 +8872,7 @@ function StudentDirectory({user, dirDB, testsDB, studentsDB, attendanceDB, wrong
   const riskByAdm=useMemo(()=>{
     const att={};Object.values(attendanceDB.data||{}).forEach(r=>{if(!r||!r.status)return;Object.keys(r.status).forEach(key=>{const v=r.status[key];if(v===undefined||v==="U"||!/^\d/.test(key))return;const o=att[key]=att[key]||{p:0,t:0};o.t++;if(v==="P"||v==="L")o.p++;});});
     const pay={};Object.keys((feesDB&&feesDB.data)||{}).forEach(id=>{if(id.startsWith("__"))return;const p=feesDB.data[id];if(!p||p.disc||!p.admNo)return;pay[String(p.admNo)]=(pay[String(p.admNo)]||0)+Number(p.amount||0);});
-    const struct=Object.assign({},(typeof DEFAULT_FEE_STRUCTURE!=="undefined"?DEFAULT_FEE_STRUCTURE:{}),(feesDB&&feesDB.data&&feesDB.data.__structure&&feesDB.data.__structure.classes)||{});
+    const struct=Object.assign({},__feeClasses(),(feesDB&&feesDB.data&&feesDB.data.__structure&&feesDB.data.__structure.classes)||{});
     const m={};all.forEach(s=>{const a=String(s.admNo||"");if(!a)return;const ao=att[a];const attPct=ao&&ao.t>=3?Math.round(ao.p/ao.t*100):null;let dues=null,overdue=null;
       if(canFees){const cls=/sip/i.test(String(s.clsNum||s.cls||""))?"Class SIP":("Class "+(s.clsNum||s.cls));const annual=(typeof studentAnnualFee==="function")?studentAnnualFee(cls,s.section,s.oldNew,struct):0;const w=(typeof waiverFor==="function")?waiverFor(feesDB.data,a):0;dues=Math.max(0,annual-w-(pay[a]||0));const dn=(typeof feeDueNow==="function")?feeDueNow(struct[cls]||[],pay[a]||0,today()):{hasDates:false};overdue=dn.hasDates?Math.max(0,Math.min(annual,dn.dueAmt)+dn.fineAmt-w):dues;}
       m[a]={attPct,dues,overdue};});
@@ -14378,7 +14396,7 @@ function buildSchoolContext(dbs,includeFees){
   Object.values((testsDB&&testsDB.data)||{}).forEach(function(t){if(!t)return;var mx=Number(t.total)||0;if(!mx)return;
     if(t.rowsByAdm)Object.keys(t.rowsByAdm).forEach(function(ad){var v=t.rowsByAdm[ad];if(v===""||v==null)return;(markIdx[ad]=markIdx[ad]||{s:0,m:0});markIdx[ad].s+=Number(v);markIdx[ad].m+=mx;});
     if(t.rows)Object.keys(t.rows).forEach(function(nm){var v=t.rows[nm];if(v===""||v==null)return;var ad=nameToAdm[nmKey(nm)];if(!ad)return;if(t.rowsByAdm&&t.rowsByAdm[ad]!==undefined)return;(markIdx[ad]=markIdx[ad]||{s:0,m:0});markIdx[ad].s+=Number(v);markIdx[ad].m+=mx;});});
-  const struct=Object.assign({},(typeof DEFAULT_FEE_STRUCTURE!=="undefined"?DEFAULT_FEE_STRUCTURE:{}),(feesDB&&feesDB.data&&feesDB.data.__structure&&feesDB.data.__structure.classes)||{});
+  const struct=Object.assign({},__feeClasses(),(feesDB&&feesDB.data&&feesDB.data.__structure&&feesDB.data.__structure.classes)||{});
   out.push("\nSTUDENTS ("+students.length+" active). Pipe-separated columns: Name|Class-Sec|Adm|"+(includeFees?"DueNow(₹)|":"")+"Att%|Avg%  (a dash = no data). Parent names & phone numbers are NOT included here — look those up in Student Records."+(includeFees?"":" (Fee data is hidden for your role — you cannot see or answer fee questions.)"));
   var totalDue=0,totalColl=0,totalOverdue=0;
   students.sort(function(a,b){return (a.cls+a.name).localeCompare(b.cls+b.name);});
