@@ -755,11 +755,12 @@ const __BRANCH_FEE_CLASSES={surajkund:(function(){var c={};
   return c;})()};
 const __BRANCH_ADMISSION={surajkund:{Nursery:3500,LKG:3500,UKG:3500,"Class 1":4000,"Class 2":4000,"Class 3":4000,"Class 4":4000,"Class 5":4000,"Class 6":4500,"Class 7":4500,"Class 8":4500,"Class 9":5000,"Class 10":5000,"Class 11":5000,"Class 12":5000}};
 const __BRANCH_STREAM={surajkund:{"11":{A:64000,B:64000,C:62500,D:62500},"12":{A:68500,B:68500,C:67000,D:67000}}}; // base (= installment sum, no admission); studentAnnualFee adds admission for new
-function __feeClasses(){var b=window.__currentBranch||"greencity";return __BRANCH_FEE_CLASSES[b]||DEFAULT_FEE_STRUCTURE;}
+function __feeClasses(){var b=window.__currentBranch||"greencity";return __BRANCH_FEE_CLASSES[b]||(b==="greencity"?DEFAULT_FEE_STRUCTURE:{});}
 function __admFee(cls){var b=window.__currentBranch||"greencity";var m=__BRANCH_ADMISSION[b];return (m&&m[cls]!=null)?m[cls]:(STU_ADMISSION_FEE[cls]||0);}
 function streamFeeOf(cn,sec){var s=String(sec||"").toUpperCase();var comp=s.indexOf("COMP")>=0;
   if(cn==="11"||cn==="12"){var bs=__BRANCH_STREAM[window.__currentBranch||"greencity"];
     if(bs&&bs[cn]){var L=/^[ABCD]/.test(s)?s.charAt(0):normSection("Class "+cn,sec);return bs[cn][L]!=null?bs[cn][L]:bs[cn]["A"];}}
+  if((window.__currentBranch||"greencity")!=="greencity")return null; // a campus with no configured stream table must NOT inherit Greencity's stream fees
   if(cn==="11")return comp?66000:64000;
   if(cn==="12"){var sci=s.indexOf("MATH")>=0||s.indexOf("BIO")>=0||s.indexOf("PCM")>=0||s.indexOf("PCB")>=0||s.charAt(0)==="A"||s.charAt(0)==="B";return sci?(comp?71500:69500):(comp?70000:68000);}
   return null;}
@@ -823,7 +824,7 @@ function __applyBranch(id){var b=__branchById(id);BRANCH_LABEL=b.label;BRANCH_AD
 // reads/writes "<branch>_<base>". Identity/global collections (accounts, users, auditLogs, loginLogs, meta) are NOT
 // branch-scoped: one login pool, one audit trail. The prefix is applied centrally by wrapping __fbCollection/__fbDoc,
 // so every read, write, doc and transaction is scoped without touching the ~30 call sites individually.
-const __BRANCH_SCOPED=new Set(["studentDirectory","students","academicRoster","attendance","fees","counters","portalFees","salaries","exams","staffAttendance","leaves","complaints","discipline","registrations","admissions","paymentIntents","timetables","timetableSettings","notices","lessonPlans","teacherLogs","studentPhotos","studentLinks","tests","topics","wrongAnswers"]);
+const __BRANCH_SCOPED=new Set(["studentDirectory","students","academicRoster","attendance","fees","counters","portalFees","salaries","exams","staffAttendance","leaves","complaints","discipline","registrations","admissions","paymentIntents","timetables","timetableSettings","notices","lessonPlans","teacherLogs","studentPhotos","studentLinks","tests","topics","wrongAnswers","calendar"]);
 function _bcoll(base){var b=(typeof window!=="undefined"&&window.__currentBranch)||"greencity";return (b&&b!=="greencity"&&__BRANCH_SCOPED.has(base))?(b+"_"+base):base;}
 function __wrapFb(){
   if(typeof window==="undefined"||window.__bcollWrapped||!window.__fbCollection||!window.__fbDoc)return;
@@ -1406,6 +1407,10 @@ function useBranch(){
 // Module-level code reads the synchronous cache window.__branchCfg (populated by App from meta); editor UIs use
 // the useBranchConfig() hook for reactive read + save.
 function _bcfg(){var b=(typeof window!=="undefined"&&window.__currentBranch)||"greencity";return (typeof window!=="undefined"&&window.__branchCfg&&window.__branchCfg[b])||{};}
+// Per-branch doc ids: Greencity keeps the legacy GLOBAL doc names (no migration); other campuses get their own.
+// __bMeta — meta docs (config/principalChecklist) → "config"/"config_surajkund". __sharedDocId — users config docs → "__classTeachers"/"surajkund__classTeachers".
+function __bMeta(base){var b=(typeof window!=="undefined"&&window.__currentBranch)||"greencity";return b==="greencity"?base:(base+"_"+b);}
+function __sharedDocId(base){var b=(typeof window!=="undefined"&&window.__currentBranch)||"greencity";return b==="greencity"?base:(b+base);}
 function useBranchConfig(){
   const metaDB=useFirestore("meta");
   const branch=useBranch();
@@ -1783,8 +1788,8 @@ function PrincipalDashboard({user,attendanceDB,staffAttDB,leaveDB,disciplineDB,c
   const unmarked=sectionSet.filter(k=>!markedSet[k]);
   const pendingLeaves=useMemo(()=>Object.values(leaveDB.data||{}).filter(l=>l&&l.status==="pending"),[leaveDB.data]);
   const onLeaveToday=useMemo(()=>Object.values(leaveDB.data||{}).filter(l=>l&&l.status==="approved"&&String(l.from)<=td&&String(l.to)>=td),[leaveDB.data,td]);
-  const _ctDoc=useSharedDoc("users","__classTeachers"); // VP can't list users either — read the shared map directly
-  const ctMap=(_ctDoc&&_ctDoc.map)||((usersDB&&usersDB.data&&usersDB.data["__classTeachers"])||{}).map||{};
+  const _ctDoc=useSharedDoc("users",__sharedDocId("__classTeachers")); // VP can't list users either — read the shared map directly
+  const ctMap=(_ctDoc&&_ctDoc.map)||((usersDB&&usersDB.data&&usersDB.data[__sharedDocId("__classTeachers")])||{}).map||{};
   const teacherRows=useMemo(()=>Object.keys(ctMap).map(function(secKey){var who=ctMap[secKey];var cl=secKey.split("-")[0].trim();var sec=secKey.split("-").slice(1).join("-").trim();var lbl=cl+(sec?" · "+normSection(cl,sec):"");var u=usersDB&&usersDB.data&&usersDB.data[safeId(who)];return{section:secKey,teacher:(u&&u.name)||who,att:!!markedSet[lbl]};}).sort((a,b)=>(a.att?1:0)-(b.att?1:0)||String(a.section).localeCompare(String(b.section),undefined,{numeric:true})),[ctMap,markedSet,usersDB&&usersDB.data]);
   const ctDone=teacherRows.filter(r=>r.att).length;
   const intervention=useMemo(()=>(health.flatChronic||[]).slice(0,8),[health]);
@@ -1800,9 +1805,9 @@ function PrincipalDashboard({user,attendanceDB,staffAttDB,leaveDB,disciplineDB,c
   // item only on the day it was completed (legacy items with no date are treated as today). Stale-done items
   // are auto-pruned on the next save, so they stop inflating the morning-ring count.
   const _chkToday=today();
-  const customItems=(function(){var d=(metaDB&&metaDB.data&&metaDB.data.principalChecklist)||{};var items=Array.isArray(d.items)?d.items:[];return items.filter(function(it){return !it.done||((it.date||_chkToday)===_chkToday);});})();
+  const customItems=(function(){var d=(metaDB&&metaDB.data&&metaDB.data[__bMeta("principalChecklist")])||{};var items=Array.isArray(d.items)?d.items:[];return items.filter(function(it){return !it.done||((it.date||_chkToday)===_chkToday);});})();
   const[newTask,setNewTask]=useState("");
-  const _saveTasks=async(items)=>{if(!metaDB||!metaDB.set)return;try{await metaDB.set("principalChecklist",{items:items,updatedAt:new Date().toISOString(),by:user.name});}catch(e){}};
+  const _saveTasks=async(items)=>{if(!metaDB||!metaDB.set)return;try{await metaDB.set(__bMeta("principalChecklist"),{items:items,updatedAt:new Date().toISOString(),by:user.name});}catch(e){}};
   const addTask=()=>{var t=String(newTask||"").trim();if(!t)return;_saveTasks(customItems.concat([{id:"t"+Date.now()+Math.random().toString(36).slice(2,5),text:t,done:false,date:_chkToday}]));setNewTask("");};
   const toggleTask=(id)=>_saveTasks(customItems.map(it=>it.id===id?Object.assign({},it,{done:!it.done,date:_chkToday}):it));
   const removeTask=(id)=>_saveTasks(customItems.filter(it=>it.id!==id));
@@ -3165,12 +3170,12 @@ function Dashboard({user,testsDB,studentsDB,attendanceDB,academicRosterDB,dirDB,
   // The section(s) this teacher is the CLASS TEACHER of (from the shared __classTeachers map) — those are the ones they mark.
   // Read the map via a TARGETED doc subscription: teachers can't list the whole users collection (rule denies it), so
   // usersDB.data is empty for them and the assignment would never be seen otherwise.
-  const _ctDoc=useSharedDoc("users","__classTeachers");
+  const _ctDoc=useSharedDoc("users",__sharedDocId("__classTeachers"));
   const _myDoc=useSharedDoc("users",safeId(user.username)); // own profile — always readable; carries classTeacherOf
   const myCTSecs=useMemo(()=>{if(!isTeacher)return [];
     var keys;
     if(_myDoc&&Array.isArray(_myDoc.classTeacherOf)) keys=_myDoc.classTeacherOf; // primary: from the teacher's OWN doc
-    else { var m=(_ctDoc&&_ctDoc.map)||((usersDB&&usersDB.data&&usersDB.data["__classTeachers"])||{}).map||{}; keys=Object.keys(m).filter(k=>String(m[k])===String(user.username)||String(m[k])===String(user.name)); }
+    else { var m=(_ctDoc&&_ctDoc.map)||((usersDB&&usersDB.data&&usersDB.data[__sharedDocId("__classTeachers")])||{}).map||{}; keys=Object.keys(m).filter(k=>String(m[k])===String(user.username)||String(m[k])===String(user.name)); }
     return keys.map(k=>{const body=String(k).replace(/^Class\s*/i,"");const parts=body.split("-");const cls="Class "+parts[0].trim();return {key:k,cls:cls,cn:parts[0].trim(),section:(typeof normSection==="function"?normSection(cls,parts.slice(1).join("-").trim()):parts.slice(1).join("-").trim())};});
   },[isTeacher,_myDoc,_ctDoc,usersDB&&usersDB.data,user.username,user.name]);
   const ctClasses=useMemo(()=>myCTSecs.map(cs=>{const g=attToday[cs.cls+"|"+cs.section];return Object.assign({},cs,{marked:!!(g&&g.total),present:g?g.present:0,pct:(g&&g.total)?Math.round(g.present/g.total*100):null});}),[myCTSecs,attToday]);
@@ -3561,12 +3566,12 @@ function DataHealthOverview({dirDB,usersDB,feesDB,testsDB,attendanceDB,metaDB,cu
       if(st==="left")left++; else if(st.indexOf("passed")>=0)passed++; else studying++;
       if(!s.admNo)noAdm++; else {if(admSeen[s.admNo])dups++;admSeen[s.admNo]=1;}
     });});
-    var staff=Object.keys(usersDB.data||{}).filter(function(k){return k.indexOf("__")!==0;}).length;
+    var staff=Object.keys(_branchUsers(usersDB.data||{},window.__currentBranch)).filter(function(k){return k.indexOf("__")!==0;}).length;
     var receipts=0,collected=0;Object.keys(feesDB.data||{}).forEach(function(id){if(id.indexOf("__")===0)return;receipts++;collected+=Number((feesDB.data[id]||{}).amount)||0;});
     var tests=Object.keys(testsDB.data||{}).filter(function(id){return id.indexOf("__")!==0;}).length;
     return {studying:studying,left:left,passed:passed,noAdm:noAdm,dups:dups,staff:staff,receipts:receipts,collected:collected,tests:tests};
   },[dirDB.data,usersDB.data,feesDB.data,testsDB.data]);
-  const lastBkp=(metaDB.data&&metaDB.data.config&&metaDB.data.config.lastBackupAt&&metaDB.data.config.lastBackupAt[curSession])||"";
+  const lastBkp=(metaDB.data&&metaDB.data[__bMeta("config")]&&metaDB.data[__bMeta("config")].lastBackupAt&&metaDB.data[__bMeta("config")].lastBackupAt[curSession])||"";
   const bkpStale=!lastBkp||(Date.now()-new Date(lastBkp).getTime())>6048e5;
   const anomalies=[];
   if(stats.noAdm)anomalies.push(stats.noAdm+" student"+(stats.noAdm>1?"s":"")+" with no admission no.");
@@ -3600,15 +3605,15 @@ function BackupCenter({dirDB,feesDB,usersDB,testsDB,attendanceDB,metaDB,curSessi
   const[msg,setMsg]=useState("");
   const sess=viewSession||curSession;
   const stamp=String(sess).replace(/[^0-9]/g,"")+"_"+new Date().toISOString().slice(0,10);
-  const lastBkp=(metaDB.data&&metaDB.data.config&&metaDB.data.config.lastBackupAt&&metaDB.data.config.lastBackupAt[curSession])||"";
+  const lastBkp=(metaDB.data&&metaDB.data[__bMeta("config")]&&metaDB.data[__bMeta("config")].lastBackupAt&&metaDB.data[__bMeta("config")].lastBackupAt[curSession])||"";
   const bkpStale=!lastBkp||(Date.now()-new Date(lastBkp).getTime())>6048e5;
-  function stampBackup(forSess){var cfg=(metaDB.data&&metaDB.data.config)||{};var lb=Object.assign({},cfg.lastBackupAt||{});lb[forSess]=new Date().toISOString();return metaDB.set("config",Object.assign({},cfg,{lastBackupAt:lb}));}
-  const rows={Students:__dcRowsStudents(dirDB.data),Fees:__dcRowsFees(feesDB.data),Staff:__dcRowsStaff(usersDB.data),Marks:__dcRowsMarks(testsDB.data),Attendance:__dcRowsAtt(attendanceDB.data)};
+  function stampBackup(forSess){var cfg=(metaDB.data&&metaDB.data[__bMeta("config")])||{};var lb=Object.assign({},cfg.lastBackupAt||{});lb[forSess]=new Date().toISOString();return metaDB.set(__bMeta("config"),Object.assign({},cfg,{lastBackupAt:lb}));}
+  const rows={Students:__dcRowsStudents(dirDB.data),Fees:__dcRowsFees(feesDB.data),Staff:__dcRowsStaff(_branchUsers(usersDB.data,window.__currentBranch)),Marks:__dcRowsMarks(testsDB.data),Attendance:__dcRowsAtt(attendanceDB.data)};
   const SHEETS=[{k:"Students",file:"students_",rt:true},{k:"Fees",file:"fees_",rt:true},{k:"Staff",file:"staff_",rt:true},{k:"Marks",file:"marks_",rt:true},{k:"Attendance",file:"attendance_",rt:false}];
   function exportOne(s){var r=rows[s.k];if(!r.length){setMsg("Nothing to export in "+s.k+".");return;}__xlsxSave(s.file+stamp+".xlsx",r);setMsg("✓ Exported "+r.length+" "+s.k+" rows for "+sess+".");}
   function fullBackup(){
     // Live, re-importable sheets — *.raw.data is the all-sessions, non-deleted map.
-    var all=[{name:"Students",rows:__dcRowsStudents(dirDB.data)},{name:"Fees",rows:__dcRowsFees(feesDB.raw?feesDB.raw.data:feesDB.data)},{name:"Staff",rows:__dcRowsStaff(usersDB.data)},{name:"Marks",rows:__dcRowsMarks(testsDB.raw?testsDB.raw.data:testsDB.data)},{name:"Attendance",rows:__dcRowsAtt(attendanceDB.raw?attendanceDB.raw.data:attendanceDB.data)}];
+    var all=[{name:"Students",rows:__dcRowsStudents(dirDB.data)},{name:"Fees",rows:__dcRowsFees(feesDB.raw?feesDB.raw.data:feesDB.data)},{name:"Staff",rows:__dcRowsStaff(_branchUsers(usersDB.data,window.__currentBranch))},{name:"Marks",rows:__dcRowsMarks(testsDB.raw?testsDB.raw.data:testsDB.data)},{name:"Attendance",rows:__dcRowsAtt(attendanceDB.raw?attendanceDB.raw.data:attendanceDB.data)}];
     // Soft-deleted records are kept in separate "(deleted)" sheets so the backup stays COMPLETE,
     // but they are NOT re-imported (importers read only the first sheet) — no accidental resurrection.
     var _onlyDel=function(m){var o={};Object.keys(m||{}).forEach(function(k){if(m[k]&&m[k].deleted===true)o[k]=m[k];});return o;};
@@ -3834,7 +3839,7 @@ function ImportStaff({usersDB, curSession, card, btn}){
   async function doImport(){if(!preview||!preview.staff.length)return;if(!window.confirm("Add/update "+preview.staff.length+" staff accounts? Existing usernames are updated. Passwords aren't changed here."))return;
     setBusy(true);var n=0;
     try{for(var i=0;i<preview.staff.length;i++){var s=preview.staff[i];var cur=usersDB.data[safeId(s.username)]||{}; // safeId so a dotted username merges into its real doc (keeps subjects/branches/class-teacher)
-      await usersDB.set(s.username,Object.assign({},cur,{username:s.username,name:s.name,role:s.role,classes:s.classes,phone:s.phone,email:s.email,active:true}));n++;setMsg("Saved "+n+" / "+preview.staff.length+"…");}
+      await usersDB.set(s.username,Object.assign({},cur,{username:s.username,name:s.name,role:s.role,classes:s.classes,phone:s.phone,email:s.email,active:true,branches:(Array.isArray(cur.branches)&&cur.branches.length)?cur.branches:[(typeof window!=="undefined"&&window.__currentBranch)||"greencity"]}));n++;setMsg("Saved "+n+" / "+preview.staff.length+"…");}
       setMsg("✓ Saved "+n+" staff. Set their passwords via Admin → Reset Password (or they set one on first login).");}
     catch(e){setMsg(""+((e&&e.message)||"write failed")+".");}
     setBusy(false);
@@ -3942,7 +3947,7 @@ function SessionPromote({user, dirDB, studentsDB, testsDB, feesDB, attendanceDB,
   const[msg,setMsg]=useState(""); const[busy,setBusy]=useState(false); const[confirmText,setConfirmText]=useState("");
   function nextSession(s){var m=String(s).match(/(\d{4})\D+(\d{2,4})/);if(!m)return s+" (next)";var a=parseInt(m[1])+1;var b=(parseInt(m[2])%100)+1;return a+"-"+String(b).padStart(2,"0");}
   const nxt=nextSession(curSession);
-  const cfg=(metaDB.data&&metaDB.data.config)||{};
+  const cfg=(metaDB.data&&metaDB.data[__bMeta("config")])||{};
   const lastBkp=(cfg.lastBackupAt&&cfg.lastBackupAt[curSession])||"";
   const bkpStale=!lastBkp||(Date.now()-new Date(lastBkp).getTime())>6048e5;
   const alreadyPromoted=(cfg.promotedSessions||[]).indexOf(curSession)>=0;   // keyed on the SOURCE session, survives the session bump
@@ -3973,7 +3978,7 @@ function SessionPromote({user, dirDB, studentsDB, testsDB, feesDB, attendanceDB,
       var nk=Object.keys(newDocs);
       for(var i=0;i<nk.length;i++){var cn=nk[i];await dirDB.set("dir_"+cn,{cls:cn,clsNum:cn,students:newDocs[cn],updatedAt:new Date().toISOString()});}
       // 3) bump session
-      await metaDB.set("config",Object.assign({},(metaDB.data&&metaDB.data.config)||{},{session:nxt,promotedAt:new Date().toISOString(),promotedFrom:curSession,promotedSessions:((metaDB.data&&metaDB.data.config&&metaDB.data.config.promotedSessions)||[]).concat([curSession])}));
+      await metaDB.set(__bMeta("config"),Object.assign({},(metaDB.data&&metaDB.data[__bMeta("config")])||{},{session:nxt,promotedAt:new Date().toISOString(),promotedFrom:curSession,promotedSessions:((metaDB.data&&metaDB.data[__bMeta("config")]&&metaDB.data[__bMeta("config")].promotedSessions)||[]).concat([curSession])}));
       setMsg("✓ Advanced to "+nxt+". Promoted "+plan.promote+", passed out "+plan.passout+". The new session starts clean; last year stays viewable via the session selector. Now open Student Records → ⟳ Sync academic roster.");
       setConfirmText("");
     }catch(e){setMsg("Stopped — "+((e&&e.message)||"error")+". It's resumable; re-run after checking the rules.");}
@@ -4628,9 +4633,9 @@ function Attendance({user,attendanceDB,studentsDB,usersDB,academicRosterDB,dirDB
   // Otherwise ONLY the designated CLASS TEACHER of a section may mark it — one teacher per section, set in Assign
   // (the shared "__classTeachers" map). A subject teacher who isn't the class teacher cannot mark attendance.
   const canMarkAll=user.role==="admin"||user.role==="vp"||user.coordinator===true;
-  const _ctDoc=useSharedDoc("users","__classTeachers"); // teachers can't list the users collection — read this shared doc directly
+  const _ctDoc=useSharedDoc("users",__sharedDocId("__classTeachers")); // teachers can't list the users collection — read this shared doc directly
   const _myDoc=useSharedDoc("users",safeId(user.username)); // own profile — always readable; carries classTeacherOf
-  const _ctMap=(_ctDoc&&_ctDoc.map)||((usersDB&&usersDB.data&&usersDB.data["__classTeachers"])||{}).map||{};
+  const _ctMap=(_ctDoc&&_ctDoc.map)||((usersDB&&usersDB.data&&usersDB.data[__sharedDocId("__classTeachers")])||{}).map||{};
   // The section(s) this teacher is class teacher of: prefer the explicit list on their OWN doc (always readable),
   // else derive from the shared map. A teacher may hold more than one section.
   const myCTSecs=canMarkAll?[]:((_myDoc&&Array.isArray(_myDoc.classTeacherOf))?_myDoc.classTeacherOf:Object.keys(_ctMap).filter(function(k){return String(_ctMap[k])===String(user.username)||String(_ctMap[k])===String(user.name);}));
@@ -4805,7 +4810,7 @@ function Attendance({user,attendanceDB,studentsDB,usersDB,academicRosterDB,dirDB
 
       {/* KPI strip — the day's pulse */}
       <div style={{display:"grid",gap:13,gridTemplateColumns:"repeat(auto-fit,minmax(158px,1fr))"}}>
-        <StatCard label="Present today" val={dayStats.pct==null?"—":dayStats.pct+"%"} icon="✅" color="var(--tx-grn2)" sub={dayStats.marked?(dayStats.P+" of "+(dayStats.P+dayStats.A+dayStats.L)+" present"):"nothing marked yet"}/>
+        <StatCard label="Present today" val={dayStats.pct==null?"—":dayStats.pct+"%"} icon="✅" color="var(--tx-grn2)" sub={dayStats.marked?((dayStats.P+dayStats.L)+" of "+(dayStats.P+dayStats.A+dayStats.L)+" present"+(dayStats.L?" · "+dayStats.L+" late":"")):"nothing marked yet"}/>
         <StatCard label="Absent today" val={dayStats.A} icon="⚠️" color="var(--tx-red)" sub={dayStats.L+" late"}/>
         <StatCard label="Sections marked" val={dayStats.marked} icon="📋" color="var(--ap-accent)" sub={"on "+new Date(date).toLocaleDateString("en-IN",{day:"numeric",month:"short"})}/>
         <StatCard label="Chronic · below 75%" val={chronicAll.length} icon="🕐" color="var(--tx-pur)" sub="need a parent meeting"/>
@@ -4867,7 +4872,7 @@ function Attendance({user,attendanceDB,studentsDB,usersDB,academicRosterDB,dirDB
           {/* sticky save bar */}
           {!readOnly&&<div style={{position:"sticky",bottom:0,zIndex:6,background:"var(--c-fff)",border:"1px solid var(--ap-line)",borderRadius:14,padding:"11px 16px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",boxShadow:"0 -6px 22px rgba(15,27,45,.08)",marginTop:4}}>
             <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
-              {[["present",present,"var(--bg-grn)","var(--tx-grn2)"],["absent",absent,"var(--bg-red)","#d2342a"],["late",late,"var(--bg-amb)","var(--tx-org2)"]].concat(unmarked?[["unmarked",unmarked,"var(--c-f0)","var(--c-64)"]]:[]).map(function(p){return <span key={p[0]} style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:12.5,fontWeight:700,padding:"6px 12px",borderRadius:99,background:p[2],color:p[3]}}>{p[1]} {p[0]}</span>;})}
+              {[["present",present+late,"var(--bg-grn)","var(--tx-grn2)"],["absent",absent,"var(--bg-red)","#d2342a"]].concat(late?[["came late",late,"var(--bg-amb)","var(--tx-org2)"]]:[]).concat(unmarked?[["unmarked",unmarked,"var(--c-f0)","var(--c-64)"]]:[]).map(function(p){return <span key={p[0]} style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:12.5,fontWeight:700,padding:"6px 12px",borderRadius:99,background:p[2],color:p[3]}}>{p[1]} {p[0]}</span>;})}
             </div>
             <button onClick={()=>markAll("P")} className="ss-press" style={{fontSize:12.5,fontWeight:700,padding:"9px 15px",borderRadius:10,border:"1px solid var(--tx-grn2)",background:"var(--bg-grn)",color:"var(--tx-grn2)",cursor:"pointer",fontFamily:"var(--ss-font)"}}><Icon name="check" size={14}/> Mark all present</button>
             <button onClick={copyLast} className="ss-press" title="Load this section's last marked day, then just flip whoever changed" style={{fontSize:12.5,fontWeight:600,padding:"9px 13px",borderRadius:10,border:"1px solid var(--ap-line2)",background:"var(--c-fff)",color:"var(--ap-ink2)",cursor:"pointer",fontFamily:"var(--ss-font)"}}>⟲ Same as last day</button>
@@ -6353,7 +6358,7 @@ function ParentView({user,testsDB,studentsDB,attendanceDB}){
   const[portalFee,setPortalFee]=useState(null);const[feeLoaded,setFeeLoaded]=useState(false);
   useEffect(()=>{let cancel=false;const load=async()=>{if(!padm||!window.__db||!window.__fbGetDoc||!window.__fbDoc){setFeeLoaded(true);return;}try{const snap=await window.__fbGetDoc(window.__fbDoc(window.__db,"portalFees",String(padm)));if(!cancel&&snap&&snap.exists&&snap.exists())setPortalFee(snap.data());}catch(e){}if(!cancel)setFeeLoaded(true);};if(window.__fbReady)load();else window.addEventListener("fbready",load,{once:true});return()=>{cancel=true;};},[padm]);
   const[upiCfg,setUpiCfg]=useState(null);
-  useEffect(()=>{let c=false;const load=async()=>{if(!window.__db||!window.__fbGetDoc||!window.__fbDoc)return;try{const s=await window.__fbGetDoc(window.__fbDoc(window.__db,"meta","config"));if(!c&&s&&s.exists&&s.exists()){const d=s.data();if(d&&d.upi&&d.upi.vpa)setUpiCfg(d.upi);}}catch(e){}};if(window.__fbReady)load();else window.addEventListener("fbready",load,{once:true});return()=>{c=true;};},[]);
+  useEffect(()=>{let c=false;const load=async()=>{if(!window.__db||!window.__fbGetDoc||!window.__fbDoc)return;try{const s=await window.__fbGetDoc(window.__fbDoc(window.__db,"meta",__bMeta("config")));if(!c&&s&&s.exists&&s.exists()){const d=s.data();if(d&&d.upi&&d.upi.vpa)setUpiCfg(d.upi);}}catch(e){}};if(window.__fbReady)load();else window.addEventListener("fbready",load,{once:true});return()=>{c=true;};},[]);
   const[payOpen,setPayOpen]=useState(false);const[payRef,setPayRef]=useState("");const[payAmt,setPayAmt]=useState("");const[paySent,setPaySent]=useState(()=>{try{return !!localStorage.getItem("ssic_upi_sent_"+String(padm||""));}catch(e){return false;}});const[payErr,setPayErr]=useState("");
   const submitPay=async()=>{const amt=Number(String(payAmt).replace(/[^0-9.]/g,""));if(!amt||amt<=0){setPayErr("Enter the amount you paid.");return;}const ref=String(payRef).trim();if(!ref){setPayErr("Enter the UPI reference / UTR number shown in your payment app.");return;}try{const id="upi_"+safeId(String(padm||"x"))+"_"+safeId(ref);await window.__fbSetDoc(window.__fbDoc(window.__db,"paymentIntents",id),{admNo:String(padm||""),student:student||"",cls:cls||"",amount:amt,ref:ref,date:new Date().toISOString().slice(0,10),status:"pending",by:(user&&(user.name||user.username))||"parent",at:new Date().toISOString()});try{localStorage.setItem("ssic_upi_sent_"+String(padm||""),JSON.stringify({ref:ref,amount:amt,at:new Date().toISOString()}));}catch(e){}setPaySent(true);setPayErr("");setPayOpen(false);}catch(e){setPayErr((e&&e.message)||"Could not submit — please try again.");}};
   const feeBal=portalFee?Number(portalFee.bal||0):0;
@@ -9113,7 +9118,9 @@ service cloud.firestore {
     // admin — this blocks self-promotion (a teacher cannot edit their own role
     // to 'admin'), written during the one-time migration and by user management.
     match /accounts/{id} {
-      allow read: if signedIn();
+      // accounts holds username/role/name/email/admNo (+ a parent's child name/class). Staff need the full list;
+      // a family member reads ONLY their own account doc (keyed by uid) — no cross-branch enumeration of everyone.
+      allow read: if isAny(['admin','office','vp']) || (signedIn() && id == request.auth.uid);
       allow write: if isAny(['admin']);
     }
 
@@ -9198,6 +9205,7 @@ service cloud.firestore {
     match /timetables/{id}        { allow read: if signedIn(); allow write: if isAny(['admin','vp']); }
     match /timetableSettings/{id} { allow read: if signedIn(); allow write: if isAny(['admin','vp']); }
     match /notices/{id}           { allow read: if signedIn(); allow write: if isAny(['admin','vp','office']); }
+    match /calendar/{id}          { allow read: if signedIn(); allow write: if isAny(['admin','vp']); }
     match /lessonPlans/{id}       { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
     match /teacherLogs/{id}       { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
     match /leaves/{id}            { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
@@ -9245,7 +9253,7 @@ service cloud.firestore {
       // needs the class-teacher map to know which sections they mark). They're read by a TARGETED
       // single-doc get (the collection list stays denied, so profiles remain private).
       allow read: if isAny(['admin','office'])
-        || ((id == '__classTeachers' || id == '__subjects') && isAny(['admin','office','vp','teacher']))
+        || ((id.matches('.*__classTeachers') || id.matches('.*__subjects')) && isAny(['admin','office','vp','teacher']))
         || (signedIn() && id != '' && id == myUserDocId());
 
       // Director/Office manage all profiles & create users. VP may edit the
@@ -9253,8 +9261,8 @@ service cloud.firestore {
       // edit ONLY an existing profile and may NOT change their role (blocks
       // self-promotion) nor touch the shared config docs.
       allow write: if isAny(['admin','office'])
-        || ((id == '__subjects' || id == '__classTeachers') && isAny(['admin','vp']))
-        || (id != '__subjects' && id != '__classTeachers' && resource != null
+        || ((id.matches('.*__subjects') || id.matches('.*__classTeachers')) && isAny(['admin','vp']))
+        || (!id.matches('.*__subjects') && !id.matches('.*__classTeachers') && resource != null
             && request.resource.data.get('role', null) == resource.data.get('role', null));
     }
 
@@ -9289,10 +9297,28 @@ service cloud.firestore {
     // Academic / operational / workflow for a branch — that branch's staff read; appropriate roles write
     match /{bc2}/{id2} {
       allow read: if signedIn() && inBranch(bc2)
-        && (baseOf(bc2) in ['students','academicRoster','attendance','exams','tests','topics','studentLinks','studentPhotos','staffAttendance','timetables','timetableSettings','notices','lessonPlans','teacherLogs','leaves','complaints','discipline','registrations','admissions','wrongAnswers']);
+        && (baseOf(bc2) in ['students','academicRoster','attendance','exams','tests','topics','studentLinks','studentPhotos','timetables','timetableSettings','notices','lessonPlans','teacherLogs','leaves','complaints','discipline','registrations','admissions','wrongAnswers']);
       allow write: if signedIn() && inBranch(bc2)
-        && (baseOf(bc2) in ['students','academicRoster','attendance','exams','tests','topics','studentLinks','studentPhotos','staffAttendance','timetables','timetableSettings','notices','lessonPlans','teacherLogs','leaves','complaints','discipline','registrations','admissions','wrongAnswers'])
+        && (baseOf(bc2) in ['students','academicRoster','attendance','exams','tests','topics','studentLinks','studentPhotos','timetables','timetableSettings','notices','lessonPlans','teacherLogs','leaves','complaints','discipline','registrations','admissions'])
         && isAny(['admin','vp','office','teacher']);
+    }
+    // Per-branch staff attendance — same server-time anti-spoof guard as Greencity (a SELF check-in must carry serverAt==request.time).
+    match /{bcsa}/{idsa} {
+      allow read: if signedIn() && inBranch(bcsa) && baseOf(bcsa) == 'staffAttendance';
+      allow write: if signedIn() && inBranch(bcsa) && baseOf(bcsa) == 'staffAttendance' && isAny(['admin','vp','teacher','office'])
+        && (!('source' in request.resource.data) || request.resource.data.source != 'self' || request.resource.data.serverAt == request.time);
+    }
+    // Per-branch practice mistakes — any signed-in branch user (incl. students) creates their own; staff manage.
+    match /{bcw}/{idw} {
+      allow read: if signedIn() && inBranch(bcw) && baseOf(bcw) == 'wrongAnswers';
+      allow create: if signedIn() && inBranch(bcw) && baseOf(bcw) == 'wrongAnswers';
+      allow update, delete: if signedIn() && inBranch(bcw) && baseOf(bcw) == 'wrongAnswers' && isAny(['admin','vp','teacher']);
+    }
+
+    // Academic calendar (per branch) — that branch's staff read; only Director/Principal/VP write.
+    match /{bc3}/{id3} {
+      allow read:  if signedIn() && inBranch(bc3) && baseOf(bc3) == 'calendar';
+      allow write: if signedIn() && inBranch(bc3) && baseOf(bc3) == 'calendar' && isAny(['admin','vp']);
     }
 
     // ── (6) Everything else: locked ──────────────────────────────────────────
@@ -9469,14 +9495,15 @@ function AccountsPanel({user,usersDB,studentsDB,dirDB,academicRosterDB}){
     setWorking("");
   };
 
-  const acctByUser=useMemo(()=>{const m={};Object.entries(accountsDB.data||{}).forEach(([uid,a])=>{if(a&&a.username)m[a.username]={uid,...a};});return m;},[accountsDB.data]);
+  const acctAllByUser=useMemo(()=>{const m={};Object.entries(accountsDB.data||{}).forEach(([uid,a])=>{if(a&&a.username)m[a.username]={uid,...a};});return m;},[accountsDB.data]);
+  // Display is scoped to the CURRENT campus; collision checks (taken) stay GLOBAL so a username can't be reused across branches.
+  const acctByUser=useMemo(()=>{const m={};const br=(typeof window!=="undefined"&&window.__currentBranch)||"greencity";Object.entries(acctAllByUser).forEach(([un,a])=>{var abr=(Array.isArray(a.branches)&&a.branches.length)?a.branches:["greencity"];if(abr.indexOf(br)>=0||abr.indexOf("all")>=0)m[un]=a;});return m;},[acctAllByUser]);
   const allUsers=useMemo(()=>{
     const m={};
-    Object.entries(DEFAULT_USERS).forEach(([k,v])=>{m[k]={username:k,name:v.name,role:v.role,system:true};});
-    Object.entries(usersDB.data||{}).forEach(([k,v])=>{if(!v||!v.role&&!v.name)return;const un=(v.username||k).toLowerCase();if(m[un]){m[un]={...m[un],name:v.name||m[un].name,role:v.role||m[un].role};}else{m[un]={username:un,name:v.name||un,role:v.role||"",system:false};}});
+    Object.entries(_branchUsers(usersDB.data||{},(typeof window!=="undefined"&&window.__currentBranch)||"greencity")).forEach(([k,v])=>{if(k.indexOf("__")===0)return;if(!v||(!v.role&&!v.name))return;const un=(v.username||k).toLowerCase();m[un]={username:un,name:v.name||un,role:v.role||"",system:!!DEFAULT_USERS[un]};});
     return Object.values(m).sort((a,b)=>(a.name||"").localeCompare(b.name||""));
   },[usersDB.data]);
-  const taken=u=>!!DEFAULT_USERS[u]||!!(usersDB.data&&usersDB.data[safeId(u)])||!!acctByUser[u];
+  const taken=u=>!!DEFAULT_USERS[u]||!!(usersDB.data&&usersDB.data[safeId(u)])||!!acctAllByUser[u];
 
   const addUser=async()=>{
     setMsg(null);
@@ -10266,10 +10293,10 @@ function AdminPanel({testsDB,studentsDB,usersDB,wrongDB}){
           <div style={{marginBottom:14}}><Lbl c="Student (pick from roster)"/>{(function(){var names=((studentsDB.data[safeId(newParentCls)]||{}).list)||[];return names.length?<Sel value={newParentStudent} onChange={setNewParentStudent} options={["",...names]}/>:<div style={{padding:"10px 14px",borderRadius:10,border:"1px solid var(--c-d2)",background:"var(--c-f7)",fontSize:13,color:"var(--c-94)"}}>No students in {newParentCls} — add them under Student Records first.</div>;})()}</div>
           {parentMsg&&<div style={{fontSize:12,color:parentMsg.startsWith("✓")?"#c9a84c":"var(--tx-red)",background:parentMsg.startsWith("✓")?"var(--bg-grn)":"var(--bg-red)",borderRadius:8,padding:"8px 12px",marginBottom:12}}>{parentMsg}</div>}
           <Btn onClick={handleAddParent}>+ Add Parent</Btn>
-          {Object.entries(usersDB.data).filter(([,u])=>u.role==="parent").length>0&&(
+          {Object.entries(_branchUsers(usersDB.data,(typeof window!=="undefined"&&window.__currentBranch)||"greencity")).filter(([,u])=>u.role==="parent").length>0&&(
             <div style={{marginTop:20}}>
               <Lbl c="Existing Parent Accounts"/>
-              {Object.entries(usersDB.data).filter(([,u])=>u.role==="parent").map(([k,u])=>(
+              {Object.entries(_branchUsers(usersDB.data,(typeof window!=="undefined"&&window.__currentBranch)||"greencity")).filter(([,u])=>u.role==="parent").map(([k,u])=>(
                 <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"8px 12px",background:"var(--c-f7)",borderRadius:8,marginTop:6,border:"1px solid var(--c-e6)"}}>
                   <span style={{fontSize:13,fontWeight:600,color:"var(--c-1e)"}}>{u.name}</span>
                   <span style={{fontSize:12,color:"var(--c-64)",fontFamily:"monospace"}}>{k} · {u.cls}</span>
@@ -11310,13 +11337,13 @@ function TimetablePanel({user}){
       });
       // Custom subjects added in the Assign panel (users/__subjects) — read the single doc so the
       // timetable offers the SAME subject list as Assign (incl. Music/Painting and Political Science).
-      try{ unsub3=window.__fbOnSnapshot(window.__fbDoc(window.__db,"users","__subjects"),snap=>{
+      try{ unsub3=window.__fbOnSnapshot(window.__fbDoc(window.__db,"users",__sharedDocId("__subjects")),snap=>{
         setCustomSubjects((((snap&&snap.data&&snap.data())||{}).list)||[]);
       }); }catch(e){}
       // Live staff list so the teacher picker reflects teachers/VP added in the Assign panel (not just the seed list).
       try{ unsub4=window.__fbOnSnapshot(window.__fbCollection(window.__db,"users"),snap=>{
-        const arr=[];snap.forEach(d=>{if(d.id==="__subjects")return;const v=d.data()||{};v.username=v.username||d.id;arr.push(v);});
-        setLiveUsers(arr);
+        const arr=[];const br=window.__currentBranch||"greencity";snap.forEach(d=>{if(d.id.indexOf("__")===0)return;const v=d.data()||{};v.username=v.username||d.id;var ubr=(Array.isArray(v.branches)&&v.branches.length)?v.branches:["greencity"];if(ubr.indexOf(br)>=0||ubr.indexOf("all")>=0)arr.push(v);});
+        setLiveUsers(arr); // only THIS campus's live staff (users is a global collection)
       }); }catch(e){}
       // Approved leaves → the "Substitutions today" cover view (admin/VP only; teachers can't read the leaves collection).
       if(canManage){ try{ unsub5=window.__fbOnSnapshot(window.__fbCollection(window.__db,"leaves"),snap=>{
@@ -11414,7 +11441,7 @@ function TimetablePanel({user}){
     const keys=Object.keys(timetables||{}).filter(k=>k.indexOf("_")>0&&k[0]!=="_");
     const load={}; // teacherNorm -> {name, sessions:{slotKey:true}}
     const seedT=(nm,role)=>{if(nm&&(role==="teacher"||role==="vp")){const nk=__ttNorm(nm);if(!load[nk])load[nk]={name:nm,sessions:{}};}};
-    Object.values(DEFAULT_USERS).forEach(v=>seedT(v.name,v.role));
+    if((window.__currentBranch||"greencity")==="greencity")Object.values(DEFAULT_USERS).forEach(v=>seedT(v.name,v.role));
     (liveUsers||[]).forEach(v=>seedT(v.name,v.role));
     let totalSlots=0,filledSlots=0;const gaps=[];
     const clashList=[],clashSeen={};
@@ -11759,7 +11786,7 @@ function TimetableEditor({sched,colors,customSubjects,users,tt,cls,sec,onSave,sa
   // in the Assign panel show up here too. Falls back to DEFAULT_USERS if live users haven't loaded.
   const allTeachers=(function(){
     const map={};
-    Object.entries(DEFAULT_USERS).forEach(([k,v])=>{if(v&&(v.role==="teacher"||v.role==="vp"))map[(v.name||k)]={key:k,name:v.name,subjects:v.subjects||[],classes:v.classes||[]};});
+    if((window.__currentBranch||"greencity")==="greencity")Object.entries(DEFAULT_USERS).forEach(([k,v])=>{if(v&&(v.role==="teacher"||v.role==="vp"))map[(v.name||k)]={key:k,name:v.name,subjects:v.subjects||[],classes:v.classes||[]};});
     (users||[]).forEach(u=>{if(u&&u.name&&(u.role==="teacher"||u.role==="vp"))map[u.name]={key:u.username||u.name,name:u.name,subjects:u.subjects||[],classes:u.classes||[]};});
     return Object.values(map).sort((a,b)=>a.name.localeCompare(b.name));
   })();
@@ -12200,34 +12227,35 @@ function MyDailyLog({user,tlStyle}){
           </div>
 
           {/* Period rows */}
-          {rows.map((r,i)=>(
+          {rows.map((r,i)=>{const free=r.cls==="Staffroom";return(
             <div key={r.id} style={{background:"var(--c-f7)",borderRadius:10,border:"1px solid var(--c-e6)",padding:"14px",marginBottom:10}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                <span style={{fontSize:11,fontWeight:700,color:"var(--c-0d)",letterSpacing:.5}}>PERIOD {i+1}</span>
+                <span style={{fontSize:11,fontWeight:700,color:free?"var(--tx-org2)":"var(--c-0d)",letterSpacing:.5}}>{free?"FREE PERIOD · NON-TEACHING":"PERIOD "+(i+1)}</span>
                 {rows.length>1&&<button onClick={()=>removeRow(r.id)} style={{background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontSize:12,fontWeight:700}}>✕ Remove</button>}
               </div>
-              <div style={{display:"grid",gridTemplateColumns:isMob?"1fr 1fr":"80px 1fr 1fr 1fr 1fr",gap:8,marginBottom:8}}>
+              <div style={{display:"grid",gridTemplateColumns:isMob?"1fr 1fr":(free?"80px 1fr 2fr":"80px 1fr 1fr 1fr 1fr"),gap:8,marginBottom:8}}>
                 <div><label style={tlStyle.label}>Period #</label>
                   <select value={r.period} onChange={e=>updateRow(r.id,"period",e.target.value)} style={tlStyle.select}>
                     {[1,2,3,4,5,6,7,8].map(n=><option key={n}>{n}</option>)}
                   </select>
                 </div>
                 <div><label style={tlStyle.label}>Class</label>
-                  <select value={r.cls} onChange={e=>{updateRow(r.id,"cls",e.target.value);updateRow(r.id,"section",(TL_CLASSES[e.target.value]||["A"])[0]);}} style={tlStyle.select}>
+                  <select value={r.cls} onChange={e=>{const v=e.target.value;updateRow(r.id,"cls",v);if(v==="Staffroom"){updateRow(r.id,"section","");updateRow(r.id,"chapno","");updateRow(r.id,"hw","");}else{updateRow(r.id,"section",(TL_CLASSES[v]||["A"])[0]);}}} style={tlStyle.select}>
                     {Object.keys(TL_CLASSES).map(c=><option key={c} value={c}>Class {c}</option>)}
+                    <option value="Staffroom">Staffroom / Free period</option>
                   </select>
                 </div>
-                <div><label style={tlStyle.label}>Section</label>
+                {!free&&<div><label style={tlStyle.label}>Section</label>
                   <select value={r.section} onChange={e=>updateRow(r.id,"section",e.target.value)} style={tlStyle.select}>
                     {sections(r.cls).map(s=><option key={s}>{s}</option>)}
                   </select>
-                </div>
-                <div><label style={tlStyle.label}>Chapter No.</label><input value={r.chapno} onChange={e=>updateRow(r.id,"chapno",e.target.value)} placeholder="e.g. Ch. 3" style={tlStyle.input}/></div>
-                <div><label style={tlStyle.label}>Topic Taught</label><input value={r.topic} onChange={e=>updateRow(r.id,"topic",e.target.value)} placeholder="e.g. Photosynthesis" style={tlStyle.input}/></div>
+                </div>}
+                {!free&&<div><label style={tlStyle.label}>Chapter No.</label><input value={r.chapno} onChange={e=>updateRow(r.id,"chapno",e.target.value)} placeholder="e.g. Ch. 3" style={tlStyle.input}/></div>}
+                <div><label style={tlStyle.label}>{free?"Work done":"Topic Taught"}</label><input value={r.topic} onChange={e=>updateRow(r.id,"topic",e.target.value)} placeholder={free?"e.g. Lesson planning, copy checking, exam duty":"e.g. Photosynthesis"} style={tlStyle.input}/></div>
               </div>
-              <div><label style={tlStyle.label}>Homework / Assignment</label><input value={r.hw} onChange={e=>updateRow(r.id,"hw",e.target.value)} placeholder="e.g. NCERT Ex 4.1 Q1–5" style={tlStyle.input}/></div>
+              {!free&&<div><label style={tlStyle.label}>Homework / Assignment <span style={{color:"var(--c-94)",fontWeight:500}}>(optional)</span></label><input value={r.hw} onChange={e=>updateRow(r.id,"hw",e.target.value)} placeholder="e.g. NCERT Ex 4.1 Q1–5" style={tlStyle.input}/></div>}
             </div>
-          ))}
+          );})}
 
           <button onClick={addRow} style={{width:"100%",border:"2px dashed var(--c-cb)",background:"transparent",borderRadius:10,padding:"10px",fontSize:13,color:"var(--c-64)",cursor:"pointer",fontFamily:"var(--ss-font)",marginBottom:14,fontWeight:600}}>＋ Add Another Period</button>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
@@ -12256,7 +12284,7 @@ function MyDailyLog({user,tlStyle}){
                 {myEntries.map((e,i)=>(
                   <tr key={e.__id} style={{borderBottom:"1px solid var(--c-f0)",background:i%2===0?"#fff":"var(--c-f7)"}}>
                     <td style={{padding:"9px 12px",color:"var(--c-47)"}}>{e.date}</td>
-                    <td style={{padding:"9px 12px"}}><span style={{background:"#fdf9ee",color:"#1a2e45",borderRadius:20,padding:"2px 10px",fontSize:10,fontWeight:700}}>Class {e.class} {e.section}</span></td>
+                    <td style={{padding:"9px 12px"}}><span style={{background:e.class==="Staffroom"?"var(--bg-amb)":"#fdf9ee",color:e.class==="Staffroom"?"var(--tx-org2)":"#1a2e45",borderRadius:20,padding:"2px 10px",fontSize:10,fontWeight:700}}>{e.class==="Staffroom"?"Staffroom":"Class "+e.class+" "+e.section}</span></td>
                     <td style={{padding:"9px 12px",color:"var(--c-47)",fontWeight:700}}>P{e.period}</td>
                     <td style={{padding:"9px 12px",color:"var(--c-1e)"}}>{e.subject}</td>
                     <td style={{padding:"9px 12px",color:"var(--c-64)"}}>{e.chapterNo||"—"}</td>
@@ -12549,7 +12577,7 @@ function ClassLogView({user,tlStyle,isAdmin}){
   // Group by class+section
   const groups={};
   logs.forEach(l=>{
-    const k="Class "+(l.class||"?")+" "+(l.section||"");
+    const k=l.class==="Staffroom"?"Staffroom / Free period":("Class "+(l.class||"?")+" "+(l.section||""));
     if(!groups[k]) groups[k]=[];
     groups[k].push(l);
   });
@@ -12559,8 +12587,7 @@ function ClassLogView({user,tlStyle,isAdmin}){
   // Teachers who have NEVER logged surface at the very top — they're invisible in a date-by-date view.
   const teacherHealth=isAdmin?(function(){
     var roster={};
-    if(typeof DEFAULT_USERS!=="undefined")Object.entries(DEFAULT_USERS).forEach(function(e){if(e[1]&&e[1].role==="teacher")roster[safeId(e[0])]={username:e[0],name:e[1].name||e[0],phone:e[1].phone||e[1].mobile||"",left:false};});
-    Object.entries(usersDB.data||{}).forEach(function(e){if(!e[1]||e[0]==="__config"||e[1].role!=="teacher")return;var id=safeId(e[0]),p=roster[id]||{};roster[id]={username:p.username||e[0],name:e[1].name||p.name||e[0],phone:e[1].phone||e[1].mobile||p.phone||"",left:e[1].left!==undefined?!!e[1].left:!!p.left};});
+    Object.entries(_branchUsers(usersDB.data||{},window.__currentBranch)).forEach(function(e){if(e[0].indexOf("__")===0||!e[1]||e[1].role!=="teacher")return;var id=safeId(e[1].username||e[0]);roster[id]={username:e[1].username||e[0],name:e[1].name||e[0],phone:e[1].phone||e[1].mobile||"",left:!!e[1].left};});
     var datesByT={};allLogs.forEach(function(l){var id=safeId(l.teacherId||l.teacherName||"");if(!id)return;(datesByT[id]=datesByT[id]||{})[l.date]=1;});
     var days=[];for(var i=6;i>=0;i--){var d=new Date();d.setDate(d.getDate()-i);days.push(d.toISOString().split("T")[0]);}
     return Object.keys(roster).filter(function(id){return !roster[id].left;}).map(function(id){
@@ -12702,7 +12729,7 @@ function ClassLogView({user,tlStyle,isAdmin}){
           <div style={{background:"var(--c-fff)",borderRadius:14,padding:24,width:"100%",maxWidth:480,boxShadow:"0 20px 60px rgba(0,0,0,.3)"}}>
             <div style={{fontWeight:700,fontSize:16,color:"var(--c-0d)",marginBottom:4}}>Edit Log Entry</div>
             <div style={{fontSize:12,color:"var(--c-64)",marginBottom:16}}>
-              Period {editEntry.period} | {editEntry.subject} | Class {editEntry.class} {editEntry.section}
+              Period {editEntry.period} | {editEntry.subject} | {editEntry.class==="Staffroom"?"Staffroom":"Class "+editEntry.class+" "+editEntry.section}
             </div>
             <div style={{marginBottom:12}}>
               <label style={{fontSize:10,fontWeight:700,color:"var(--c-64)",display:"block",marginBottom:5,letterSpacing:1}}>CHAPTER NO.</label>
@@ -12822,6 +12849,7 @@ const NAV_PATHS={
   "cnotes-grp":<><path d="M5 4h11a2 2 0 0 1 2 2v13H7a2 2 0 0 0-2 2z"/><path d="M18 19a2 2 0 0 0 2 2"/><path d="M9.5 8.5l1.3 1.3 2.7-2.8"/><path d="M9 13h5"/></>,
   "tlog-grp":<><path d="M5 4h11a2 2 0 0 1 2 2v13H7a2 2 0 0 0-2 2z"/><path d="M14 4l4 4M9 12l6-6 .7.7M9 12v2h2"/></>,
   "attendance-grp":<><path d="M4 5h16v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M4 9h16M8 3v4M16 3v4"/><path d="m9.5 14.5 1.8 1.8 3.5-3.6"/></>,
+  "calendar-grp":<><rect x="3" y="4.5" width="18" height="16.5" rx="2"/><path d="M3 9h18M8 2.5v4M16 2.5v4"/><circle cx="8" cy="13.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="13.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="16" cy="13.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="8" cy="17.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="17.5" r="1.2" fill="currentColor" stroke="none"/></>,
   "assign-grp":<><path d="M14.5 6.5a3 3 0 1 0 3.9 3.9L21 13l-2 2-2.6-2.6"/><path d="m13 9-8 8-2 3 3-2 8-8"/></>,
   "timetable-grp":<><path d="M4 5h16v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M4 9h16M8 3v4M16 3v4"/><circle cx="12" cy="14.5" r="2.6"/><path d="M12 13v1.6l1 .7"/></>,
   "mytimetable-grp":<><path d="M4 5h16v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M4 9h16M8 3v4M16 3v4"/><circle cx="12" cy="14.5" r="2.6"/><path d="M12 13v1.6l1 .7"/></>,
@@ -13384,8 +13412,7 @@ function BiometricImport({usersDB,attDB}){
   const[progress,setProgress]=useState("");
   const[done,setDone]=useState("");
   const roster=useMemo(()=>{const m={};
-    Object.entries(DEFAULT_USERS||{}).forEach(([k,v])=>{m[safeId(k)]={username:k,name:v.name,role:v.role};});
-    Object.entries((usersDB&&usersDB.data)||{}).forEach(([k,v])=>{if(!v||k==="__config")return;const id=safeId(k),p=m[id]||{};m[id]={username:p.username||k,name:v.name||p.name,role:v.role||p.role};});
+    Object.entries(_branchUsers((usersDB&&usersDB.data)||{},window.__currentBranch)).forEach(([k,v])=>{if(k.indexOf("__")===0||!v)return;const id=safeId(v.username||k);m[id]={username:v.username||k,name:v.name,role:v.role};});
     return Object.values(m).filter(s=>["teacher","admin","office"].includes(s.role)).sort((a,b)=>(a.name||"").localeCompare(b.name||""));
   },[usersDB&&usersDB.data]);
   function norm(s){return String(s||"").toLowerCase().replace(/\([^)]*\)/g," ").replace(/[^a-z0-9 ]/g," ").replace(/\s+/g," ").trim();}
@@ -13803,12 +13830,12 @@ function StaffAttendanceRegister({user,isDirector}){
 // reference; office verifies against the bank/UPI app and one-click records the receipt. Works with a STATIC merchant QR.
 function UpiCollections({feesDB,metaDB,intentsDB,user,isDirector}){
   const inr=x=>"₹"+Number(x||0).toLocaleString("en-IN");
-  const cfg=(metaDB&&metaDB.data&&metaDB.data.config&&metaDB.data.config.upi)||{};
+  const cfg=(metaDB&&metaDB.data&&metaDB.data[__bMeta("config")]&&metaDB.data[__bMeta("config")].upi)||{};
   const[vpa,setVpa]=useState("");const[payee,setPayee]=useState("");const[qr,setQr]=useState("");const[seeded,setSeeded]=useState(false);
   const[busy,setBusy]=useState(false);const[msg,setMsg]=useState("");const[show,setShow]=useState(false);const[confirming,setConfirming]=useState("");
   useEffect(()=>{if(!seeded&&(cfg.vpa||cfg.payee||cfg.qr)){setVpa(cfg.vpa||"");setPayee(cfg.payee||"");setQr(cfg.qr||"");setSeeded(true);}},[cfg.vpa,cfg.payee,cfg.qr,seeded]);
   const onFile=(e)=>{const f=e.target.files&&e.target.files[0];if(!f)return;if(f.size>400000){setMsg("QR image too large (keep it under ~400 KB).");return;}const r=new FileReader();r.onload=()=>setQr(String(r.result||""));r.readAsDataURL(f);};
-  const saveCfg=async()=>{if(!vpa.trim()){setMsg("Enter the UPI ID (e.g. stepping123@icici).");return;}setBusy(true);try{await metaDB.set("config",Object.assign({},(metaDB.data&&metaDB.data.config)||{},{upi:{vpa:vpa.trim(),payee:payee.trim(),qr:qr||""}}));setMsg("✓ Saved — parents can now pay by UPI.");}catch(e){setMsg(""+((e&&e.message)||"could not save"));}setBusy(false);};
+  const saveCfg=async()=>{if(!vpa.trim()){setMsg("Enter the UPI ID (e.g. stepping123@icici).");return;}setBusy(true);try{await metaDB.set(__bMeta("config"),Object.assign({},(metaDB.data&&metaDB.data[__bMeta("config")])||{},{upi:{vpa:vpa.trim(),payee:payee.trim(),qr:qr||""}}));setMsg("✓ Saved — parents can now pay by UPI.");}catch(e){setMsg(""+((e&&e.message)||"could not save"));}setBusy(false);};
   const pend=Object.entries((intentsDB&&intentsDB.data)||{}).filter(([id,it])=>it&&it.status==="pending").map(([id,it])=>Object.assign({id:id},it)).sort((a,b)=>String(b.at||"").localeCompare(String(a.at||"")));
   const confirmIntent=async(it)=>{
     if(confirming)return;                                   // in-flight lock — block double-click / second row mid-write
@@ -13973,6 +14000,7 @@ function App(){
   const feesDBraw=useFirestore("fees", !!user&&((user.role==="admin"&&user.fees!==false)||user.role==="office"));
   const examsDB=useFirestore("exams", !!user&&["admin","teacher","office"].includes(user.role));
   const noticesDB=useFirestore("notices");
+  const calendarDB=useFirestore("calendar"); // academic calendar — holidays + events (Director/Principal/VP edit, all read)
   const leaveDB=useFirestore("leaves", !!user&&(user.role==="admin"||user.role==="vp")); // director/VP: substitute-needed prompt + Principal Control Room approvals
   const staffAttDB=useFirestore("staffAttendance", !!user&&user.role==="admin"); // director daily dashboard
   const admDB=useFirestore("admissions", !!user&&user.role==="admin");
@@ -13984,7 +14012,7 @@ function App(){
   const metaDB=useFirestore("meta"); // app config — current session etc.
   // Populate the synchronous per-branch config cache so module code (termWeights / subject resolver / remedial) can read it.
   useEffect(()=>{var m={};Object.keys(metaDB.data||{}).forEach(function(k){if(k.indexOf("branchcfg_")===0)m[k.slice(10)]=metaDB.data[k];});window.__branchCfg=m;},[metaDB.data]);
-  const curSession=(metaDB.data&&metaDB.data.config&&metaDB.data.config.session)||"2026-27";
+  const curSession=(metaDB.data&&metaDB.data[__bMeta("config")]&&metaDB.data[__bMeta("config")].session)||"2026-27";
   // ── Per-session view: fees/attendance/marks are tagged with a session; the director can switch which
   // session's data they're looking at. Untagged (legacy) docs belong to the founding session 2026–27.
   const[viewSession,setViewSession]=useState(null);
@@ -14040,6 +14068,7 @@ function App(){
   const NAV_GROUPS = isParent ? [
     {id:"parent-grp", label:"My Child", single:"parent"},
     {id:"notices-grp", label:"Notices", single:"notices"},
+    {id:"calendar-grp", label:"Calendar", single:"calendar"},
     {id:"account-grp", label:"Account", single:"account"},
   ] : isOffice ? [
     // ═══ MAIN ═══
@@ -14056,6 +14085,7 @@ function App(){
     ]},
     {id:"exams-grp",     label:"Report Cards",sec:"MAIN",     single:"exams"},
     {id:"attendance-grp",label:"Attendance",  sec:"MAIN",     single:"attendance"},
+    {id:"calendar-grp",  label:"Calendar",    sec:"MAIN",     single:"calendar"},
     // ═══ MANAGE ═══
     {id:"leave-grp",     label:"Leave",       sec:"MANAGE",   single:"leave"},
     // ═══ SETTINGS ═══
@@ -14064,6 +14094,7 @@ function App(){
     // ═══ TEACHER — daily actions surfaced, no deep nesting ═══
     {id:"home-grp",        label:"Home",        sec:"MAIN", single:"dashboard"},
     {id:"attendance-grp",  label:"Attendance",  sec:"MAIN", single:"attendance"},
+    {id:"calendar-grp",    label:"Calendar",    sec:"MAIN", single:"calendar"},
     {id:"tlog-grp",        label:"Teacher Log", sec:"MAIN", single:"teacherlog"},
     {id:"exams-grp",       label:"Exams",       sec:"MAIN", single:"exams"},
     {id:"tracker-grp",     label:"My Classes",  sec:"MAIN", children:[
@@ -14112,6 +14143,7 @@ function App(){
     ]},
     {id:"exams-grp", label:"Examination", sec:"MAIN", single:"exams"},
     {id:"attendance-grp", label:"Attendance", sec:"MAIN", single:"attendance"},
+    {id:"calendar-grp", label:"Calendar", sec:"MAIN", single:"calendar"},
     {id:"resources-grp", label:"Resources", sec:"MAIN", children:[
       {id:"students",  label:"Class Roster"},
       ...((isAdmin||isTeacher)?[{id:"cnotes", label:"Concept Notes"}]:[]),
@@ -14227,7 +14259,7 @@ function App(){
           {!isParent&&<button className="ap-iconbtn" onClick={()=>setTab("notices")} title="Notices"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></svg>{unreadNotices>0&&<span className="pip"/>}</button>}
           <ThemeToggle size={38}/>
         </header>
-        {currentBranch!=="greencity"&&(
+        {currentBranch!=="greencity"&&!dirDB.loading&&!Object.keys((dirDB&&dirDB.data)||{}).some(function(k){return k.indexOf("dir_")===0&&(((dirDB.data[k]||{}).students)||[]).length>0;})&&(
           <div style={{background:"var(--bg-amb)",color:"var(--tx-org2)",fontSize:12.5,fontWeight:700,textAlign:"center",padding:"8px 14px",borderBottom:"2px solid var(--tx-org2)"}}>
             You're viewing <b>{__branchById(currentBranch).label}</b> ({__branchById(currentBranch).board}) — a separate campus with its own students, staff &amp; fees. A new campus shows empty screens until its students &amp; staff are onboarded.
             {__isDirector&&<span> Your <b>Greencity</b> data is safe — pick <b>Greencity Branch</b> in the campus selector at the top to return to it.</span>}
@@ -14302,6 +14334,7 @@ function App(){
         {tab==="timetable"&&canTimetable&&<TimetablePanel user={user}/>}
         {tab==="notices"&&!isParent&&<NoticeBoard user={user} usersDB={usersDB} noticesDB={noticesDB} dirDB={dirDB} academicRosterDB={academicRosterDB}/>}
         {tab==="notices"&&isParent&&<div className="fi" style={{maxWidth:760,margin:"0 auto"}}><div className="ap-hi" style={{fontSize:25,marginBottom:4}}>Notices</div><div className="ap-hisub" style={{marginBottom:16}}>Announcements from the school</div><NoticeBoardView user={user} noticesDB={noticesDB} usersDB={usersDB} isAdmin={false}/></div>}
+        {tab==="calendar"&&<AcademicCalendar user={user} calendarDB={calendarDB}/>}
         {tab==="leave"&&!isParent&&<LeavePanel user={user}/>}
         {tab==="mytimetable"&&!canTimetable&&!isParent&&<MyTimetablePanel user={user}/>}
         </div>{/* /ap-content */}
@@ -14409,8 +14442,7 @@ function buildSchoolContext(dbs,includeFees){
     out.push(row.join("|"));});
   if(includeFees)out.push("\nFEE TOTALS: collected ≈ ₹"+totalColl.toLocaleString("en-IN")+" · outstanding now (overdue) ≈ ₹"+totalOverdue.toLocaleString("en-IN")+" · full-year balance ≈ ₹"+totalDue.toLocaleString("en-IN")+".");
   const staff={};
-  if(typeof DEFAULT_USERS!=="undefined")Object.entries(DEFAULT_USERS).forEach(function(e){if(e[1]&&e[1].role)staff[e[1].name||e[0]]={name:e[1].name||e[0],role:e[1].role,subjects:(e[1].subjects||[]).join("/"),classes:(e[1].classes||[]).join("/")};});
-  Object.values((usersDB&&usersDB.data)||{}).forEach(function(u){if(u&&u.name&&u.role&&u.left!==true)staff[u.name]={name:u.name,role:u.role,subjects:(u.subjects||[]).join("/"),classes:(u.classes||[]).join("/")};});
+  Object.values(_branchUsers((usersDB&&usersDB.data)||{},(typeof window!=="undefined"&&window.__currentBranch)||"greencity")).forEach(function(u){if(u&&u.name&&u.role&&u.left!==true)staff[u.name]={name:u.name,role:u.role,subjects:(u.subjects||[]).join("/"),classes:(u.classes||[]).join("/")};});
   const staffArr=Object.values(staff);
   out.push("\nSTAFF ("+staffArr.length+") — Name | Role | Subjects | Classes");
   staffArr.forEach(function(st){out.push([st.name,st.role,st.subjects||"-",st.classes||"-"].join(" | "));});
@@ -14603,7 +14635,7 @@ function StudentMyReport({user,testsDB,studentsDB,attendanceDB,wrongDB,onBack}){
   },[adm]);
   // School UPI config (meta/config.upi) — drives the "Pay now" block. VPA + QR are public, so a signed-in read is fine.
   const[upiCfg,setUpiCfg]=useState(null);
-  useEffect(()=>{let c=false;const load=async()=>{if(!window.__db||!window.__fbGetDoc||!window.__fbDoc)return;try{const s=await window.__fbGetDoc(window.__fbDoc(window.__db,"meta","config"));if(!c&&s&&s.exists&&s.exists()){const d=s.data();if(d&&d.upi&&d.upi.vpa)setUpiCfg(d.upi);}}catch(e){}};if(window.__fbReady)load();else window.addEventListener("fbready",load,{once:true});return()=>{c=true;};},[]);
+  useEffect(()=>{let c=false;const load=async()=>{if(!window.__db||!window.__fbGetDoc||!window.__fbDoc)return;try{const s=await window.__fbGetDoc(window.__fbDoc(window.__db,"meta",__bMeta("config")));if(!c&&s&&s.exists&&s.exists()){const d=s.data();if(d&&d.upi&&d.upi.vpa)setUpiCfg(d.upi);}}catch(e){}};if(window.__fbReady)load();else window.addEventListener("fbready",load,{once:true});return()=>{c=true;};},[]);
   const[payOpen,setPayOpen]=useState(false);const[payRef,setPayRef]=useState("");const[payAmt,setPayAmt]=useState("");const[paySent,setPaySent]=useState(()=>{try{return !!localStorage.getItem("ssic_upi_sent_"+String(adm||""));}catch(e){return false;}});const[payErr,setPayErr]=useState("");
   const submitPay=async()=>{
     const amt=Number(String(payAmt).replace(/[^0-9.]/g,""));
@@ -15966,10 +15998,9 @@ function AssignPanel(props) {
   }
   var SUBJECTS = MASTER_SUBJECTS;
 
-  // Teacher list = seed list + LIVE users (so imported teachers/VP can be assigned). Keyed by username.
+  // Teacher list = THIS branch's staff only (seed shows on Greencity; live users filtered by their branches[]). Keyed by username.
   var teachers = (function(){var m={};
-    Object.entries(DEFAULT_USERS).forEach(function(e){if(e[1]&&(e[1].role==="teacher"||e[1].role==="vp"))m[e[0]]=[e[0],e[1]];});
-    Object.entries((usersDB&&usersDB.data)||{}).forEach(function(e){var v=e[1];if(v&&(v.role==="teacher"||v.role==="vp")&&v.left!==true)m[v.username||e[0]]=[v.username||e[0],v];});
+    Object.entries(_branchUsers((usersDB&&usersDB.data)||{},window.__currentBranch)).forEach(function(e){var v=e[1];if(v&&(v.role==="teacher"||v.role==="vp")&&v.left!==true)m[v.username||e[0]]=[v.username||e[0],v];});
     return Object.values(m).sort(function(a,b){return String((a[1]&&a[1].name)||a[0]).localeCompare(String((b[1]&&b[1].name)||b[0]));});
   })();
 
@@ -16021,7 +16052,7 @@ function AssignPanel(props) {
     setSelQbCls(d.qbankClasses || []);
     setSelQbSubj(d.qbankSubjects || []);
     setSelCoord(d.coordinator === true);
-    var ctm = ((usersDB.data && usersDB.data["__classTeachers"]) || {}).map || {};
+    var ctm = ((usersDB.data && usersDB.data[__sharedDocId("__classTeachers")]) || {}).map || {};
     setSelCTs(Object.keys(ctm).filter(function(k){ return ctm[k] === selTeacher; }));
   }, [selTeacher, usersDB.data]);
 
@@ -16063,7 +16094,7 @@ function AssignPanel(props) {
       updatedAt: new Date().toISOString()
     });
     // Class teacher → shared map (a teacher may hold MULTIPLE sections): drop this teacher's old sections, set the new ones.
-    var oldCtm = ((usersDB.data && usersDB.data["__classTeachers"]) || {}).map || {};
+    var oldCtm = ((usersDB.data && usersDB.data[__sharedDocId("__classTeachers")]) || {}).map || {};
     var ctm = Object.assign({}, oldCtm);
     // Any OTHER teacher losing a section to this one → re-sync their own-doc classTeacherOf so it doesn't go stale.
     var affected = {};
@@ -16072,7 +16103,7 @@ function AssignPanel(props) {
     (selCTs || []).forEach(function(k){ ctm[k] = selTeacher; });
     var writes = [
       usersDB.set(selTeacher, data),
-      usersDB.set("__classTeachers", { map: ctm, updatedAt: new Date().toISOString() })
+      usersDB.set(__sharedDocId("__classTeachers"), { map: ctm, updatedAt: new Date().toISOString() })
     ];
     Object.keys(affected).forEach(function(ph){
       var phDoc = (usersDB.data && usersDB.data[safeId(ph)]) || DEFAULT_USERS[ph] || {};
@@ -16100,22 +16131,22 @@ function AssignPanel(props) {
   // Subjects the Director/VP have added (Music, Painting, Dance…) live in the shared "__subjects" doc so
   // the whole school sees the same list. Show the built-in subjects + any custom ones + anything already
   // assigned to this teacher (so an old subject can still be toggled off).
-  var customSubjects = ((usersDB.data && usersDB.data["__subjects"]) || {}).list || [];
+  var customSubjects = ((usersDB.data && usersDB.data[__sharedDocId("__subjects")]) || {}).list || [];
   var ALL_SUBJECTS = SUBJECTS.concat(customSubjects.filter(function(s){ return SUBJECTS.indexOf(s) < 0; }));
   selSubj.forEach(function(s){ if (ALL_SUBJECTS.indexOf(s) < 0) ALL_SUBJECTS.push(s); });
   function addSubject() {
     var s = (newSubj || "").trim();
     if (!s) return;
     if (ALL_SUBJECTS.some(function(x){ return x.toLowerCase() === s.toLowerCase(); })) { setNewSubj(""); return; }
-    usersDB.set("__subjects", { list: customSubjects.concat([s]), updatedAt: new Date().toISOString() });
+    usersDB.set(__sharedDocId("__subjects"), { list: customSubjects.concat([s]), updatedAt: new Date().toISOString() });
     setNewSubj("");
   }
   function removeSubject(s) {
-    usersDB.set("__subjects", { list: customSubjects.filter(function(x){ return x !== s; }), updatedAt: new Date().toISOString() });
+    usersDB.set(__sharedDocId("__subjects"), { list: customSubjects.filter(function(x){ return x !== s; }), updatedAt: new Date().toISOString() });
     setSelSubj(function(p){ return p.filter(function(x){ return x !== s; }); });
   }
 
-  var classTeacherMap = ((usersDB.data && usersDB.data["__classTeachers"]) || {}).map || {};
+  var classTeacherMap = ((usersDB.data && usersDB.data[__sharedDocId("__classTeachers")]) || {}).map || {};
   function ctNameOf(un){ var v=(usersDB.data&&usersDB.data[safeId(un)])||DEFAULT_USERS[un]; return (v&&v.name)||un; }
   var ctTeacherName = (teacherData && teacherData.name) || (DEFAULT_USERS[selTeacher] && DEFAULT_USERS[selTeacher].name) || selTeacher;
 
@@ -16549,6 +16580,7 @@ function MyLeaves(props){
 
 function AllLeaves(props){
   var user=props.user; var leaveDB=props.leaveDB;
+  var usersDB=useFirestore("users"); // branch-scoped substitute-teacher suggestions
   var fs=useState("pending"); var filter=fs[0]; var setFilter=fs[1];
   var svs=useState(""); var saving=svs[0]; var setSaving=svs[1];
   var ttState=useState({}); var timetables=ttState[0]; var setTimetables=ttState[1];
@@ -16765,7 +16797,7 @@ function AllLeaves(props){
   }
 
   var DAYS_ORDER=["Mon","Tue","Wed","Thu","Fri","Sat"];
-  var teachers=Object.entries(DEFAULT_USERS||{}).filter(function(e){return e[1].role==="teacher";});
+  var teachers=Object.entries(_branchUsers((usersDB&&usersDB.data)||{},window.__currentBranch)).filter(function(e){return e[1]&&e[1].role==="teacher"&&e[1].left!==true;});
   var counts={pending:0,approved:0,rejected:0};
   Object.values(leaveDB.data||{}).forEach(function(l){if(counts[l.status]!==undefined)counts[l.status]++;});
   var all=Object.values(leaveDB.data||{}).filter(function(l){return filter==="all"||l.status===filter;}).sort(function(a,b){var pa=a.status==="pending"?0:1,pb=b.status==="pending"?0:1;return pa-pb||b.appliedAt.localeCompare(a.appliedAt);});
@@ -17046,7 +17078,7 @@ var NOTICE_TYPES={
 function ntype(t){return NOTICE_TYPES[t]||NOTICE_TYPES.General;}
 // Eligible audience for a notice = live staff (DEFAULT_USERS overlaid by usersDB) minus admin/left, scoped by _noticeVisible.
 function _noticeRecipients(usersDB,notice){
-  var merged=Object.assign({},DEFAULT_USERS,(usersDB&&usersDB.data)||{});
+  var merged=_branchUsers((usersDB&&usersDB.data)||{},(typeof window!=="undefined"&&window.__currentBranch)||"greencity");
   var out=[];
   Object.keys(merged).forEach(function(k){
     if(k.indexOf("__")===0)return;
@@ -17272,6 +17304,200 @@ function ParentBroadcast(props){
               <button onClick={function(){loadTemplate(t);}} style={{width:"100%",background:"#0f1b2d",color:"#fff",fontSize:12.5,fontWeight:700,padding:"9px",borderRadius:9,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6,border:"none",cursor:"pointer",fontFamily:"var(--ss-font)"}}>{bcsv(BC_I.send,14)}Use this template</button>
             </div>;
           })}
+        </div>
+      </div>}
+    </div>
+  );
+}
+
+// ─── Academic Calendar — holidays + events (Director / Principal / VP add) ──────
+const CAL_TYPES={
+  Holiday:{bg:"var(--bg-red)",fg:"var(--tx-red)",dot:"#d2342a"},
+  Exam:{bg:"var(--bg-amb)",fg:"var(--tx-org2)",dot:"#e9a64f"},
+  PTM:{bg:"#eef2ff",fg:"#4f46e5",dot:"#6366f1"},
+  Event:{bg:"var(--bg-grn)",fg:"var(--tx-grn2)",dot:"#16a34a"},
+  Activity:{bg:"#eff6ff",fg:"#0369a1",dot:"#0ea5e9"}
+};
+const _calAddDay=(ds,n)=>{const d=new Date(ds+"T12:00:00");d.setDate(d.getDate()+n);return d.toISOString().slice(0,10);};
+const _calFmt=(ds)=>{try{return new Date(ds+"T12:00:00").toLocaleDateString("en-IN",{weekday:"short",day:"numeric",month:"short"});}catch(e){return ds;}};
+const _calMShort=(ds)=>{try{return new Date(ds+"T12:00:00").toLocaleDateString("en-IN",{day:"numeric",month:"short"});}catch(e){return ds;}};
+// CBSE + Uttar Pradesh holiday list for a session. 2026-27 = the verified 27-holiday calendar;
+// other years fall back to the fixed-date nationals (festival dates shift, so add those manually).
+function _calSeedList(sy){
+  if(sy===2026)return [
+    ["2026-04-03","Good Friday","Gazetted holiday"],["2026-04-14","Dr. Ambedkar Jayanti","Gazetted holiday"],
+    ["2026-05-01","May Day & Buddha Purnima","UP holiday"],["2026-05-27","Bakrid (Eid-ul-Adha)","Moon-dependent"],
+    ["2026-06-26","Muharram","Moon-dependent"],["2026-08-15","Independence Day","Gazetted holiday"],
+    ["2026-08-25","Eid-e-Milad (Barawafat)","Moon-dependent"],["2026-08-28","Raksha Bandhan","UP holiday"],
+    ["2026-09-04","Janmashtami","Gazetted holiday"],["2026-09-14","Ganesh Chaturthi","Restricted"],
+    ["2026-10-02","Gandhi Jayanti","Gazetted holiday"],["2026-10-20","Dussehra (Vijayadashami)","Gazetted holiday"],
+    ["2026-11-08","Diwali (Deepawali)","Gazetted holiday"],["2026-11-10","Govardhan Puja","UP holiday"],
+    ["2026-11-11","Bhai Dooj","UP holiday"],["2026-11-15","Chhath Puja","UP holiday (Purvanchal)"],
+    ["2026-11-24","Guru Nanak Jayanti","Gazetted holiday"],["2026-12-25","Christmas","Gazetted holiday"],
+    ["2027-01-14","Makar Sankranti","UP holiday"],["2027-01-24","UP Foundation Day (UP Diwas)","UP holiday"],
+    ["2027-01-26","Republic Day","Gazetted holiday"],["2027-02-11","Vasant Panchami","Restricted"],
+    ["2027-03-06","Maha Shivratri","Gazetted holiday"],["2027-03-10","Eid-ul-Fitr","Moon-dependent"],
+    ["2027-03-22","Holika Dahan","UP holiday"],["2027-03-23","Holi (Dhulandi)","Gazetted holiday"],
+    ["2027-03-26","Good Friday","Gazetted holiday"]
+  ];
+  return [[sy+"-04-14","Dr. Ambedkar Jayanti","Gazetted holiday"],[sy+"-05-01","May Day","UP holiday"],[sy+"-08-15","Independence Day","Gazetted holiday"],[sy+"-10-02","Gandhi Jayanti","Gazetted holiday"],[sy+"-12-25","Christmas","Gazetted holiday"],[(sy+1)+"-01-24","UP Foundation Day","UP holiday"],[(sy+1)+"-01-26","Republic Day","Gazetted holiday"]];
+}
+function AcademicCalendar({user,calendarDB}){
+  const canEdit=user.role==="admin"||user.role==="vp"; // Director, Principal, VP
+  const isAdmin=user.role==="admin";
+  const isMob=useIsMobile();
+  const _t=today();
+  const _ty=+_t.slice(0,4),_tm=+_t.slice(5,7)-1;
+  const[ym,setYm]=useState(()=>({y:_ty,m:_tm}));
+  const[form,setForm]=useState(null);
+  const[saving,setSaving]=useState(false);
+
+  const events=useMemo(()=>Object.values(calendarDB.data||{}).filter(e=>e&&e.date).sort((a,b)=>String(a.date).localeCompare(String(b.date))||String(a.title||"").localeCompare(String(b.title||""))),[calendarDB.data]);
+  const byDate=useMemo(()=>{const idx={};events.forEach(e=>{const start=e.date;const end=(e.endDate&&e.endDate>=e.date)?e.endDate:e.date;let d=start,g=0;while(d<=end&&g<200){(idx[d]=idx[d]||[]).push(e);d=_calAddDay(d,1);g++;}});return idx;},[events]);
+
+  const first=new Date(ym.y,ym.m,1);
+  const startWd=first.getDay();
+  const daysIn=new Date(ym.y,ym.m+1,0).getDate();
+  const cells=[];for(let i=0;i<startWd;i++)cells.push(null);for(let d=1;d<=daysIn;d++)cells.push(d);
+  const _ds=(d)=>ym.y+"-"+String(ym.m+1).padStart(2,"0")+"-"+String(d).padStart(2,"0");
+  const _endOf=(e)=>(e.endDate&&e.endDate>=e.date?e.endDate:e.date);
+
+  const sessionStart=(_tm>=3?_ty:_ty-1);
+  const holThisSession=events.filter(e=>e.type==="Holiday"&&e.date>=(sessionStart+"-04-01")&&e.date<=((sessionStart+1)+"-03-31"));
+  const _holDateSet=new Set(events.filter(e=>e.type==="Holiday").map(e=>e.date));
+  const seedDone=(function(){var sd=_calSeedList(sessionStart);return sd.length>0&&sd.every(function(it){return _holDateSet.has(it[0]);});})(); // every standard holiday already present → hide the seed button
+  const upcoming=events.filter(e=>_endOf(e)>=_t).slice(0,12);
+  const nextHol=events.filter(e=>e.type==="Holiday"&&_endOf(e)>=_t)[0];
+  const monthKey=ym.y+"-"+String(ym.m+1).padStart(2,"0");
+  const monthEvents=events.filter(e=>String(e.date).slice(0,7)===monthKey||(_endOf(e).slice(0,7)===monthKey)||(String(e.date)<monthKey+"-01"&&_endOf(e)>monthKey+"-31"));
+
+  const goMonth=(delta)=>{let mm=ym.m+delta,yy=ym.y;while(mm<0){mm+=12;yy--;}while(mm>11){mm-=12;yy++;}setYm({y:yy,m:mm});};
+  const openNew=(date)=>{if(!canEdit)return;setForm({date:date||_t,endDate:"",type:"Holiday",title:"",note:""});};
+  const openEdit=(e)=>{if(!canEdit)return;setForm({id:e.id,date:e.date,endDate:e.endDate||"",type:e.type||"Event",title:e.title||"",note:e.note||""});};
+  const save=async()=>{
+    if(!form.title.trim()){window.__toast&&window.__toast("Enter a title","err");return;}
+    setSaving(true);
+    try{
+      const id=form.id||("cal_"+Date.now()+"_"+(Math.random()*9999|0));
+      await calendarDB.set(id,{id,date:form.date,endDate:(form.endDate&&form.endDate>=form.date)?form.endDate:"",type:form.type,title:form.title.trim(),note:(form.note||"").trim(),by:user.name,updatedAt:new Date().toISOString()});
+      setForm(null);
+    }catch(e){window.__toast&&window.__toast("Couldn't save — re-publish the rules (Roles & Security)","err");}
+    setSaving(false);
+  };
+  const del=async(e)=>{
+    const ok=await window.__confirm({title:"Delete calendar entry?",body:e.title+" · "+_calFmt(e.date),danger:true,confirmText:"Delete"});
+    if(!ok)return;
+    try{await calendarDB.del(e.id);setForm(null);}catch(_){window.__toast&&window.__toast("Couldn't delete","err");}
+  };
+  const seedHolidays=async()=>{
+    const SY=sessionStart;
+    const list=_calSeedList(SY); // shared with the seed-done check that hides this button
+    const have=new Set(events.filter(e=>e.type==="Holiday").map(e=>e.date));
+    let n=0,failed=0,lastErr="";
+    for(const it of list){if(have.has(it[0]))continue;try{await calendarDB.set("cal_hol_"+it[0],{id:"cal_hol_"+it[0],date:it[0],endDate:"",type:"Holiday",title:it[1],note:it[2]||"Holiday",by:user.name,updatedAt:new Date().toISOString()});n++;}catch(e){failed++;lastErr=(e&&(e.code||e.message))||"error";}}
+    if(failed)window.__toast&&window.__toast("Couldn't save ("+lastErr+") — publish the Firestore rules in Roles & Security, then try again","err");
+    else window.__toast&&window.__toast(n?(n+" holiday"+(n>1?"s":"")+" added (CBSE + UP, 2026–27)"):"Holidays already added — all dates present","ok");
+  };
+
+  const inp={width:"100%",border:"1px solid var(--c-d2)",borderRadius:10,padding:"10px 12px",fontSize:13,fontFamily:"var(--ss-font)",outline:"none",background:"var(--c-fff)",color:"var(--ap-ink)"};
+  if(calendarDB.loading)return<Spinner/>;
+  const WD=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+
+  return(
+    <div className="fi" style={{display:"flex",flexDirection:"column",gap:16}}>
+      <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:16,flexWrap:"wrap"}}>
+        <div>
+          <div className="ap-hi" style={{fontSize:25}}>Academic Calendar</div>
+          <div className="ap-hisub">Holidays, exams, PTMs and school events{canEdit?" — tap any day to add an entry.":" for the session."}</div>
+        </div>
+        {canEdit&&<div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {isAdmin&&!seedDone&&<button onClick={seedHolidays} className="ss-press" style={{fontSize:12.5,fontWeight:600,padding:"9px 14px",borderRadius:10,border:"1px solid var(--ap-line2)",background:"var(--c-fff)",color:"var(--ap-ink2)",cursor:"pointer",fontFamily:"var(--ss-font)"}}>Add CBSE + UP holidays</button>}
+          <button onClick={()=>openNew(_t)} className="ss-press" style={{fontSize:13,fontWeight:700,padding:"10px 18px",borderRadius:10,border:"none",background:"linear-gradient(180deg,#16a85e,#138a4e)",color:"#fff",cursor:"pointer",fontFamily:"var(--ss-font)",boxShadow:"0 6px 16px rgba(19,138,78,.22)"}}>＋ Add event</button>
+        </div>}
+      </div>
+
+      <div style={{display:"grid",gap:13,gridTemplateColumns:"repeat(auto-fit,minmax(158px,1fr))"}}>
+        <StatCard label="Holidays · this session" val={holThisSession.length} icon="📅" color="var(--tx-red)" sub="Apr–Mar"/>
+        <StatCard label="Upcoming" val={upcoming.length} icon="📋" color="var(--ap-accent)" sub="entries ahead"/>
+        <StatCard label="Next holiday" val={nextHol?_calMShort(nextHol.date):"—"} icon="🕐" color="var(--tx-org)" sub={nextHol?nextHol.title:"none scheduled"} onClick={nextHol?()=>setYm({y:+nextHol.date.slice(0,4),m:+nextHol.date.slice(5,7)-1}):null}/>
+        <StatCard label="This month" val={monthEvents.length} icon="✅" color="var(--tx-grn2)" sub="entries"/>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:isMob?"1fr":"minmax(0,1.7fr) minmax(0,1fr)",gap:16,alignItems:"start"}}>
+        {/* month grid */}
+        <div className="ap-panel" style={{padding:isMob?"12px":"16px 18px"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:14}}>
+            <div style={{fontSize:16,fontWeight:700,color:"var(--ap-ink)"}}>{first.toLocaleDateString("en-IN",{month:"long",year:"numeric"})}</div>
+            <div style={{display:"flex",gap:6,alignItems:"center"}}>
+              <button onClick={()=>goMonth(-1)} className="ss-press" style={{border:"1px solid var(--ap-line2)",background:"var(--c-fff)",borderRadius:8,width:30,height:30,cursor:"pointer",fontSize:15,color:"var(--ap-ink2)"}}>‹</button>
+              <button onClick={()=>setYm({y:_ty,m:_tm})} className="ss-press" style={{border:"1px solid var(--ap-line2)",background:"var(--c-fff)",borderRadius:8,padding:"0 12px",height:30,cursor:"pointer",fontSize:12,fontWeight:600,color:"var(--ap-ink2)",fontFamily:"var(--ss-font)"}}>Today</button>
+              <button onClick={()=>goMonth(1)} className="ss-press" style={{border:"1px solid var(--ap-line2)",background:"var(--c-fff)",borderRadius:8,width:30,height:30,cursor:"pointer",fontSize:15,color:"var(--ap-ink2)"}}>›</button>
+            </div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6,marginBottom:6}}>
+            {WD.map((w,i)=><div key={w} style={{textAlign:"center",fontSize:10.5,fontWeight:700,color:i===0?"#d2342a":"var(--ap-muted)",letterSpacing:".03em"}}>{w}</div>)}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6}}>
+            {cells.map((d,i)=>{
+              if(d===null)return <div key={"b"+i}/>;
+              const ds=_ds(d);const evs=byDate[ds]||[];const isToday=ds===_t;const isSun=new Date(ym.y,ym.m,d).getDay()===0;const cap=isMob?1:3;
+              return <div key={ds} onClick={()=>canEdit&&openNew(ds)} style={{minHeight:isMob?60:90,border:"1px solid "+(isToday?"var(--tx-org2)":"var(--ap-line)"),borderRadius:10,padding:"5px 6px",background:isToday?"var(--bg-amb)":(isSun?"var(--c-f7)":"var(--c-fff)"),cursor:canEdit?"pointer":"default",display:"flex",flexDirection:"column",gap:3,overflow:"hidden"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span style={{fontSize:12,fontWeight:isToday?800:600,color:isToday?"var(--tx-org2)":(isSun?"#d2342a":"var(--ap-ink2)")}}>{d}</span>
+                  {isToday&&<span style={{fontSize:7.5,fontWeight:800,color:"var(--tx-org2)",letterSpacing:".05em"}}>TODAY</span>}
+                </div>
+                {evs.slice(0,cap).map((e,j)=>{const c=CAL_TYPES[e.type]||CAL_TYPES.Event;return <button key={j} onClick={(ev)=>{ev.stopPropagation();openEdit(e);}} title={e.title+(e.note?" — "+e.note:"")} style={{display:"block",width:"100%",textAlign:"left",border:"none",cursor:canEdit?"pointer":"default",background:c.bg,color:c.fg,borderRadius:5,padding:"2px 5px",fontSize:10,fontWeight:700,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",fontFamily:"var(--ss-font)"}}>{e.title}</button>;})}
+                {evs.length>cap&&<span style={{fontSize:9.5,color:"var(--ap-muted)",fontWeight:600}}>+{evs.length-cap} more</span>}
+              </div>;
+            })}
+          </div>
+          <div style={{display:"flex",gap:14,flexWrap:"wrap",marginTop:12,fontSize:11,color:"var(--ap-muted)"}}>
+            {Object.keys(CAL_TYPES).map(t=><span key={t} style={{display:"inline-flex",alignItems:"center",gap:5}}><i style={{width:10,height:10,borderRadius:3,background:CAL_TYPES[t].dot,display:"inline-block"}}/>{t}</span>)}
+          </div>
+        </div>
+
+        {/* upcoming list */}
+        <div className="ap-panel" style={{overflow:"hidden"}}>
+          <div style={{padding:"14px 18px",borderBottom:"1px solid var(--ap-line)",fontWeight:650,fontSize:15,color:"var(--ap-ink)"}}>Upcoming</div>
+          <div style={{maxHeight:520,overflowY:"auto"}}>
+            {upcoming.length===0?<div style={{padding:"22px 18px",fontSize:13,color:"var(--ap-muted)",textAlign:"center"}}>No upcoming entries.{canEdit?" Tap a day to add one.":""}</div>:upcoming.map((e,i)=>{const c=CAL_TYPES[e.type]||CAL_TYPES.Event;const multi=e.endDate&&e.endDate>e.date;return(
+              <div key={e.id||i} onClick={()=>openEdit(e)} style={{display:"flex",alignItems:"center",gap:11,padding:"11px 16px",borderBottom:"1px solid var(--c-f0)",cursor:canEdit?"pointer":"default"}}>
+                <div style={{flex:"none",width:46,textAlign:"center"}}>
+                  <div style={{fontSize:17,fontWeight:800,color:"var(--ap-ink)",lineHeight:1,fontFamily:"var(--ss-font)"}}>{(+e.date.slice(8,10))||""}</div>
+                  <div style={{fontSize:10,color:"var(--ap-muted)",fontWeight:600}}>{new Date(e.date+"T12:00").toLocaleDateString("en-IN",{month:"short"})}</div>
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13.5,fontWeight:600,color:"var(--ap-ink)",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{e.title}</div>
+                  <div style={{fontSize:11,color:"var(--ap-muted)",marginTop:1}}>{_calFmt(e.date)}{multi?" → "+_calFmt(e.endDate):""}{e.note?" · "+e.note:""}</div>
+                </div>
+                <span style={{flex:"none",background:c.bg,color:c.fg,borderRadius:99,padding:"3px 10px",fontSize:10,fontWeight:700}}>{e.type}</span>
+              </div>
+            );})}
+          </div>
+        </div>
+      </div>
+
+      {/* add / edit modal */}
+      {form&&<div onClick={()=>setForm(null)} style={{position:"fixed",inset:0,background:"rgba(8,12,20,.55)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:18}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:"var(--c-fff)",borderRadius:16,padding:22,width:"100%",maxWidth:460,boxShadow:"0 24px 70px rgba(0,0,0,.32)",maxHeight:"90vh",overflowY:"auto"}}>
+          <div style={{fontWeight:700,fontSize:17,color:"var(--ap-ink)",marginBottom:16}}>{form.id?"Edit entry":"Add calendar entry"}</div>
+          <div style={{marginBottom:13}}>
+            <div style={{fontSize:11,fontWeight:700,color:"var(--ap-muted)",marginBottom:6,letterSpacing:".03em"}}>TYPE</div>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {Object.keys(CAL_TYPES).map(t=>{const c=CAL_TYPES[t];const on=form.type===t;return <button key={t} onClick={()=>setForm(f=>({...f,type:t}))} style={{padding:"6px 13px",borderRadius:20,border:"1.5px solid "+(on?c.fg:"var(--ap-line)"),background:on?c.bg:"var(--c-f7)",color:on?c.fg:"var(--ap-ink2)",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>{t}</button>;})}
+            </div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:13}}>
+            <div><div style={{fontSize:11,fontWeight:700,color:"var(--ap-muted)",marginBottom:6,letterSpacing:".03em"}}>DATE</div><input type="date" value={form.date} onChange={e=>setForm(f=>({...f,date:e.target.value}))} style={inp}/></div>
+            <div><div style={{fontSize:11,fontWeight:700,color:"var(--ap-muted)",marginBottom:6,letterSpacing:".03em"}}>END DATE <span style={{color:"var(--c-94)",fontWeight:500}}>(optional)</span></div><input type="date" value={form.endDate} min={form.date} onChange={e=>setForm(f=>({...f,endDate:e.target.value}))} style={inp}/></div>
+          </div>
+          <div style={{marginBottom:13}}><div style={{fontSize:11,fontWeight:700,color:"var(--ap-muted)",marginBottom:6,letterSpacing:".03em"}}>TITLE</div><input value={form.title} autoFocus onChange={e=>setForm(f=>({...f,title:e.target.value}))} placeholder="e.g. Diwali Break, Half-Yearly Exams, PTM" style={inp}/></div>
+          <div style={{marginBottom:18}}><div style={{fontSize:11,fontWeight:700,color:"var(--ap-muted)",marginBottom:6,letterSpacing:".03em"}}>NOTE <span style={{color:"var(--c-94)",fontWeight:500}}>(optional)</span></div><input value={form.note} onChange={e=>setForm(f=>({...f,note:e.target.value}))} placeholder="e.g. School closed · Classes 6–8 only" style={inp}/></div>
+          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+            <button onClick={save} disabled={saving} className="ss-press" style={{background:"linear-gradient(180deg,#16a85e,#138a4e)",color:"#fff",fontSize:14,fontWeight:700,padding:"10px 22px",borderRadius:11,border:"none",cursor:saving?"default":"pointer",opacity:saving?.7:1,fontFamily:"var(--ss-font)"}}>{saving?"Saving…":(form.id?"Save changes":"Add to calendar")}</button>
+            <button onClick={()=>setForm(null)} className="ss-press" style={{background:"var(--c-fff)",color:"var(--ap-ink2)",fontSize:13,fontWeight:600,padding:"10px 16px",borderRadius:11,border:"1px solid var(--ap-line2)",cursor:"pointer",fontFamily:"var(--ss-font)"}}>Cancel</button>
+            {form.id&&<button onClick={()=>del(form)} className="ss-press" style={{marginLeft:"auto",background:"var(--bg-red)",color:"var(--tx-red)",fontSize:13,fontWeight:700,padding:"10px 16px",borderRadius:11,border:"none",cursor:"pointer",fontFamily:"var(--ss-font)"}}>Delete</button>}
+          </div>
         </div>
       </div>}
     </div>
