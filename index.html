@@ -1055,6 +1055,16 @@ function dirKeyOf(cls){var cn=String(cls).replace(/^Class\s*/i,"").trim();if(/si
 var __DIR_ORDER=["Nursery","LKG","UKG","1","2","3","4","5","6","7","8","9","10","11","12","SIP_CLASS"];
 // Display label for a dir token: numeric → "Class N", SIP → "Class SIP", preschool (Nursery/LKG/UKG) → bare label.
 function __clsTokLabel(cn){return /sip/i.test(cn)?"Class SIP":(/^\d+$/.test(String(cn))?"Class "+cn:String(cn));}
+// Match a fee payment to a student. If the payment carries an admission no. it must match that EXACT adm no.
+// and is NEVER also matched by name — otherwise two DIFFERENT students who share a name (e.g. the two
+// "Anushka Singh", adm 141 & 2173) each pick up the other's receipts and every rupee is counted twice.
+// Only a payment with NO admission no. falls back to name-within-class. (Receipts don't carry a father name,
+// so the admission no. is the reliable differentiator; father name distinguishes students in the directory.)
+function __payHits(p,admNo,cls,name){
+  if(!p)return false;
+  if(p.admNo)return !!admNo&&String(p.admNo)===String(admNo);
+  return p.cls===cls&&nmKey(p.student)===nmKey(name);
+}
 function rosterFromDir(dirDB,cls){
   if(!dirDB||!dirDB.data)return null;
   var doc=dirDB.data[dirKeyOf(cls)];
@@ -2102,7 +2112,7 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
     let monthCol=0,todayCol=0;
     allPays.forEach(p=>{if(p.disc)return;const amt=Number(p.amount||0);const d=String(p.date||"");if(d===today)todayCol+=amt;if(d.slice(0,7)===month)monthCol+=amt;});
     const payInfo=(c,stu)=>{const ann=studentAnnualFee(c,stu.section,stu.oldNew,structure);
-      const ps=allPays.filter(p=>(stu.admNo&&p.admNo&&String(p.admNo)===String(stu.admNo))||(p.cls===c&&nmKey(p.student)===nmKey(stu.name)));
+      const ps=allPays.filter(p=>__payHits(p,stu.admNo,c,stu.name));
       const cash=ps.filter(p=>!p.disc).reduce((a,p)=>a+Number(p.amount||0),0);
       const conc=ps.filter(p=>p.disc).reduce((a,p)=>a+Number(p.amount||0),0);
       const waiver=waiverFor(feesDB.data,stu.admNo);
@@ -6130,7 +6140,7 @@ function StudentProfile({user,testsDB,studentsDB,attendanceDB,wrongDB,feesDB,can
     const oldNew=(rec&&rec.oldNew)||"";
     const struct=Object.assign({},__feeClasses(),(feesDB.data.__structure&&feesDB.data.__structure.classes)||{});
     const annual=studentAnnualFee(cls,section,oldNew,struct);
-    const ps=Object.keys(feesDB.data||{}).filter(id=>!id.startsWith("__")).map(id=>feesDB.data[id]).filter(p=>p&&((padm&&p.admNo&&String(p.admNo)===padm)||(p.cls===cls&&nmKey(p.student)===nmKey(student))));
+    const ps=Object.keys(feesDB.data||{}).filter(id=>!id.startsWith("__")).map(id=>feesDB.data[id]).filter(p=>__payHits(p,padm,cls,student));
     if(annual===0&&ps.length===0)return null;
     const cash=ps.filter(p=>!p.disc).reduce((a,p)=>a+Number(p.amount||0),0);
     const conc=ps.filter(p=>p.disc).reduce((a,p)=>a+Number(p.amount||0),0);
@@ -7772,7 +7782,7 @@ function Fees({user,feesDB,studentsDB,academicRosterDB,dirDB,metaDB}){
     const ann=annualForStu(c,stu.section,stu.oldNew);
     // Match by admission no. ALONE (unique → works even if the payment's class label differs, e.g. SIP_CLASS vs SIP);
     // fall back to name only within the same class (for payments that have no admission no.).
-    const ps=payments.filter(p=>(stu.admNo&&p.admNo&&String(p.admNo)===String(stu.admNo))||(p.cls===c&&nmKey(p.student)===nmKey(stu.name)));
+    const ps=payments.filter(p=>__payHits(p,stu.admNo,c,stu.name));
     const cash=ps.filter(p=>!p.disc).reduce((a,p)=>a+Number(p.amount||0),0);
     const conc=ps.filter(p=>p.disc).reduce((a,p)=>a+Number(p.amount||0),0);
     const waiver=waiverFor(feesDB.data,stu.admNo);
@@ -7797,9 +7807,28 @@ function Fees({user,feesDB,studentsDB,academicRosterDB,dirDB,metaDB}){
       C.rows.sort((a,b)=>b.overdue-a.overdue||b.bal-a.bal||a.student.localeCompare(b.student));
       perClass.push(C);["students","paid","unpaid","cleared","partial","collected","concession","waiver","billed","dues","overdue","overdueN"].forEach(k=>T[k]+=C[k]);
     });
+    // Students who have LEFT the school but PAID some fee before leaving: the money was still collected, so it
+    // counts toward the total (and is listed under "Left"). Their remaining balance is NOT a live due. Matched
+    // strictly by admission no. via payInfo, so a left student never doubles with an active same-name student.
+    const leftRows=[];let leftPaid=0,leftConc=0;
+    __DIR_ORDER.forEach(cn=>{const doc=dirDB&&dirDB.data&&dirDB.data["dir_"+cn];if(!doc||!Array.isArray(doc.students))return;
+      const clabel=__clsTokLabel(cn);
+      doc.students.forEach(s=>{if(String(s.status||"").toLowerCase()!=="left")return;
+        const pi=payInfo(clabel,{admNo:String(s.admNo||""),name:s.name,section:s.section||"",oldNew:s.oldNew||""});
+        if(pi.cash>0||pi.conc>0){leftPaid+=pi.cash;leftConc+=pi.conc;leftRows.push({student:s.name,admNo:s.admNo,cls:clabel,father:s.father||"",...pi});}
+      });
+    });
+    leftRows.sort((a,b)=>b.cash-a.cash);
+    // Authoritative totals = EVERY receipt in the ledger (active + left + any not-yet-linked), summed directly,
+    // so the headline can never drift from the real money regardless of roster attribution. Per-class rows stay
+    // as attributed. unlinkedPaid = money whose payer matches no current roster record (surface for linking).
+    const activeCollected=T.collected;
+    T.collected=payments.reduce((a,p)=>a+(p&&!p.disc?Number(p.amount||0):0),0);
+    T.concession=payments.reduce((a,p)=>a+(p&&p.disc?Number(p.amount||0):0),0);
+    const unlinkedPaid=Math.max(0,Math.round(T.collected-activeCollected-leftPaid));
     const netBilled=Math.max(0,T.billed-T.waiver);
-    return{perClass,...T,netBilled,configured:Object.keys(structure).length,pct:netBilled?Math.round(T.collected/netBilled*100):0};
-  },[structure,payments,feesDB.data,academicRosterDB.data,studentsDB.data]);
+    return{perClass,...T,netBilled,leftRows,leftPaid,leftConc,activeCollected,unlinkedPaid,configured:Object.keys(structure).length,pct:netBilled?Math.round(T.collected/netBilled*100):0};
+  },[structure,payments,feesDB.data,academicRosterDB.data,studentsDB.data,dirDB&&dirDB.data]);
   const recent=useMemo(()=>[...payments].sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||"")).slice(0,10),[payments]);
   // Parent phone by admission no. — for one-tap Call / WhatsApp fee reminders on defaulters. Fees is
   // Director/Office only (both have the directory); academic roster fills any gap. Same source as attendance.
@@ -7958,7 +7987,9 @@ td.r,th.r{text-align:right}
     if(dueFilter==="overdue"&&!(r.overdue>0))return;
     if(dueFilter==="balance"&&r.bal<=0)return;out.push(r);}));return out;};
   const exportDefaulters=()=>{
-    const rows=[["Student","Class","Annual","Waiver","Paid (cash)","Concession","Overdue now","Balance (full year)","Status"],...pendingRows().map(r=>[r.student,r.cls,r.annual,r.waiver||0,r.cash,r.conc,r.overdue,r.bal,r.status])];
+    const rows=[["Student","Class","Annual","Waiver","Paid (cash)","Concession","Overdue now","Balance (full year)","Status"],
+      ...pendingRows().map(r=>[r.student,r.cls,r.annual,r.waiver||0,r.cash,r.conc,r.overdue,r.bal,r.status]),
+      ...(agg.leftRows||[]).map(r=>[r.student,r.cls,r.annual,r.waiver||0,r.cash,r.conc,0,0,"left"])];
     const csv=rows.map(r=>r.map(x=>'"'+String(x).replace(/"/g,'""')+'"').join(",")).join("\r\n");
     const blob=new Blob(["﻿"+csv],{type:"text/csv;charset=utf-8;"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="fee_pending.csv";document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
   };
@@ -8023,6 +8054,22 @@ td.r,th.r{text-align:right}
             </div>
           </>}
         </div>
+        {agg.leftRows.length>0&&<details style={{background:"var(--c-fff)",border:"1px solid var(--ap-line)",borderRadius:14,padding:"12px 18px",marginBottom:16}}>
+          <summary style={{cursor:"pointer",fontSize:13.5,fontWeight:700,color:"var(--ap-ink)",listStyle:"none",display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+            <span>Left students — paid before leaving · {agg.leftRows.length}</span>
+            <span style={{fontSize:12.5,color:"var(--tx-grn2)",fontWeight:700}}>{inr(agg.leftPaid)} counted in collection</span>
+          </summary>
+          <div style={{fontSize:11.5,color:"var(--c-64)",margin:"6px 0 10px",lineHeight:1.5}}>These students have withdrawn but paid fees while enrolled — the money still counts in the total collected; their remaining balance is <b>not</b> chased as a due.</div>
+          <div style={{display:"grid",gap:6}}>
+            {agg.leftRows.map((r,i)=>(
+              <div key={(r.admNo||r.student)+"_"+i} style={{display:"flex",alignItems:"center",gap:10,fontSize:12.5,padding:"7px 11px",background:"var(--c-f7)",borderRadius:9}}>
+                <span style={{flex:1,minWidth:0}}><b style={{color:"var(--ap-ink)"}}>{r.student}</b> <span style={{color:"var(--c-94)",fontWeight:500}}>· {r.cls}{r.admNo?" · Adm "+r.admNo:""}{r.father?" · F/O "+r.father:""}</span></span>
+                <span style={{fontWeight:800,color:"var(--tx-grn2)",fontFamily:"var(--ss-font)"}}>{inr(r.cash)}</span>
+              </div>
+            ))}
+          </div>
+          {agg.unlinkedPaid>0&&<div style={{fontSize:11.5,color:"var(--tx-org)",marginTop:10,lineHeight:1.5}}>Plus <b>{inr(agg.unlinkedPaid)}</b> paid by students not on any class roster — use “Unlinked fee payments” above to link them to a record.</div>}
+        </details>}
         {isDirector&&<div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",marginBottom:16,padding:"12px 16px",background:"var(--c-f7)",borderRadius:12,border:"1px solid var(--ap-line)"}}>
           <button onClick={publishPortalFees} disabled={pubBusy} style={{background:"var(--brand-2)",color:"#fff",border:"none",borderRadius:10,padding:"9px 16px",fontSize:13,fontWeight:700,cursor:pubBusy?"default":"pointer",opacity:pubBusy?.6:1,fontFamily:"var(--ss-font)"}}><Icon name="upload" size={16}/> Publish balances to parent portal</button>
           <span style={{fontSize:12.5,color:pubMsg.charAt(0)===""?"#d2342a":pubMsg.charAt(0)==="✓"?"var(--tx-grn2)":"var(--c-64)",flex:1,minWidth:200}}>{pubMsg||"Lets each parent see their own child's fee balance in the portal. Re-run after recording payments."}</span>
@@ -8077,7 +8124,7 @@ td.r,th.r{text-align:right}
         const cur=student?{name:student,cls,admNo:selAdm,section:selStu.section,oldNew:selStu.oldNew,father:(dirByAdm[String(selAdm)]||{}).father||"",mother:(dirByAdm[String(selAdm)]||{}).mother||"",address:(dirByAdm[String(selAdm)]||{}).address||"",phone:_feePhone(selAdm)}:null;
         const heads=structure[cls]||[];
         const sched=(()=>{const arr=heads.slice().sort((a,b)=>String(a.due||"").localeCompare(String(b.due||"")));let cum=0;const p=myInfo.cash||0;return arr.map((h,i)=>{const amt=Number(h.amount||0);cum+=amt;const covered=p>=cum-0.5;const isDue=!h.due||String(h.due)<=today();return{label:h.name||("Installment "+(i+1)),amount:amt,due:h.due,status:covered?"paid":(isDue?"due":"up"),fine:(isDue&&!covered)?Number(h.fine||0):0};});})();
-        const ledger=cur?payments.filter(p=>(cur.admNo&&p.admNo&&String(p.admNo)===String(cur.admNo))||(p.cls===cur.cls&&nmKey(p.student)===nmKey(cur.name))).sort((a,b)=>String(b.date||b.createdAt||"").localeCompare(String(a.date||a.createdAt||""))):[];
+        const ledger=cur?payments.filter(p=>__payHits(p,cur.admNo,cur.cls,cur.name)).sort((a,b)=>String(b.date||b.createdAt||"").localeCompare(String(a.date||a.createdAt||""))):[];
         const ledgerPaid=ledger.reduce((a,p)=>a+Number(p.amount||0),0);
         // Siblings need at least TWO matching parameters (father name alone is too loose — common names collide).
         const _sibN=(a,b)=>{let n=0;
@@ -8431,7 +8478,7 @@ function DirectoryProfile({stu, testsDB, studentsDB, attendanceDB, wrongDB, fees
     const feeCls=/sip/i.test(clsNum)?"Class SIP":("Class "+clsNum);
     const struct=Object.assign({},__feeClasses(),(feesDB.data.__structure&&feesDB.data.__structure.classes)||{});
     const annual=studentAnnualFee(feeCls,stu.section,stu.oldNew,struct);
-    const ps=Object.keys(feesDB.data||{}).filter(id=>!id.startsWith("__")).map(id=>Object.assign({id},feesDB.data[id])).filter(p=>p&&((adm&&p.admNo&&String(p.admNo)===adm)||(p.cls===feeCls&&nmKey(p.student)===nmKey(aName))));
+    const ps=Object.keys(feesDB.data||{}).filter(id=>!id.startsWith("__")).map(id=>Object.assign({id},feesDB.data[id])).filter(p=>__payHits(p,adm,feeCls,aName));
     if(annual===0&&ps.length===0)return null;
     const cash=ps.filter(p=>!p.disc).reduce((a,p)=>a+Number(p.amount||0),0);
     const conc=ps.filter(p=>p.disc).reduce((a,p)=>a+Number(p.amount||0),0);
