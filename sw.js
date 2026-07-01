@@ -27,16 +27,24 @@ self.addEventListener('fetch', function (e) {
 
   const isShell = req.mode === 'navigate' || url.pathname === '/' || url.pathname.endsWith('/index.html');
   if (isShell) {
-    // network-first so app updates are picked up immediately
-    e.respondWith(
-      fetch(req).then(function (resp) {
-        const copy = resp.clone();
-        caches.open(CACHE).then(function (c) { c.put(req, copy); });
+    // Cache-first-with-network-race: serve the cached shell INSTANTLY (like the old HTTP cache), but
+    // race it against the network — if the network responds within the timeout the fresh copy wins
+    // (so deploys land immediately on decent connections); otherwise the cache is served and the
+    // network keeps updating the cache in the background (so the NEXT load is fresh). First-ever load
+    // (no cache) waits for the network. Net effect: warm loads are instant, no network wait on mobile.
+    e.respondWith((async function () {
+      const cache = await caches.open(CACHE);
+      const cached = (await cache.match(req)) || (await cache.match('/index.html')) || (await cache.match('/'));
+      const network = fetch(req).then(function (resp) {
+        if (resp && (resp.ok || resp.type === 'opaque')) cache.put(req, resp.clone());
         return resp;
-      }).catch(function () {
-        return caches.match(req).then(function (m) { return m || caches.match('/index.html') || caches.match('/'); });
-      })
-    );
+      });
+      if (!cached) return network.catch(function () { return caches.match('/index.html'); }); // cold start: must wait
+      return Promise.race([
+        network.catch(function () { return cached; }),
+        new Promise(function (resolve) { setTimeout(function () { resolve(cached); }, 1500); })
+      ]);
+    })());
     return;
   }
 
