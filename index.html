@@ -2128,6 +2128,9 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
       if(pi.overdue>0){overdueN++;rows.push({name:s.name,admNo:s.admNo,cls:c.replace("Class ","Cl "),section:normSection(c,s.section),overdue:pi.overdue,bal:pi.bal,paid:pi.cash,net:pi.net});}});
       if(cNet>0)perClass.push({cls:c.replace("Class ","Cl "),pct:Math.round(cCash/cNet*100)});});
     rows.sort((a,b)=>b.overdue-a.overdue);
+    // Total collected = EVERY receipt in the ledger (active + left + today's just-added / new admissions not yet
+    // on a roster), summed directly — same as the Fees page, so today's collection is never dropped from the headline.
+    collected=allPays.reduce((a,p)=>a+(p&&!p.disc?Number(p.amount||0):0),0);
     return{expected,collected,dues,overdue,defaulters,overdueN,pct:expected?Math.round(collected/expected*100):0,perClass,rows,monthCol,todayCol,hasStructure:expected>0};
   },[feesDB.data,dirDB&&dirDB.data,studentsDB.data,academicRosterDB&&academicRosterDB.data,canFees]);
   const feesToday=fin?fin.todayCol:0;
@@ -7803,11 +7806,12 @@ function Fees({user,feesDB,studentsDB,academicRosterDB,dirDB,metaDB}){
   };
   const agg=useMemo(()=>{
     const perClass=[];const T={students:0,paid:0,unpaid:0,cleared:0,partial:0,collected:0,concession:0,waiver:0,billed:0,dues:0,overdue:0,overdueN:0};
+    const countedAdm=new Set(); // admission nos. already attributed to an ACTIVE student — so the left loop below never re-counts one
     ALL_CLASSES.forEach(c=>{
       const annual=annualFor(c);const list=rosterFor(c);
       if(!list.length)return;
       const C={cls:c,annual,students:list.length,paid:0,unpaid:0,cleared:0,partial:0,collected:0,concession:0,waiver:0,billed:0,dues:0,overdue:0,overdueN:0,rows:[]};
-      list.forEach(stu=>{const pi=payInfo(c,stu);C.collected+=pi.cash;C.concession+=pi.conc;C.waiver+=(pi.waiver||0);C.dues+=pi.bal;C.billed+=pi.annual;C.overdue+=pi.overdue;if(pi.overdue>0)C.overdueN++;
+      list.forEach(stu=>{if(stu.admNo)countedAdm.add(String(stu.admNo));const pi=payInfo(c,stu);C.collected+=pi.cash;C.concession+=pi.conc;C.waiver+=(pi.waiver||0);C.dues+=pi.bal;C.billed+=pi.annual;C.overdue+=pi.overdue;if(pi.overdue>0)C.overdueN++;
         if(pi.status==="unpaid")C.unpaid++;else{C.paid++;if(pi.status==="cleared")C.cleared++;else C.partial++;}
         C.rows.push({student:stu.name,admNo:stu.admNo,cls:c,...pi});});
       C.rows.sort((a,b)=>b.overdue-a.overdue||b.bal-a.bal||a.student.localeCompare(b.student));
@@ -7820,8 +7824,12 @@ function Fees({user,feesDB,studentsDB,academicRosterDB,dirDB,metaDB}){
     __DIR_ORDER.forEach(cn=>{const doc=dirDB&&dirDB.data&&dirDB.data["dir_"+cn];if(!doc||!Array.isArray(doc.students))return;
       const clabel=__clsTokLabel(cn);
       doc.students.forEach(s=>{if(String(s.status||"").toLowerCase()!=="left")return;
-        const pi=payInfo(clabel,{admNo:String(s.admNo||""),name:s.name,section:s.section||"",oldNew:s.oldNew||""});
-        if(pi.cash>0||pi.conc>0){leftPaid+=pi.cash;leftConc+=pi.conc;leftRows.push({student:s.name,admNo:s.admNo,cls:clabel,father:s.father||"",...pi});}
+        var _la=String(s.admNo||"");
+        // Skip if this admission no. is already counted as an ACTIVE student (e.g. re-admitted into SIP while an
+        // old class still lists her as "left") or already counted under another left doc — never double-count.
+        if(_la&&countedAdm.has(_la))return;
+        const pi=payInfo(clabel,{admNo:_la,name:s.name,section:s.section||"",oldNew:s.oldNew||""});
+        if(pi.cash>0||pi.conc>0){if(_la)countedAdm.add(_la);leftPaid+=pi.cash;leftConc+=pi.conc;leftRows.push({student:s.name,admNo:s.admNo,cls:clabel,father:s.father||"",...pi});}
       });
     });
     leftRows.sort((a,b)=>b.cash-a.cash);
@@ -8308,6 +8316,20 @@ td.r,th.r{text-align:right}
                 <div style={{padding:"6px 16px 14px"}}>
                   {[["Cash collected",dcCash,false],["UPI / online",dcOnline,false],["Cheque / card",dcCardChq,false],["Receipts issued",todays.length,true]].map((row,i)=><div key={row[0]} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",fontSize:12.5,borderTop:i?"1px solid var(--c-f0)":"none"}}><span style={{color:"var(--c-64)"}}>{row[0]}</span><span style={{fontWeight:700,color:"var(--ap-ink)",fontFamily:"var(--ss-font)"}}>{row[2]?row[1]:inr(row[1])}</span></div>)}
                   <div style={{display:"flex",justifyContent:"space-between",padding:"9px 0 2px",marginTop:4,borderTop:"2px solid var(--ap-line)",fontSize:13}}><span style={{fontWeight:700,color:"var(--ap-ink)"}}>Total today</span><span style={{fontWeight:800,color:"var(--tx-grn2)",fontFamily:"var(--ss-font)"}}>{inr(dcTotal)}</span></div>
+                  {todays.length>0&&<div style={{marginTop:10,borderTop:"1px solid var(--c-f0)",paddingTop:9}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:7}}>
+                      <span style={{fontSize:10.5,fontWeight:800,color:"var(--c-64)",textTransform:"uppercase",letterSpacing:.4}}>Credited today · {todays.length}</span>
+                      <button onClick={()=>{const rows=[["Receipt","Student","Class","Adm No","Mode","Amount"],...todays.slice().sort((a,b)=>String(a.createdAt||"").localeCompare(String(b.createdAt||""))).map(p=>[p.receiptNo||"",p.student||"",String(p.cls||"").replace(/^Class\s*/i,""),p.admNo||"",p.mode||"",p.amount||0])];const csv=rows.map(r=>r.map(x=>'"'+String(x).replace(/"/g,'""')+'"').join(",")).join("\r\n");const blob=new Blob(["﻿"+csv],{type:"text/csv;charset=utf-8;"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="daily_collection_"+td0+".csv";document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);}} style={{fontSize:10.5,fontWeight:700,color:"var(--ap-accent)",background:"none",border:"none",cursor:"pointer",padding:0}}>⬇ CSV</button>
+                    </div>
+                    <div style={{display:"grid",gap:6,maxHeight:240,overflowY:"auto"}}>
+                      {todays.slice().sort((a,b)=>String(b.createdAt||b.date||"").localeCompare(String(a.createdAt||a.date||""))).map((p,i)=>(
+                        <div key={p.id||i} style={{display:"flex",alignItems:"center",gap:8,fontSize:11.5}}>
+                          <span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}><b style={{color:"var(--ap-ink)"}}>{p.student||"—"}</b> <span style={{color:"var(--c-94)"}}>· {String(p.cls||"").replace(/^Class\s*/i,"")}{p.admNo?" · "+p.admNo:""} · {p.mode||"—"}</span></span>
+                          <span style={{fontWeight:700,color:"var(--tx-grn2)",fontFamily:"var(--ss-font)",flexShrink:0}}>{inr(p.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>}
                   <div style={{fontSize:10.5,color:"var(--c-94)",marginTop:8,lineHeight:1.5}}><b style={{color:"var(--c-64)"}}>No payment can be deleted.</b> Corrections are reversals with reason + approval.</div>
                 </div>
               </InsPanel>
