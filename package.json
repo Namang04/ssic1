@@ -1,0 +1,14 @@
+{
+  "name": "ssic-erp",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "node build-precompile.mjs"
+  },
+  "dependencies": {
+    "@babel/standalone": "7.23.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

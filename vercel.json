@@ -1,0 +1,5 @@
+{
+  "buildCommand": "node build-precompile.mjs",
+  "outputDirectory": "build",
+  "framework": null
+}
