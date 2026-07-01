@@ -7622,6 +7622,12 @@ function UnrosteredPayments({user,payments,studentsDB,feesDB}){
       const key=p.cls+"||"+k;
       if(!agg[key]){let best=null,bs=0;info.nkeys.forEach((rk,i)=>{const s=sim(k,rk);if(s>bs){bs=s;best=info.names[i];}});
         let close=bs>=0.72?best:null;
+        // Same first + last name but a DIFFERENT middle (given) name = a DIFFERENT child, not a misspelling —
+        // e.g. "Mohammad SAMHA Khan" vs "Mohammad TAHA Khan" (shared "Mohammad …Khan" inflates the score).
+        // Only accept a differing middle token when it's an anagram/transposition or a very close spelling
+        // (a real typo); otherwise drop the match so the child is enrolled separately, not merged.
+        if(close){const _anag=(a,b)=>a.split("").sort().join("")===b.split("").sort().join("");const _kt=k.split(" ").filter(Boolean),_ct=nmKey(close).split(" ").filter(Boolean);
+          if(_kt.length===_ct.length&&_kt.length>=3&&sim(_kt[0],_ct[0])>=0.85&&sim(_kt[_kt.length-1],_ct[_ct.length-1])>=0.85){for(let _mi=1;_mi<_kt.length-1;_mi++){if(_kt[_mi]!==_ct[_mi]&&sim(_kt[_mi],_ct[_mi])<0.8&&!_anag(_kt[_mi],_ct[_mi])){close=null;break;}}}}
         if(!close){const kt=k.split(" ").filter(Boolean);for(let i=0;i<info.nkeys.length;i++){const rt=info.nkeys[i].split(" ").filter(Boolean);const sh=kt.length<=rt.length?kt:rt,lo=kt.length<=rt.length?rt:kt;if(sh.length>=2&&sh[0]===lo[0]&&sh.every(t=>lo.indexOf(t)>=0)){close=info.names[i];break;}}}
         let strong=false;
         if(close){const ck=nmKey(close),kt=k.split(" "),ct=ck.split(" ");const fs=sim(kt[0],ct[0]),ls=sim(kt[kt.length-1],ct[ct.length-1]);strong=(bs>=0.80&&fs>=0.80&&ls>=0.6);}
