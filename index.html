@@ -3551,7 +3551,7 @@ function __dcRowsAtt(attData){var out=[],M={P:"Present",A:"Absent",L:"Leave"};Ob
 function __dcRelDate(iso){if(!iso)return "never";var ms=Date.now()-new Date(iso).getTime();if(ms<0)return "just now";var dys=Math.floor(ms/864e5);if(dys===0)return "today";if(dys===1)return "yesterday";if(dys<30)return dys+" days ago";return new Date(iso).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"});}
 // Header matcher — normalises away case, spaces AND punctuation so messy exports match
 // (e.g. "Student's  Name" / "Ad. No." / "Father's Contact" all match their plain aliases).
-function __col(row,aliases){var nz=function(x){return String(x==null?"":x).toLowerCase().replace(/[^a-z0-9]/g,"");};var keys=Object.keys(row);for(var i=0;i<aliases.length;i++){var a=nz(aliases[i]);if(!a)continue;for(var j=0;j<keys.length;j++){if(nz(keys[j])===a)return String(row[keys[j]]==null?"":row[keys[j]]).trim();}}return "";}
+function __col(row,aliases){var nz=function(x){return String(x==null?"":x).toLowerCase().replace(/[^a-z0-9]/g,"");};var keys=Object.keys(row);for(var i=0;i<aliases.length;i++){var a=nz(aliases[i]);for(var j=0;j<keys.length;j++){if(nz(keys[j])===a)return String(row[keys[j]]==null?"":row[keys[j]]).trim();}}return "";}
 function __lev(a,b){var m=a.length,n=b.length,d=[],i,j;for(i=0;i<=m;i++)d[i]=[i];for(j=0;j<=n;j++)d[0][j]=j;for(i=1;i<=m;i++)for(j=1;j<=n;j++)d[i][j]=Math.min(d[i-1][j]+1,d[i][j-1]+1,d[i-1][j-1]+(a[i-1]===b[j-1]?0:1));return d[m][n];}
 function __ratio(a,b){a=nmKey(a);b=nmKey(b);var L=Math.max(a.length,b.length);return L?1-__lev(a,b)/L:1;}
 const ROMAN_NUM={I:"1",II:"2",III:"3",IV:"4",V:"5",VI:"6",VII:"7",VIII:"8",IX:"9",X:"10",XI:"11",XII:"12"};
@@ -9571,6 +9571,27 @@ function AccountsPanel({user,usersDB,studentsDB,dirDB,academicRosterDB}){
     }catch(e){setMsg({ok:false,text:"Could not update login: "+((e&&(e.code||e.message))||"error")});}
     setWorking("");
   };
+  // Permanently remove a staff member (teacher/office) who has LEFT — unlike Disable (which keeps them
+  // listed as "Disabled"), this deletes their profile + login so they vanish from every list. Their
+  // historical attendance/marks (stored by name/username in other collections) are NOT touched.
+  const removeStaff=async(uRow)=>{
+    const ok=await window.__confirm({title:"Remove "+uRow.name+" permanently?",body:"This deletes their staff profile and login for good — they disappear from every list. Their past attendance/marks history stays intact. This can't be undone (you can always re-add them later).",danger:true,confirmText:"Remove permanently",typeToConfirm:"REMOVE"});
+    if(!ok)return;
+    setWorking(uRow.username);setMsg(null);
+    try{
+      const sid=safeId(uRow.username);
+      if(usersDB.data&&usersDB.data[sid])await usersDB.del(uRow.username);                                   // 1) delete the staff profile (global users collection)
+      const acct=acctByUser[uRow.username]||acctAllByUser[uRow.username];
+      if(acct&&acct.uid)await window.__fbDeleteDoc(window.__fbDoc(window.__db,"accounts",acct.uid));          // 2) delete the login (role lookup now fails → fully blocked)
+      const ctId=__sharedDocId("__classTeachers");                                                            // 3) drop them from this campus's class-teacher map so no section is orphaned
+      const ctm=Object.assign({},((usersDB.data&&usersDB.data[ctId])||{}).map||{});let changed=false;
+      Object.keys(ctm).forEach(function(k){if(String(ctm[k])===String(uRow.username)||String(ctm[k])===String(uRow.name)){delete ctm[k];changed=true;}});
+      if(changed)await usersDB.set(ctId,{map:ctm,updatedAt:new Date().toISOString()});
+      logAudit("staff-remove","users",uRow.username,{role:uRow.role,name:uRow.name},null);
+      setMsg({ok:true,text:uRow.name+" removed permanently."});
+    }catch(e){setMsg({ok:false,text:"Could not remove: "+((e&&(e.code||e.message))||"error")});}
+    setWorking("");
+  };
 
   if(accountsDB.loading||usersDB.loading)return<Spinner/>;
   const filtered=q?allUsers.filter(u=>(u.name||"").toLowerCase().includes(q.toLowerCase())||(u.username||"").includes(q.toLowerCase())):allUsers;
@@ -9677,10 +9698,13 @@ function AccountsPanel({user,usersDB,studentsDB,dirDB,academicRosterDB}){
                 <td style={{...td,textAlign:"right",paddingRight:18}}>
                   {working===u.username?<span style={{fontSize:12,color:"var(--c-94)"}}>…</span>:
                    isSelf?<span style={{fontSize:11.5,color:"var(--c-cb)"}}>—</span>:
-                   isSpecial&&!acct?<span style={{fontSize:11.5,color:"var(--c-cb)"}}>protected</span>:
-                   acct?<button onClick={()=>toggleDisabled(u)} style={{background:isDisabled?"var(--bg-grn)":"var(--bg-red)",color:isDisabled?"var(--tx-grn)":"var(--tx-red)",border:"none",borderRadius:8,padding:"5px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>{isDisabled?"Enable":"Disable"}</button>:
-                   isStaff?<button onClick={()=>giveLogin(u)} style={{background:"var(--c-fff)",border:"1px solid var(--c-d2)",color:"var(--ap-ink)",borderRadius:8,padding:"5px 12px",fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Give login →</button>:
-                   <span style={{fontSize:11.5,color:"var(--c-cb)"}}>—</span>}
+                   <div style={{display:"inline-flex",gap:6,alignItems:"center",justifyContent:"flex-end"}}>
+                   {isSpecial&&!acct?<span style={{fontSize:11.5,color:"var(--c-cb)"}}>protected</span>:
+                    acct?<button onClick={()=>toggleDisabled(u)} style={{background:isDisabled?"var(--bg-grn)":"var(--bg-red)",color:isDisabled?"var(--tx-grn)":"var(--tx-red)",border:"none",borderRadius:8,padding:"5px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>{isDisabled?"Enable":"Disable"}</button>:
+                    isStaff?<button onClick={()=>giveLogin(u)} style={{background:"var(--c-fff)",border:"1px solid var(--c-d2)",color:"var(--ap-ink)",borderRadius:8,padding:"5px 12px",fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Give login →</button>:
+                    <span style={{fontSize:11.5,color:"var(--c-cb)"}}>—</span>}
+                   {isStaff&&!isSpecial&&<button onClick={()=>removeStaff(u)} title="Permanently remove this person from every list" style={{background:"none",border:"1px solid #f3c9c4",color:"var(--tx-red)",borderRadius:8,padding:"5px 10px",fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:"var(--ss-font)",display:"inline-flex",alignItems:"center",gap:4}}><Icon name="trash" size={13}/>Remove</button>}
+                   </div>}
                 </td>
               </tr>);
             })}</tbody>
