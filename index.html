@@ -3818,16 +3818,19 @@ function ImportFees({feesDB, dirDB, curSession, viewSession, card, btn}){
   }
   async function doImport(){if(!preview)return;var _all=preview.matched.concat(preview.matchedLeft||[]);if(!_all.length)return;if(!window.confirm((replace?"REPLACE all "+curSession+" fees with ":"Import ")+_all.length+" receipts (₹"+(preview.sum+(preview.sumLeft||0)).toLocaleString("en-IN")+")?"+(replace?"\n\nThis first DELETES every existing fee record for "+curSession+", then imports these. Use this for a clean full re-upload.":"")+((preview.matchedLeft&&preview.matchedLeft.length)?"\n("+preview.matchedLeft.length+" belong to students who have left — kept under their names.)":"")+"\n\nThe "+preview.flagged.length+" unplaceable rows are skipped. Safe to re-run."))return;
     setBusy(true);var n=0;var base="feeimp_"+curSession.replace(/[^0-9]/g,"")+"_";
-    // STABLE per-receipt key from its CONTENT (student+date+amount+mode+receipt#+disc), NOT its row position.
-    // This makes re-uploads idempotent: the same receipt overwrites only ITSELF (no duplicate), and a
-    // different receipt gets its own key — so a second upload ADDS to the ledger instead of clobbering the
-    // first upload by position (the bug that made collected drop / outstanding rise).
+    // STABLE per-receipt key from its CONTENT (student+date+amount+mode+receipt#+disc+note), NOT its row position,
+    // so RE-UPLOADS ARE IDEMPOTENT: the same receipt always maps to the same key and overwrites only ITSELF — a
+    // second upload of the same file adds nothing (zero duplicates); only genuinely-new receipts get new keys.
     var _fkey=function(rc){var s=[rc.admNo||"",rc.date||"",rc.amount||"",rc.mode||"",rc.receiptNo||"",rc.disc?"d":"",rc.note||""].join("|");var h=5381;for(var k=0;k<s.length;k++){h=(((h<<5)+h)^s.charCodeAt(k))>>>0;}return h.toString(36);};
+    // Two GENUINELY-identical rows (same student+date+amount+mode+note, no receipt no. — e.g. two same-day cash
+    // installments) get a stable occurrence suffix by file order, so distinct payments are never merged, yet
+    // re-uploading the SAME file still reproduces the SAME set of keys (so it stays idempotent — no duplicates).
+    var _seen={};var _keyed=_all.map(function(rec){var fk=_fkey(rec);var oc=(_seen[fk]=(_seen[fk]||0)+1);return {rec:rec,key:base+fk+(oc>1?("_x"+oc):"")};});
     try{
       if(replace&&!pastView){var src=(feesDB.raw&&feesDB.raw.allData)||feesDB.allData||(feesDB.raw&&feesDB.raw.data)||feesDB.data||{};var old=Object.keys(src).filter(function(id){return String(id).indexOf("__")!==0&&(((src[id]&&src[id].session)||"2026-27")===curSession);});for(var d=0;d<old.length;d++){await feesDB.del(old[d]);if(d%20===0)setMsg("Clearing "+curSession+" fees… "+(d+1)+"/"+old.length);}}
-      for(var i=0;i<_all.length;i+=25){var c=_all.slice(i,i+25);
-      await Promise.all(c.map(function(rec){return feesDB.set(base+_fkey(rec),Object.assign({},rec,{by:"Imported",source:"import"})).then(function(){n++;});}));
-      setMsg("Imported "+n+" / "+_all.length+"…");}
+      for(var i=0;i<_keyed.length;i+=25){var c=_keyed.slice(i,i+25);
+      await Promise.all(c.map(function(w){return feesDB.set(w.key,Object.assign({},w.rec,{by:"Imported",source:"import"})).then(function(){n++;});}));
+      setMsg("Imported "+n+" / "+_keyed.length+"…");}
       setMsg("✓ Imported "+n+" receipts for "+curSession+". Open Fees to see updated collection & dues.");}
     catch(e){setMsg(""+((e&&e.message)||"write failed")+".");}
     setBusy(false);
@@ -7583,7 +7586,10 @@ function FeesImport({feesDB}){
   async function doImport(){
     if(!window.confirm("Import "+ROWS.length+" payment records ("+inr(sum.tot)+" collected) into Fees?\n\nThis writes to the live database. Safe to re-run (it overwrites the same records)."))return;
     setBusy(true);setDone("");setProgress("");
-    const writes=ROWS.map((r,i)=>["feeimp_"+i,{cls:r.cls,student:r.student,admNo:r.admNo||"",amount:r.amount,mode:r.mode,note:r.note+(r.disc?" · concession":""),date:r.date,receiptNo:r.receiptNo,by:"Imported (office)",disc:!!r.disc,source:"import",createdAt:new Date().toISOString()}]);
+    // Content-hash key (never row position) so re-running never duplicates — same scheme as the Data Center importer.
+    const _fk=r=>{const s=[r.admNo||"",r.date||"",r.amount||"",r.mode||"",r.receiptNo||"",r.disc?"d":"",r.note||""].join("|");let h=5381;for(let k=0;k<s.length;k++)h=(((h<<5)+h)^s.charCodeAt(k))>>>0;return h.toString(36);};
+    const _sn={};
+    const writes=ROWS.map((r)=>{const fk=_fk(r);const oc=(_sn[fk]=(_sn[fk]||0)+1);return ["feeimp_"+fk+(oc>1?("_x"+oc):""),{cls:r.cls,student:r.student,admNo:r.admNo||"",amount:r.amount,mode:r.mode,note:r.note+(r.disc?" · concession":""),date:r.date,receiptNo:r.receiptNo,by:"Imported (office)",disc:!!r.disc,source:"import",createdAt:new Date().toISOString()}];});
     let ok=0;
     try{for(let i=0;i<writes.length;i+=25){const c=writes.slice(i,i+25);await Promise.all(c.map(w=>feesDB.set(w[0],w[1]).then(()=>{ok++;})));setProgress(ok+" / "+writes.length);}}
     catch(e){setBusy(false);setDone("Stopped after "+ok+" — "+((e&&e.message)||"error")+". Re-run to finish (safe; overwrites).");return;}
