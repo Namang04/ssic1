@@ -7835,7 +7835,9 @@ function Fees({user,feesDB,studentsDB,academicRosterDB,dirDB,metaDB}){
     const netBilled=Math.max(0,T.billed-T.waiver);
     return{perClass,...T,netBilled,leftRows,leftPaid,leftConc,activeCollected,unlinkedPaid,configured:Object.keys(structure).length,pct:netBilled?Math.round(T.collected/netBilled*100):0};
   },[structure,payments,feesDB.data,academicRosterDB.data,studentsDB.data,dirDB&&dirDB.data]);
-  const recent=useMemo(()=>[...payments].sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||"")).slice(0,10),[payments]);
+  // Latest RECEIPT DATE first (then newest entry as tiebreaker). Imported receipts all share one createdAt, so
+  // sorting by the payment DATE is what actually surfaces the most recent receipts instead of import order.
+  const recent=useMemo(()=>[...payments].sort((a,b)=>String(b.date||"").localeCompare(String(a.date||""))||String(b.createdAt||"").localeCompare(String(a.createdAt||""))).slice(0,10),[payments]);
   // Parent phone by admission no. — for one-tap Call / WhatsApp fee reminders on defaulters. Fees is
   // Director/Office only (both have the directory); academic roster fills any gap. Same source as attendance.
   const _feePhoneByAdm=useMemo(()=>{const m={};
@@ -8142,7 +8144,15 @@ td.r,th.r{text-align:right}
         const sibs=cur?allStu.filter(s=>String(s.admNo)!==String(cur.admNo)&&_sibN(cur,s)>=2).map(s=>{const pi=payInfo(s.cls,s);return Object.assign({},s,{bal:pi.bal,overdue:pi.overdue});}).filter(s=>s.bal>0).slice(0,6):[];
         const td0=today();const todays=payments.filter(p=>p.date===td0&&!p.disc);
         const sumMode=(fn)=>todays.filter(fn).reduce((a,p)=>a+Number(p.amount||0),0);
-        const dcCash=sumMode(p=>p.mode==="Cash"),dcOnline=sumMode(p=>p.mode==="UPI"||p.mode==="Bank Transfer"),dcCardChq=sumMode(p=>p.mode==="Card"||p.mode==="Cheque"),dcTotal=dcCash+dcOnline+dcCardChq;
+        // Mode labels vary: imported receipts use lowercase (cash/transfer/card/cheque), manual entries use
+        // Cash/UPI/Card/Cheque/Bank Transfer. Normalise to lowercase; dcTotal = ALL of today's money (so it can
+        // never read ₹0 when the labels don't match), and "online" absorbs transfer/UPI/PG — everything that
+        // isn't cash or card/cheque. This is what made day-close show "9 receipts" but ₹0 collected.
+        const _dm=p=>String(p.mode||"").toLowerCase().trim();
+        const dcTotal=todays.reduce((a,p)=>a+Number(p.amount||0),0);
+        const dcCash=sumMode(p=>_dm(p)==="cash");
+        const dcCardChq=sumMode(p=>{var m=_dm(p);return m==="card"||m==="cheque"||m==="pos"||m==="dd";});
+        const dcOnline=Math.max(0,dcTotal-dcCash-dcCardChq);
         const topOwe=agg.perClass.flatMap(pc=>pc.rows).filter(r=>r.overdue>0).sort((a,b)=>b.overdue-a.overdue).slice(0,6);
         const MODES=[["Cash","rupee"],["UPI","smartphone"],["Card","card"],["Cheque","doc"],["Bank Transfer","bank"]];
         const tag=(txt,bg,fg)=><span style={{background:bg,color:fg,padding:"4px 10px",borderRadius:99,fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>{txt}</span>;
