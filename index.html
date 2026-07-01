@@ -3808,10 +3808,15 @@ function ImportFees({feesDB, dirDB, curSession, viewSession, card, btn}){
   }
   async function doImport(){if(!preview)return;var _all=preview.matched.concat(preview.matchedLeft||[]);if(!_all.length)return;if(!window.confirm((replace?"REPLACE all "+curSession+" fees with ":"Import ")+_all.length+" receipts (₹"+(preview.sum+(preview.sumLeft||0)).toLocaleString("en-IN")+")?"+(replace?"\n\nThis first DELETES every existing fee record for "+curSession+", then imports these. Use this for a clean full re-upload.":"")+((preview.matchedLeft&&preview.matchedLeft.length)?"\n("+preview.matchedLeft.length+" belong to students who have left — kept under their names.)":"")+"\n\nThe "+preview.flagged.length+" unplaceable rows are skipped. Safe to re-run."))return;
     setBusy(true);var n=0;var base="feeimp_"+curSession.replace(/[^0-9]/g,"")+"_";
+    // STABLE per-receipt key from its CONTENT (student+date+amount+mode+receipt#+disc), NOT its row position.
+    // This makes re-uploads idempotent: the same receipt overwrites only ITSELF (no duplicate), and a
+    // different receipt gets its own key — so a second upload ADDS to the ledger instead of clobbering the
+    // first upload by position (the bug that made collected drop / outstanding rise).
+    var _fkey=function(rc){var s=[rc.admNo||"",rc.date||"",rc.amount||"",rc.mode||"",rc.receiptNo||"",rc.disc?"d":"",rc.note||""].join("|");var h=5381;for(var k=0;k<s.length;k++){h=(((h<<5)+h)^s.charCodeAt(k))>>>0;}return h.toString(36);};
     try{
       if(replace&&!pastView){var src=(feesDB.raw&&feesDB.raw.allData)||feesDB.allData||(feesDB.raw&&feesDB.raw.data)||feesDB.data||{};var old=Object.keys(src).filter(function(id){return String(id).indexOf("__")!==0&&(((src[id]&&src[id].session)||"2026-27")===curSession);});for(var d=0;d<old.length;d++){await feesDB.del(old[d]);if(d%20===0)setMsg("Clearing "+curSession+" fees… "+(d+1)+"/"+old.length);}}
       for(var i=0;i<_all.length;i+=25){var c=_all.slice(i,i+25);
-      await Promise.all(c.map(function(rec,j){return feesDB.set(base+(i+j),Object.assign({},rec,{by:"Imported",source:"import"})).then(function(){n++;});}));
+      await Promise.all(c.map(function(rec){return feesDB.set(base+_fkey(rec),Object.assign({},rec,{by:"Imported",source:"import"})).then(function(){n++;});}));
       setMsg("Imported "+n+" / "+_all.length+"…");}
       setMsg("✓ Imported "+n+" receipts for "+curSession+". Open Fees to see updated collection & dues.");}
     catch(e){setMsg(""+((e&&e.message)||"write failed")+".");}
