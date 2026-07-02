@@ -786,11 +786,13 @@ function studentAnnualFee(cls,sec,oldNew,structure){var cn=String(cls).replace("
 // Due-by-now from installment due dates. If NO head has a due date → returns hasDates:false (caller treats the
 // whole annual as due now = original behaviour). A head with a fine adds it only when that installment is overdue
 // AND not yet covered by the amount paid (cumulative). today = "YYYY-MM-DD".
-function feeDueNow(heads,paid,today){
+// `covered` = amount already settled by NON-cash means (concession + waiver). It counts toward covering
+// installments so a fully-waived (RTE / staff-ward) student never accrues a late fine or shows as overdue.
+function feeDueNow(heads,paid,today,covered){
   var arr=(heads||[]).slice();var hasDates=arr.some(function(h){return h&&h.due;});
   if(!hasDates)return{dueAmt:0,fineAmt:0,hasDates:false};
   arr.sort(function(a,b){return String(a.due||"").localeCompare(String(b.due||""));});
-  var cum=0,dueAmt=0,fineAmt=0,p=Number(paid)||0;
+  var cum=0,dueAmt=0,fineAmt=0,p=(Number(paid)||0)+(Number(covered)||0);
   arr.forEach(function(h){var amt=Number(h.amount||0);var isDue=!h.due||String(h.due)<=String(today);if(!isDue)return;cum+=amt;dueAmt+=amt;if(p<cum)fineAmt+=Number(h.fine||0);});
   return{dueAmt:dueAmt,fineAmt:fineAmt,hasDates:true};
 }
@@ -1065,6 +1067,10 @@ function __payHits(p,admNo,cls,name){
   if(p.admNo)return !!admNo&&String(p.admNo)===String(admNo);
   return p.cls===cls&&nmKey(p.student)===nmKey(name);
 }
+// Status-message tone. Replaces a dead `charAt(0)===""` sentinel that could NEVER be true, so every failure used
+// to render in the calm neutral/success colour instead of red. "✓ …" = success; a ⚠/✗ prefix or failure-phrasing
+// = error (red); an in-progress "…" or anything else = neutral. Cosmetic only — never blocks anything.
+function __isErrMsg(m){m=String(m==null?"":m);if(!m||m.charAt(0)==="✓")return false;if(/^\s*[⚠✗❌]/.test(m))return true;if(/[…]$|^(saving|reading|working|importing|clearing|loading|removing|repairing|creating|publishing|migrat)/i.test(m.trim()))return false;return /could ?n'?t|couldn|can'?t|cannot|\bfail|error|invalid|already (used|has|exists|used by)|not found|no such|must |please (enter|fill|pick|fix)|enter the|fill all|^fix \d|isn'?t|denied|permission|skipped|unable|wrong|missing|blank|couldn't|not connected|try again/i.test(m);}
 function rosterFromDir(dirDB,cls){
   if(!dirDB||!dirDB.data)return null;
   var doc=dirDB.data[dirKeyOf(cls)];
@@ -1698,7 +1704,7 @@ const Inp=({label,value,onChange,type="text",placeholder="",error=""})=>(
   <div style={{marginBottom:14}}>
     {label&&<Lbl c={label}/>}
     <input type={type} value={value} placeholder={placeholder} onChange={e=>onChange(e.target.value)} className="ss-input"
-      style={{width:"100%",padding:"11px 14px",borderRadius:10,border:`1px solid ${error?"#fca5a5":"var(--c-d2)"}`,fontSize:13,outline:"none",background:error?"#fff5f5":"#fff"}}/>
+      style={{width:"100%",padding:"11px 14px",borderRadius:10,border:`1px solid ${error?"#fca5a5":"var(--c-d2)"}`,fontSize:13,outline:"none",background:error?"var(--bg-red)":"var(--c-fff)",color:"var(--c-1e)"}}/>
     {error&&<div style={{fontSize:11,color:"var(--tx-red)",marginTop:4}}>{error}</div>}
   </div>
 );
@@ -2117,7 +2123,7 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
       const conc=ps.filter(p=>p.disc).reduce((a,p)=>a+Number(p.amount||0),0);
       const waiver=waiverFor(feesDB.data,stu.admNo);
       const bal=Math.max(0,ann-waiver-conc-cash);
-      const dn=feeDueNow(structure[c]||[],cash,today);
+      const dn=feeDueNow(structure[c]||[],cash,today,conc+(waiver||0));
       const dueNow=dn.hasDates?Math.min(ann,dn.dueAmt):ann;
       const overdue=Math.max(0,dueNow+(dn.hasDates?dn.fineAmt:0)-waiver-conc-cash);
       return{net:Math.max(0,ann-waiver),cash,conc,bal,overdue};};
@@ -3691,7 +3697,7 @@ function DataCenter({user, dirDB, studentsDB, testsDB, usersDB, feesDB, examsDB,
           <div className="ap-subnav" style={{flexWrap:"wrap"}}>{IMPS.map(t=><button key={t[0]} className={"ap-pill"+(imp===t[0]?" on":"")} onClick={()=>setImp(t[0])}>{t[1]}</button>)}</div></div>
         {imp==="students"&&<ImportStudents dirDB={dirDB} curSession={curSession} card={card} btn={btn}/>}
         {imp==="staff"&&<ImportStaff usersDB={usersDB} curSession={curSession} card={card} btn={btn}/>}
-        {imp==="fees"&&<ImportFees feesDB={feesDB} dirDB={dirDB} curSession={curSession} viewSession={viewSession} card={card} btn={btn}/>}
+        {imp==="fees"&&<ImportFees feesDB={feesDB} dirDB={dirDB} curSession={curSession} viewSession={viewSession} card={card} btn={btn} canReplace={true}/>}
         {imp==="marks"&&<ImportMarks testsDB={testsDB} studentsDB={studentsDB} academicRosterDB={academicRosterDB} curSession={curSession} card={card} btn={btn}/>}
         {imp==="registrations"&&<ImportRegistrations registrationsDB={registrationsDB} user={user}/>}
       </div>}
@@ -3768,7 +3774,7 @@ function ImportStudents({dirDB, curSession, card, btn}){
   </>;
 }
 
-function ImportFees({feesDB, dirDB, curSession, viewSession, card, btn}){
+function ImportFees({feesDB, dirDB, curSession, viewSession, card, btn, canReplace}){
   const[msg,setMsg]=useState(""); const[busy,setBusy]=useState(false); const[preview,setPreview]=useState(null); const[replace,setReplace]=useState(false);
   const pastView=!!viewSession&&viewSession!==curSession;   // never replace while viewing an archived year
   function template(){__xlsxSave("fees_template.xlsx",[{"Admission No":"2401","Student Name":"Ravi Kumar","Class":"6","Amount":"14000","Mode":"Cash","Date":"2026-04-05","Receipt No":"101","Note":"I Installment"}]);}
@@ -3828,19 +3834,38 @@ function ImportFees({feesDB, dirDB, curSession, viewSession, card, btn}){
     // Two GENUINELY-identical rows (same student+date+amount+mode+note, no receipt no. — e.g. two same-day cash
     // installments) get a stable occurrence suffix by file order, so distinct payments are never merged, yet
     // re-uploading the SAME file still reproduces the SAME set of keys (so it stays idempotent — no duplicates).
-    var _seen={};var _keyed=_all.map(function(rec){var fk=_fkey(rec);var oc=(_seen[fk]=(_seen[fk]||0)+1);return {rec:rec,key:base+fk+(oc>1?("_x"+oc):"")};});
+    // IDEMPOTENT ACROSS KEY SCHEMES. A receipt's natural identity is admission-no + receipt-no. Index every
+    // fee doc ALREADY in this session's ledger by it — whatever id scheme it was stored under (legacy positional
+    // feeimp_202627_0, content-hash, natural). A re-uploaded receipt then OVERWRITES that existing doc in place
+    // instead of minting a second copy under a different scheme — which is exactly how the double-count happened.
+    // Match by FULL CONTENT signature (the same fields _fkey hashes), NOT admNo+receipt# — because ONE receipt
+    // number legitimately bundles several fee lines (installment + monthly + admission), so keying on receipt#
+    // would collapse them and DESTROY money on re-upload. Index every EXISTING ledger doc (this session, not
+    // soft-deleted) by signature → list of ids; a re-uploaded line overwrites the matching existing doc whatever
+    // scheme it was stored under (legacy positional / content-hash), so re-uploads never create a duplicate.
+    var _sig=function(rc){return [rc.admNo||"",rc.date||"",rc.amount||"",rc.mode||"",rc.receiptNo||"",rc.disc?"d":"",rc.note||""].join("|");};
+    var _fsrc=(feesDB.raw&&feesDB.raw.allData)||feesDB.allData||(feesDB.raw&&feesDB.raw.data)||feesDB.data||{};
+    var _existBySig={};
+    Object.keys(_fsrc).forEach(function(id){if(String(id).indexOf("__")===0)return;var e=_fsrc[id];if(!e||e.deleted)return;if(((e.session)||"2026-27")!==curSession)return;var s=_sig(e);(_existBySig[s]=_existBySig[s]||[]).push(id);});
+    var _used={};var _keyed=_all.map(function(rec){
+      var s=_sig(rec);var pool=_existBySig[s]||[];var oc=(_used[s]=(_used[s]||0));_used[s]=oc+1;
+      if(oc<pool.length)return {rec:rec,key:pool[oc]}; // overwrite the oc-th existing doc of this EXACT content (any id scheme)
+      return {rec:rec,key:base+_fkey(rec)+(oc>0?("_x"+(oc+1)):"")};}); // genuinely new line (or an extra identical one) → fresh key
     try{
-      if(replace&&!pastView){var src=(feesDB.raw&&feesDB.raw.allData)||feesDB.allData||(feesDB.raw&&feesDB.raw.data)||feesDB.data||{};var old=Object.keys(src).filter(function(id){return String(id).indexOf("__")!==0&&(((src[id]&&src[id].session)||"2026-27")===curSession);});for(var d=0;d<old.length;d++){await feesDB.del(old[d]);if(d%20===0)setMsg("Clearing "+curSession+" fees… "+(d+1)+"/"+old.length);}}
+      if(replace&&!pastView&&canReplace){var src=(feesDB.raw&&feesDB.raw.allData)||feesDB.allData||(feesDB.raw&&feesDB.raw.data)||feesDB.data||{};var old=Object.keys(src).filter(function(id){return String(id).indexOf("__")!==0&&(((src[id]&&src[id].session)||"2026-27")===curSession);});for(var d=0;d<old.length;d++){await feesDB.del(old[d]);if(d%20===0)setMsg("Clearing "+curSession+" fees… "+(d+1)+"/"+old.length);}}
+      var _fails=[];
       for(var i=0;i<_keyed.length;i+=25){var c=_keyed.slice(i,i+25);
-      await Promise.all(c.map(function(w){return feesDB.set(w.key,Object.assign({},w.rec,{by:"Imported",source:"import"})).then(function(){n++;});}));
+      await Promise.all(c.map(function(w){return feesDB.set(w.key,Object.assign({},w.rec,{by:"Imported",source:"import"})).then(function(){n++;}).catch(function(e){_fails.push({rec:w.rec,err:(e&&e.code)||(e&&e.message)||"denied"});});}));
       setMsg("Imported "+n+" / "+_keyed.length+"…");}
-      setMsg("✓ Imported "+n+" receipts for "+curSession+". Open Fees to see updated collection & dues.");}
+      // An amount change on an EXISTING receipt is refused for office by the fees rule (tamper guard) — report,
+      // don't abort. Everything else still imports.
+      setMsg("✓ Imported "+n+" receipt"+(n===1?"":"s")+" for "+curSession+"."+(_fails.length?" "+_fails.length+" not saved (an existing receipt's amount changed — a Director must adjust that one).":" Open Fees to see updated collection & dues."));}
     catch(e){setMsg(""+((e&&e.message)||"write failed")+".");}
     setBusy(false);
   }
   return(<div style={{display:"flex",flexDirection:"column",gap:14}}>
     <ImportShell title="Fees / Payments" hint="Upload receipts — both the simple template and the Green City / TechRelevant export (Name with admission no., Total, split Cash/Cheque/Transfer/POS/PG columns, Roman classes) are read automatically. Each is matched to a student by Admission No (or name within the class). A receipt that doesn't match a roster student is STILL imported (the day's cash is never dropped) and listed under “Unlinked fee payments” to link — only unreadable rows with no amount are skipped." template={template} pick={pick} doImport={doImport} preview={preview&&((preview.matched.length+(preview.matchedLeft?preview.matchedLeft.length:0)+(preview.unlinked?preview.unlinked.length:0))+" to import"+(preview.flagged&&preview.flagged.length?" · "+preview.flagged.length+" skipped":""))} busy={busy} msg={msg} card={card} btn={btn}/>
-    <label style={{display:"flex",alignItems:"center",gap:9,fontSize:12.5,color:pastView?"var(--c-94)":"var(--ap-ink)",cursor:pastView?"not-allowed":"pointer",margin:"-4px 2px 0"}}><input type="checkbox" checked={replace&&!pastView} disabled={pastView} onChange={function(){setReplace(!replace);}} style={{width:15,height:15}}/><span><b>Replace</b> {curSession}'s fees first (clears only {curSession}, then imports — for a clean full re-upload). {pastView&&<b style={{color:"var(--tx-org2)"}}>Switch the Overview/Session view back to the live session to use this.</b>}</span></label>
+    {canReplace&&<label style={{display:"flex",alignItems:"center",gap:9,fontSize:12.5,color:pastView?"var(--c-94)":"var(--ap-ink)",cursor:pastView?"not-allowed":"pointer",margin:"-4px 2px 0"}}><input type="checkbox" checked={replace&&!pastView} disabled={pastView} onChange={function(){setReplace(!replace);}} style={{width:15,height:15}}/><span><b>Replace</b> {curSession}'s fees first (clears only {curSession}, then imports — for a clean full re-upload). {pastView&&<b style={{color:"var(--tx-org2)"}}>Switch the Overview/Session view back to the live session to use this.</b>}</span></label>}
     {preview&&preview.unlinked&&preview.unlinked.length>0&&<div style={card}><div style={{fontWeight:700,fontSize:13,color:"var(--tx-org2)",marginBottom:8}}>{preview.unlinked.length} receipt{preview.unlinked.length===1?"":"s"} not on a class roster yet — ₹{(preview.sumUnlinked||0).toLocaleString("en-IN")} <span style={{fontWeight:600,color:"var(--tx-grn2)"}}>(imported, not dropped)</span></div>
       <div style={{maxHeight:180,overflow:"auto",fontSize:12.5,color:"var(--c-64)",display:"flex",flexDirection:"column",gap:3}}>{preview.unlinked.slice(0,60).map(function(f,i){return <div key={i}>{f.cls} · {f.student}{f.admNo?" · "+f.admNo:""} · ₹{Number(f.amount||0).toLocaleString("en-IN")}</div>;})}</div>
       <div style={{fontSize:11.5,color:"var(--c-94)",marginTop:8}}>The money <b>is</b> counted in your total. Open <b>Fees → Overview → “Unlinked fee payments”</b> to add each to a class — or fix the name/admission no. in your sheet and re-upload (safe, no duplicates).</div></div>}
@@ -3889,7 +3914,7 @@ function ImportMarks({testsDB, studentsDB, academicRosterDB, curSession, card, b
       var rd=academicRosterDB&&academicRosterDB.data&&academicRosterDB.data[safeId(cls)];var roster=(rd&&rd.students)||[];var hit=null;
       roster.forEach(function(s){if(nmKey(s.name)===nmKey(name))hit=s;});
       var finalName=hit?hit.name:name; if(!hit)unmatched++;
-      tests[id]=tests[id]||{cls:cls,subj:subj,week:test,total:Number(tot)||undefined,rows:{}}; tests[id].rows[finalName]=mk; marks++;});
+      tests[id]=tests[id]||{cls:cls,subj:subj,week:(parseInt(String(test).replace(/[^0-9]/g,""),10)||0),name:test,total:Number(tot)||undefined,rows:{}}; tests[id].rows[finalName]=mk; marks++;});
     setPreview({tests:tests,marks:marks,unmatched:unmatched,skipped:skipped,over:over,n:Object.keys(tests).length});
     setMsg(marks+" marks across "+Object.keys(tests).length+" tests"+(unmatched?" · "+unmatched+" names not on roster (kept as typed)":"")+(skipped?" · "+skipped+" row"+(skipped>1?"s":"")+" skipped (need Name + Subject)":"")+(over?" · "+over+" mark"+(over>1?"s":"")+" exceed the Total — check for typos":"")+".");setBusy(false);
   }
@@ -3915,7 +3940,7 @@ function ImportShell({title, hint, template, pick, doImport, preview, busy, msg,
       <label style={{background:busy?"var(--c-94)":"var(--tx-grn2)",color:"#fff",borderRadius:9,padding:"9px 16px",fontSize:12.5,fontWeight:700,cursor:busy?"default":"pointer"}}>{busy?"Working…":<span><Icon name="upload" size={16}/> Upload filled sheet</span>}<input type="file" accept=".xlsx,.xls,.csv" style={{display:"none"}} disabled={busy} onChange={function(e){if(e.target.files[0])pick(e.target.files[0]);e.target.value="";}}/></label>
       {preview&&<button onClick={doImport} disabled={busy} style={btn()}>Import</button>}
     </div>
-    {msg&&<div style={{marginTop:12,fontSize:12.5,fontWeight:600,color:msg.charAt(0)==="✓"?"var(--tx-grn2)":msg.charAt(0)===""?"var(--tx-red)":"var(--c-64)"}}>{msg}</div>}
+    {msg&&<div style={{marginTop:12,fontSize:12.5,fontWeight:600,color:msg.charAt(0)==="✓"?"var(--tx-grn2)":__isErrMsg(msg)?"var(--tx-red)":"var(--c-64)"}}>{msg}</div>}
   </div>);
 }
 
@@ -4044,7 +4069,7 @@ function SessionPromote({user, dirDB, studentsDB, testsDB, feesDB, attendanceDB,
         <input value={confirmText} onChange={function(e){setConfirmText(e.target.value);}} placeholder="Type PROMOTE" disabled={alreadyPromoted} className="ss-input" style={{padding:"9px 12px",borderRadius:9,border:"1px solid var(--c-d2)",fontSize:13,width:160,background:"var(--c-fff)",color:"var(--ap-ink)"}}/>
         <button onClick={advance} disabled={busy||alreadyPromoted} style={Object.assign({},btn(confirmText.trim().toUpperCase()==="PROMOTE"&&!alreadyPromoted?"#d2342a":"var(--c-94)"),{opacity:alreadyPromoted?.5:1})}>{busy?"Working…":"Advance session & promote"}</button>
       </div>
-      {msg&&<div style={{marginTop:12,fontSize:12.5,fontWeight:600,color:msg.charAt(0)==="✓"?"var(--tx-grn2)":msg.charAt(0)===""?"var(--tx-red)":"var(--c-64)"}}>{msg}</div>}
+      {msg&&<div style={{marginTop:12,fontSize:12.5,fontWeight:600,color:msg.charAt(0)==="✓"?"var(--tx-grn2)":__isErrMsg(msg)?"var(--tx-red)":"var(--c-64)"}}>{msg}</div>}
     </div>
   </div>);
 }
@@ -4278,7 +4303,7 @@ function SyncTrackerFromRecords({user, studentsDB, studentLinksDB, dirDB, testsD
         </div>
         <div style={{display:"flex",alignItems:"center",gap:14,marginTop:12,flexWrap:"wrap"}}>
           <button onClick={apply} disabled={busy} style={{background:busy?"#9aa7b5":"#0d1b2a",color:"#fff",border:"none",borderRadius:9,padding:"10px 20px",fontSize:13,fontWeight:700,cursor:busy?"default":"pointer",fontFamily:"var(--ss-font)"}}>{busy?"Syncing…":"Sync (add + link, no marks touched)"}</button>
-          {msg&&<span style={{fontSize:12.5,fontWeight:600,color:msg.charAt(0)==="✓"?"var(--tx-grn2)":msg.charAt(0)===""?"#d2342a":"var(--c-64)"}}>{msg}</span>}
+          {msg&&<span style={{fontSize:12.5,fontWeight:600,color:msg.charAt(0)==="✓"?"var(--tx-grn2)":__isErrMsg(msg)?"#d2342a":"var(--c-64)"}}>{msg}</span>}
         </div>
       </div>}
     </div>
@@ -4591,7 +4616,7 @@ function AttendanceImport({attendanceDB,user}){
         <div style={{flex:1,minWidth:180}}><div style={{fontWeight:700,fontSize:13.5,color:"var(--ap-ink)"}}>Import attendance register · Apr–May 2026</div><div style={{fontSize:11.5,color:"var(--ap-muted)",marginTop:1}}>Classes 6–12 · keyed by admission no. · choose <code>attendance_by_admno.json</code> from your Desktop (sync the academic roster first)</div></div>
         <label style={{background:busy?"#9aa7b5":"#16a34a",color:"#fff",borderRadius:9,padding:"8px 14px",fontSize:12.5,fontWeight:700,cursor:busy?"default":"pointer",flexShrink:0}}>{busy?"Importing…":"Choose file & import"}<input type="file" accept=".json" style={{display:"none"}} disabled={busy} onChange={e=>{if(e.target.files[0])doImport(e.target.files[0]);}}/></label>
       </div>
-      {msg&&<div style={{marginTop:10,fontSize:12.5,fontWeight:600,color:msg.charAt(0)==="✓"?"#16a34a":msg.charAt(0)===""?"#d2342a":"var(--c-64)"}}>{msg}</div>}
+      {msg&&<div style={{marginTop:10,fontSize:12.5,fontWeight:600,color:msg.charAt(0)==="✓"?"#16a34a":__isErrMsg(msg)?"#d2342a":"var(--c-64)"}}>{msg}</div>}
     </div>
   );
 }
@@ -4792,12 +4817,17 @@ function Attendance({user,attendanceDB,studentsDB,usersDB,academicRosterDB,dirDB
     // dashboards tell a half-marked day apart from a genuinely low-attendance day. Additive; old docs lack it.
     const markedCount=students.filter(st=>_isMarked(status[st.key])).length;
     setSaving(true);
-    await attendanceDB.set(safeId(attKey),{cls,section:sec,date,status:finalStatus,markedCount,rosterCount:students.length,by:user.name,savedAt:new Date().toISOString(),holiday:!anyPresent});
-    setStatus(finalStatus);setDirty(false);
-    setSaved(true);setSaving(false);setTimeout(()=>setSaved(false),2500);
-    // "Notify parents" isn't auto-send (no SMS gateway yet) — route to the Absences tab where the class
-    // teacher taps Call/WhatsApp per absentee. Only when there actually are absentees.
-    if(Object.values(finalStatus).some(v=>v==="A"))setTimeout(()=>setAtab("absences"),650);
+    try{
+      await attendanceDB.set(safeId(attKey),{cls,section:sec,date,status:finalStatus,markedCount,rosterCount:students.length,by:user.name,savedAt:new Date().toISOString(),holiday:!anyPresent});
+      setStatus(finalStatus);setDirty(false);
+      setSaved(true);setTimeout(()=>setSaved(false),2500);
+      // "Notify parents" isn't auto-send (no SMS gateway yet) — route to the Absences tab where the class
+      // teacher taps Call/WhatsApp per absentee. Only when there actually are absentees.
+      if(Object.values(finalStatus).some(v=>v==="A"))setTimeout(()=>setAtab("absences"),650);
+    }catch(e){
+      // Without this the button used to spin on "Saving…" forever on a permission-denied / offline write.
+      window.alert("Couldn't save attendance — "+((e&&e.message)||"check your connection and try again")+".\n\nNothing was recorded for this class yet.");
+    }finally{setSaving(false);}
   };
 
   const present=displayStudents.filter(s=>status[s.key]==="P").length;
@@ -6156,7 +6186,7 @@ function StudentProfile({user,testsDB,studentsDB,attendanceDB,wrongDB,feesDB,can
     const waiver=waiverFor(feesDB.data,padm);
     const balance=Math.max(0,annual-waiver-conc-cash);
     const paid=Math.max(0,annual-balance);
-    const _dn=feeDueNow(struct[cls]||[],cash,today());
+    const _dn=feeDueNow(struct[cls]||[],cash,today(),conc+(waiver||0));
     const overdue=Math.max(0,(_dn.hasDates?_dn.dueAmt+_dn.fineAmt:annual)-waiver-conc-cash);
     return{annual,paid,balance,overdue,pct:annual?Math.round(Math.min(paid,annual)/annual*100):0,cash,conc,waiver};
   },[feesDB&&feesDB.data,cls,student,padm,dirDB&&dirDB.data]);
@@ -6425,7 +6455,7 @@ function ParentView({user,testsDB,studentsDB,attendanceDB}){
           {upiCfg&&upiCfg.vpa?<>
             <a href={upiLink} className="ss-press" style={{display:"block",textAlign:"center",marginTop:14,background:"linear-gradient(180deg,#16a85e,#138a4e)",color:"#fff",borderRadius:11,padding:"13px",fontSize:14.5,fontWeight:700,textDecoration:"none",fontFamily:"var(--ss-font)"}}>Pay {inr(feeBal)} via UPI →</a>
             {upiCfg.qr&&<div style={{textAlign:"center",marginTop:12}}><img src={upiCfg.qr} alt="UPI QR" style={{width:150,height:150,objectFit:"contain",borderRadius:10,border:"1px solid var(--ap-line)",background:"#fff"}}/><div style={{fontSize:11,color:"var(--ap-muted)",marginTop:6}}>or scan with any UPI app · <b style={{color:"var(--ap-ink2)"}}>{upiCfg.vpa}</b></div></div>}
-            {paySent?<div style={{marginTop:12,fontSize:12.5,fontWeight:600,color:"var(--tx-grn2)",background:"var(--bg-grn)",borderRadius:10,padding:"10px 12px"}}>✓ Payment reference submitted — the office will confirm it shortly.</div>:
+            {paySent?<div style={{marginTop:12,fontSize:12.5,fontWeight:600,color:"var(--tx-grn2)",background:"var(--bg-grn)",borderRadius:10,padding:"10px 12px"}}>✓ Payment reference submitted — the office will confirm it shortly.<div><button onClick={()=>{try{localStorage.removeItem("ssic_upi_sent_"+String(padm||""));}catch(e){}setPaySent(false);setPayAmt("");setPayRef("");setPayOpen(true);}} style={{marginTop:8,background:"none",border:"none",color:"var(--ap-accent)",fontSize:12,fontWeight:700,cursor:"pointer",padding:0,textDecoration:"underline"}}>Report another payment</button></div></div>:
              payOpen?<div style={{marginTop:12,background:"var(--c-f7)",border:"1px solid var(--ap-line)",borderRadius:11,padding:"12px"}}>
                <div style={{fontSize:12,color:"var(--ap-ink2)",fontWeight:600}}>After paying, enter the details so the office can confirm:</div>
                <input value={payAmt} onChange={e=>setPayAmt(e.target.value)} placeholder="Amount paid (₹)" style={payInp}/>
@@ -6879,7 +6909,7 @@ h3{font-size:12.5px;color:#0d1b2a;margin:14px 0 4px;text-transform:uppercase;let
 function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,examClasses=SCHOOL.classes,reportsOnly=false}){
   const[tab,setTab]=useState(reportsOnly?"reports":"exams");
   const[selId,setSelId]=useState("");
-  const[markDraft,setMarkDraft]=useState({});
+  const[markDraft,setMarkDraft]=useState({});const markDirty=useRef({}); // cells THIS teacher edited — so a save merges only those over the live doc, never clobbering another teacher's subject
   const[saving,setSaving]=useState(false);
   const[cardStu,setCardStu]=useState("");
   const[extraDraft,setExtraDraft]=useState({});
@@ -6930,7 +6960,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
       (rosterObjsOf(exam.cls)||[]).forEach(function(stu){(exam.subjects||[]).forEach(function(s){if(!md[s.name])md[s.name]={};if(md[s.name][stu.name]===undefined){var v=_examMark(exam,s.name,stu.name,stu.admNo);if(v!==undefined&&v!=="")md[s.name][stu.name]=v;}});});
       setMarkDraft(md);
     }else setMarkDraft({});
-    setCardStu("");
+    setCardStu("");markDirty.current={}; // switching exam/section resets the edited-cell tracker
     // Default the section: teachers land on their own section; director/office see All.
     setExSec(exam?(canViewAllSecEx?"":(function(){var vs=visibleSecsFor(exam.cls);return vs.length===1?vs[0]:"";})()):"");
   },[selId]);
@@ -7125,12 +7155,19 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
   const startEditSubs=(e)=>{setEditSubsId(e.id);setNewSub("");setEditSubs((e.subjects||[]).map(s=>({name:s.name,max:s.max||100,on:true,graded:!!s.graded})));};
   const saveExamSubjects=async()=>{const ex=examsDB.data[editSubsId];if(!ex)return;const subs=editSubs.filter(s=>s.on).map(s=>s.graded?{name:s.name,max:0,graded:true}:{name:s.name,max:Number(s.max)||100});if(!subs.length){alert("Keep at least one subject.");return;}await examsDB.set(editSubsId,{...ex,subjects:subs,updatedAt:new Date().toISOString()});setEditSubsId("");};
   const saveMarks=async()=>{if(!exam)return;setSaving(true);try{
-    // Persist marks by NAME (back-compat) AND by admission no., so a later rename/section move never loses them.
+    // CONCURRENCY-SAFE: merge only the cells THIS teacher edited (markDirty) over the LIVE exam doc (which already
+    // holds any subject another teacher saved after this one opened it) — so simultaneous subject teachers can't
+    // wipe each other's columns. Persist by NAME (back-compat) AND admission no. so a later rename never loses them.
+    const fresh=examsDB.data[selId]||exam;
+    const mergedMarks=Object.assign({},fresh.marks||{});const dirty=markDirty.current||{};
+    Object.keys(dirty).forEach(subj=>{mergedMarks[subj]=Object.assign({},mergedMarks[subj]||{});Object.keys(dirty[subj]).forEach(stu=>{const v=(markDraft[subj]||{})[stu];if(v===undefined||v==="")delete mergedMarks[subj][stu];else mergedMarks[subj][stu]=v;});});
     const admMap={};rosterObjsOf(exam.cls).forEach(s=>{if(s.name)admMap[s.name]=s.admNo;});
-    const marksByAdm={};Object.keys(markDraft||{}).forEach(subj=>{const sub=markDraft[subj]||{};const o={};Object.keys(sub).forEach(nm=>{const a=String(admMap[nm]||"");if(a&&sub[nm]!==undefined&&sub[nm]!=="")o[a]=sub[nm];});marksByAdm[subj]=o;});
-    await examsDB.set(selId,{...exam,marks:markDraft,marksByAdm,updatedAt:new Date().toISOString()});
-  }catch(e){}setSaving(false);};
-  const setMark=(subj,stu,val)=>setMarkDraft(d=>({...d,[subj]:{...(d[subj]||{}),[stu]:val}}));
+    const marksByAdm={};Object.keys(mergedMarks).forEach(subj=>{const sub=mergedMarks[subj]||{};const o={};Object.keys(sub).forEach(nm=>{const a=String(admMap[nm]||"");if(a&&sub[nm]!==undefined&&sub[nm]!=="")o[a]=sub[nm];});marksByAdm[subj]=o;});
+    await examsDB.set(selId,{...fresh,marks:mergedMarks,marksByAdm,updatedAt:new Date().toISOString()});
+    markDirty.current={};setMarkDraft(mergedMarks);
+    if(window.__toast)window.__toast("Marks saved","ok");
+  }catch(e){if(window.__toast)window.__toast("Couldn't save marks — "+((e&&e.message)||"check your connection")+". Nothing was lost; try again.","err");}setSaving(false);};
+  const setMark=(subj,stu,val)=>{(markDirty.current[subj]=markDirty.current[subj]||{})[stu]=true;setMarkDraft(d=>({...d,[subj]:{...(d[subj]||{}),[stu]:val}}));};
   const delExam=async(id)=>{if(window.confirm("Delete this exam and all its marks?\n\nIt moves to “Recently Deleted” (Administration) and can be restored.")){await softDelete(examsDB,id,user);}if(selId===id)setSelId("");};
   const saveExtra=async()=>{if(!exam||!cardStu)return;const next={...(exam.extra||{}),[cardStu]:extraDraft};await examsDB.set(selId,{...exam,extra:next,updatedAt:new Date().toISOString()});};
 
@@ -7800,7 +7837,7 @@ function Fees({user,feesDB,studentsDB,academicRosterDB,dirDB,metaDB}){
     const waiver=waiverFor(feesDB.data,stu.admNo);
     const bal=Math.max(0,ann-waiver-conc-cash);
     // Due-by-now (installment due dates) — a student is a real DEFAULTER only when an installment is past due + unpaid.
-    const dn=feeDueNow(structure[c]||[],cash,today());
+    const dn=feeDueNow(structure[c]||[],cash,today(),conc+(waiver||0));
     const dueNow=dn.hasDates?Math.min(ann,dn.dueAmt):ann;
     const fine=dn.hasDates?dn.fineAmt:0;
     const overdue=Math.max(0,dueNow+fine-waiver-conc-cash);
@@ -7846,6 +7883,26 @@ function Fees({user,feesDB,studentsDB,academicRosterDB,dirDB,metaDB}){
     const netBilled=Math.max(0,T.billed-T.waiver);
     return{perClass,...T,netBilled,leftRows,leftPaid,leftConc,activeCollected,unlinkedPaid,configured:Object.keys(structure).length,pct:netBilled?Math.round(T.collected/netBilled*100):0};
   },[structure,payments,feesDB.data,academicRosterDB.data,studentsDB.data,dirDB&&dirDB.data]);
+  // DUPLICATE RECEIPTS: same admission-no + receipt-no recorded more than once (how a re-upload across the old
+  // positional / new content-hash key schemes double-counted). Group them so the Director can remove the extras.
+  const dupReceipts=useMemo(()=>{
+    // TRUE duplicate = same FULL content (admNo+receipt#+amount+date+mode+note), so a receipt that bundles several
+    // DIFFERENT fee lines under one number (installment + monthly + admission) is never wrongly flagged/deleted.
+    const _s=p=>[String(p.admNo||""),String(p.date||""),String(p.amount||""),String(p.mode||""),String(p.receiptNo||""),p.disc?"d":"",String(p.note||"")].join("|");
+    const byS={};
+    payments.forEach(p=>{if(p.disc)return;const rno=String(p.receiptNo||"").trim();if(!rno)return;const s=_s(p);(byS[s]=byS[s]||[]).push(p);});
+    const groups=Object.keys(byS).map(k=>byS[k]).filter(g=>g.length>1);
+    const extra=groups.reduce((a,g)=>a+g.slice(1).reduce((s,p)=>s+Number(p.amount||0),0),0);
+    return{groups,count:groups.length,extra};
+  },[payments]);
+  const[dupMsg,setDupMsg]=useState("");const[dupBusy,setDupBusy]=useState(false);
+  const removeDupes=async()=>{
+    if(!isDirector||!dupReceipts.count)return;
+    if(!window.confirm("Remove "+dupReceipts.count+" duplicated receipt"+(dupReceipts.count>1?"s":"")+" ("+inr(dupReceipts.extra)+" of double-counted money)?\n\nEach kept ONCE; only the extra copies (same admission no. + receipt no.) are deleted. This can't be undone here."))return;
+    setDupBusy(true);setDupMsg("Removing duplicates…");let removed=0;
+    for(const g of dupReceipts.groups){for(const p of g.slice(1)){try{await feesDB.del(p.id);removed++;}catch(e){}}}
+    setDupBusy(false);setDupMsg("✓ Removed "+removed+" duplicate receipt"+(removed===1?"":"s")+". Collection total is now correct.");
+  };
   // Latest RECEIPT DATE first (then newest entry as tiebreaker). Imported receipts all share one createdAt, so
   // sorting by the payment DATE is what actually surfaces the most recent receipts instead of import order.
   const recent=useMemo(()=>[...payments].sort((a,b)=>String(b.date||"").localeCompare(String(a.date||""))||String(b.createdAt||"").localeCompare(String(a.createdAt||""))).slice(0,10),[payments]);
@@ -7937,7 +7994,7 @@ td.r,th.r{text-align:right}
       const _newConc=concGiven+(isConc?amt:0);
       const _bal=Math.max(0,ann-wv-_newConc-_newCash);
       const _pstruct=Object.assign({},__feeClasses(),(feesDB.data.__structure&&feesDB.data.__structure.classes)||{});
-      const _pdn=feeDueNow(_pstruct[cls]||[],_newCash,today());
+      const _pdn=feeDueNow(_pstruct[cls]||[],_newCash,today(),_newConc+(wv||0));
       const _overdue=Math.max(0,(_pdn.hasDates?_pdn.dueAmt+_pdn.fineAmt:ann)-wv-_newConc-_newCash);
       const _status=(ann>0&&_bal<=0)?"cleared":((_newCash>0||_newConc>0)?"partial":"unpaid");
       try{window.__fbSetDoc(window.__fbDoc(window.__db,"portalFees",String(selAdm)),{admNo:String(selAdm),name:student,cls,annual:ann,paid:_newCash,conc:_newConc,waiver:wv,bal:_bal,overdue:_overdue,status:_status,updatedAt:new Date().toISOString(),by:user.name}).catch(function(){});}catch(e){}
@@ -8030,7 +8087,7 @@ td.r,th.r{text-align:right}
           <div className="ap-subnav">{TABS.map(t=><button key={t.id} className={"ap-pill"+(sub===t.id?" on":"")} onClick={()=>setSub(t.id)}>{t.label}</button>)}</div>
         </div>
       </div>
-      {canImp&&<ImportModal open={impOpen} onClose={()=>setImpOpen(false)}><ImportFees feesDB={feesDB} dirDB={dirDB} curSession={"2026-27"} viewSession={"2026-27"} card={__impCard()} btn={__impBtn}/></ImportModal>}
+      {canImp&&<ImportModal open={impOpen} onClose={()=>setImpOpen(false)}><ImportFees feesDB={feesDB} dirDB={dirDB} curSession={"2026-27"} viewSession={"2026-27"} card={__impCard()} btn={__impBtn} canReplace={isDirector}/></ImportModal>}
 
       {/* FeesImport (embedded blob) retired — use Data Center → Fees (Excel upload, matches or flags every receipt) */}
       {/* Unlinked fee payments reconciliation — self-hides when every payment matches a roster name. Re-mounted
@@ -8042,6 +8099,19 @@ td.r,th.r{text-align:right}
 
       {/* OVERVIEW */}
       {sub==="overview"&&<>
+        {isDirector&&dupReceipts.count>0&&<div style={{background:"var(--bg-red)",border:"1px solid #f0b4b0",borderRadius:14,padding:"14px 18px",marginBottom:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+            <div><div style={{fontWeight:800,fontSize:14,color:"var(--tx-red)"}}>{dupReceipts.count} duplicate receipt{dupReceipts.count>1?"s":""} found — {inr(dupReceipts.extra)} double-counted</div>
+              <div style={{fontSize:12,color:"var(--c-64)",marginTop:2}}>Same admission no. + receipt no. recorded more than once (from a re-upload). Removing keeps one copy of each.</div></div>
+            <Btn onClick={removeDupes} disabled={dupBusy} v="del" style={{padding:"9px 16px",fontSize:13,whiteSpace:"nowrap"}}>{dupBusy?"Removing…":"Remove "+dupReceipts.count+" duplicate"+(dupReceipts.count>1?"s":"")}</Btn>
+          </div>
+          {dupMsg&&<div style={{fontSize:12,color:dupMsg.charAt(0)==="✓"?"var(--tx-grn2)":"var(--c-64)",marginTop:10}}>{dupMsg}</div>}
+          <details style={{marginTop:10}}><summary style={{cursor:"pointer",fontSize:12,color:"var(--ap-accent)"}}>Show the {dupReceipts.count} affected receipt{dupReceipts.count>1?"s":""}</summary>
+            <div style={{display:"grid",gap:4,marginTop:8,maxHeight:220,overflowY:"auto"}}>{dupReceipts.groups.slice(0,80).map((g,i)=>(
+              <div key={i} style={{fontSize:11.5,color:"var(--c-64)"}}><b style={{color:"var(--ap-ink)"}}>{g[0].student||"—"}</b> · adm {g[0].admNo||"?"} · receipt {g[0].receiptNo} · {inr(g[0].amount)} <span style={{color:"var(--tx-red)"}}>×{g.length}</span></div>
+            ))}</div>
+          </details>
+        </div>}
         <div style={{display:"grid",gap:14,gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",marginBottom:16}}>
           <StatCard label="Collected (cash)" val={inr(agg.collected)} icon="💰" color="var(--tx-grn2)" sub={agg.pct+"% of "+inr(agg.billed)+" billed"}/>
           <StatCard label="Concessions" val={inr(agg.concession)} icon="🏷️" color="var(--ap-accent)" sub="discounts given"/>
@@ -8091,7 +8161,7 @@ td.r,th.r{text-align:right}
         </details>}
         {isDirector&&<div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",marginBottom:16,padding:"12px 16px",background:"var(--c-f7)",borderRadius:12,border:"1px solid var(--ap-line)"}}>
           <button onClick={publishPortalFees} disabled={pubBusy} style={{background:"var(--brand-2)",color:"#fff",border:"none",borderRadius:10,padding:"9px 16px",fontSize:13,fontWeight:700,cursor:pubBusy?"default":"pointer",opacity:pubBusy?.6:1,fontFamily:"var(--ss-font)"}}><Icon name="upload" size={16}/> Publish balances to parent portal</button>
-          <span style={{fontSize:12.5,color:pubMsg.charAt(0)===""?"#d2342a":pubMsg.charAt(0)==="✓"?"var(--tx-grn2)":"var(--c-64)",flex:1,minWidth:200}}>{pubMsg||"Lets each parent see their own child's fee balance in the portal. Re-run after recording payments."}</span>
+          <span style={{fontSize:12.5,color:__isErrMsg(pubMsg)?"#d2342a":pubMsg.charAt(0)==="✓"?"var(--tx-grn2)":"var(--c-64)",flex:1,minWidth:200}}>{pubMsg||"Lets each parent see their own child's fee balance in the portal. Re-run after recording payments."}</span>
         </div>}
         <UpiCollections feesDB={feesDB} metaDB={metaDB} intentsDB={intentsDB} user={user} isDirector={isDirector}/>
         <InsPanel title="Outstanding by class" sub="most due first — tap a class to chase the parents" pad={0}>
@@ -8526,7 +8596,7 @@ function DirectoryProfile({stu, testsDB, studentsDB, attendanceDB, wrongDB, fees
     const wv=waiverInfo(feesDB.data,adm);const waiver=wv?Number(wv.amount||0):0;
     const bal=Math.max(0,annual-waiver-conc-cash);
     const status=(annual>0&&bal<=0)?"cleared":((cash>0||conc>0)?"partial":"unpaid");
-    const _dn=feeDueNow(struct[feeCls]||[],cash,today());
+    const _dn=feeDueNow(struct[feeCls]||[],cash,today(),conc+(waiver||0));
     const overdue=Math.max(0,(_dn.hasDates?_dn.dueAmt+_dn.fineAmt:annual)-waiver-conc-cash);
     const hist=ps.slice().sort((a,b)=>String(b.date||b.createdAt||"").localeCompare(String(a.date||a.createdAt||"")));
     return{annual,cash,conc,waiver,waiverReason:wv?wv.reason:"",bal,overdue,status,hist};
@@ -8558,13 +8628,41 @@ function DirectoryProfile({stu, testsDB, studentsDB, attendanceDB, wrongDB, fees
       onClose&&onClose();
     }catch(e){setLw(""+((e&&e.message)||"Could not save — check rules/connection."));}
   }
-  function startEdit(){var f={};EDITF.forEach(function(x){f[x[1]]=stu[x[1]]||"";});setEform(f);setEmsg("");setEditing(true);}
+  function startEdit(){var f={admNo:stu.admNo||""};EDITF.forEach(function(x){f[x[1]]=stu[x[1]]||"";});setEform(f);setEmsg("");setEditing(true);}
   async function saveEdit(){setEmsg("Saving…");
     if(window.__validators){var _ec=[["contact","phone","Contact"],["phone","phone","Alt phone"],["emergency","phone","Emergency"],["email","email","Email"],["aadhar","aadhaar","Aadhaar"],["dob","dob","Date of birth"]];var _ee=[];_ec.forEach(function(c){var _v=String((eform&&eform[c[0]])||"").trim();if(!_v)return;var _r=window.__validators[c[1]](_v);if(_r&&!_r.ok)_ee.push(c[2]+" — "+_r.msg);});if(_ee.length){setEmsg(""+_ee.join(" · "));if(window.__toast)window.__toast("Fix "+_ee.length+" field"+(_ee.length>1?"s":"")+" before saving","err");return;}}
     var dk="dir_"+String(clsNum).replace(/[^a-zA-Z0-9]/g,"_");var doc=dirDB&&dirDB.data[dk];
     if(!doc){setEmsg("Record not found.");return;}
     var renamed=nmKey(eform.name||"")!==nmKey(stu.name);
-    var safeForm=Object.assign({},eform);delete safeForm.age;delete safeForm.admNo;delete safeForm.studentId; // derived / immutable — never written from the edit form
+    // Admission no. is now editable (Director + Office). Validate: non-blank + globally unique across the directory.
+    var oldAdm=String(stu.admNo||"").trim(),newAdm=String(eform.admNo||"").trim();
+    if(oldAdm&&!newAdm){setEmsg("Admission no. can't be blank.");return;}
+    var admChanged=!!newAdm&&newAdm!==oldAdm;
+    if(admChanged&&renamed){setEmsg("Please change the NAME and the ADMISSION NO. in separate saves — an admission-no change re-keys attendance/marks by name, so the name must stay the same during it.");if(window.__toast)window.__toast("Change the name and admission no. separately","err");return;}
+    if(admChanged){var clash=false;Object.keys(dirDB.data||{}).forEach(function(k){if(k.indexOf("dir_")!==0)return;(((dirDB.data[k]||{}).students)||[]).forEach(function(s){if(!s)return;var sa=String(s.admNo||"").trim();if(sa===newAdm&&!(sa===oldAdm&&s.name===stu.name))clash=true;});});
+      if(clash){setEmsg("Admission no. "+newAdm+" is already used by another student — choose a unique number.");return;}}
+    var safeForm=Object.assign({},eform);delete safeForm.age;delete safeForm.studentId; // derived
+    safeForm.admNo=newAdm||oldAdm; // editable admission no. (validated above) written to the record
+    // ADMISSION-NO CHANGE — MIGRATE FIRST, ABORT IF THE MONEY CAN'T FOLLOW. Everything keyed on admNo must move
+    // with it: fees (NO name fallback → orphans money), attendance (status is admNo-keyed only → orphans), waiver
+    // + portalFees + photo + test-link. Done BEFORE the record write, so a fees failure leaves BOTH the record and
+    // the receipts on the OLD number (consistent) instead of half-migrated. Fees across ALL sessions.
+    var _mig=[];
+    if(admChanged){
+      var _bc=function(b){var br=(typeof window!=="undefined"&&window.__currentBranch)||"greencity";return br==="greencity"?b:(br+"_"+b);};
+      var _fall=(feesDB&&feesDB.raw&&feesDB.raw.allData)||(feesDB&&feesDB.data)||{};
+      var _fids=Object.keys(_fall).filter(function(id){return id.indexOf("__")!==0&&String((_fall[id]||{}).admNo||"").trim()===oldAdm;});
+      for(var _fi=0;_fi<_fids.length;_fi++){try{await feesDB.set(_fids[_fi],Object.assign({},_fall[_fids[_fi]],{admNo:newAdm}));}catch(e){setEmsg("⚠ Couldn't move a fee receipt to "+newAdm+" — NOTHING was changed. Check connection/permissions and retry.");if(window.__toast)window.__toast("Admission-no change aborted — fees could not be moved","err");return;}}
+      if(_fids.length)_mig.push(_fids.length+" fee receipt"+(_fids.length>1?"s":""));
+      try{var _wv=feesDB&&feesDB.data&&feesDB.data.__waivers;if(_wv&&_wv.byAdm&&_wv.byAdm[oldAdm]!==undefined){var _nb=Object.assign({},_wv.byAdm);_nb[newAdm]=_nb[oldAdm];delete _nb[oldAdm];await feesDB.set("__waivers",Object.assign({},_wv,{byAdm:_nb}));_mig.push("waiver");}}catch(e){}
+      try{if(attendanceDB&&attendanceDB.data){var _ad=Object.keys(attendanceDB.data).filter(function(id){var d=attendanceDB.data[id];return d&&d.status&&d.status[oldAdm]!==undefined;});
+        for(var _ai=0;_ai<_ad.length;_ai++){var _d=attendanceDB.data[_ad[_ai]];var _ns=Object.assign({},_d.status);_ns[newAdm]=_ns[oldAdm];delete _ns[oldAdm];try{await attendanceDB.set(_ad[_ai],Object.assign({},_d,{status:_ns}));}catch(e){}}
+        if(_ad.length)_mig.push(_ad.length+" attendance day"+(_ad.length>1?"s":""));}}catch(e){}
+      try{var _pf=await window.__fbGetDoc(window.__fbDoc(window.__db,_bc("portalFees"),oldAdm));if(_pf&&_pf.exists&&_pf.exists()){await window.__fbSetDoc(window.__fbDoc(window.__db,_bc("portalFees"),newAdm),Object.assign({},_pf.data(),{admNo:newAdm}));await window.__fbDeleteDoc(window.__fbDoc(window.__db,_bc("portalFees"),oldAdm));_mig.push("portal balance");}}catch(e){}
+      try{var _ph=await window.__fbGetDoc(window.__fbDoc(window.__db,_bc("studentPhotos"),oldAdm));if(_ph&&_ph.exists&&_ph.exists()){await window.__fbSetDoc(window.__fbDoc(window.__db,_bc("studentPhotos"),newAdm),Object.assign({},_ph.data(),{admNo:newAdm}));await window.__fbDeleteDoc(window.__fbDoc(window.__db,_bc("studentPhotos"),oldAdm));_mig.push("photo");}}catch(e){}
+      try{if(studentLinksDB&&studentLinksDB.data&&studentLinksDB.data[oldAdm]){await studentLinksDB.set(newAdm,Object.assign({},studentLinksDB.data[oldAdm],{admNo:newAdm}));await studentLinksDB.del(oldAdm);_mig.push("test link");}}catch(e){}
+      try{logAudit("change-admno","studentDirectory",newAdm,{admNo:oldAdm},{admNo:newAdm});}catch(e){}
+    }
     // Class change → relocate the student to the matching EXISTING class document so the roster/attendance/fees follow.
     // Only moves to a class that already exists (matched by normalised number); an unknown/typo class is ignored, keeping the current class.
     var newCn=String(safeForm.cls||"").trim()?__clsNum(safeForm.cls):null;var ndk=null;
@@ -8593,7 +8691,7 @@ function DirectoryProfile({stu, testsDB, studentsDB, attendanceDB, wrongDB, fees
       // portal follow the rename/section/class change automatically (no manual re-sync needed).
       if(renamed&&adm&&studentLinksDB&&studentLinksDB.set){try{await studentLinksDB.set(String(adm),Object.assign({},(studentLinksDB.data&&studentLinksDB.data[String(adm)])||{},{testName:eform.name}));}catch(e){}}
       (function(){try{var _b={},_a={},_ch=0;Object.keys(safeForm).forEach(function(k){var ov=stu[k],nv=safeForm[k];if(String(ov==null?"":ov)!==String(nv==null?"":nv)){_ch++;var _m=(k==="aadhar"||k==="aadhaar");_b[k]=_m?"•••":ov;_a[k]=_m?"•••":nv;}});if(_ch)logAudit(moved?"edit-profile+move":"edit-profile","studentDirectory",String(stu.admNo||stu.name),_b,_a);}catch(e){}})();
-      setEmsg("✓ Saved — marks, attendance and the portal now follow the record automatically.");setEditing(false);onClose&&onClose();}
+      setEmsg(admChanged?("✓ Admission no. changed to "+newAdm+(_mig.length?" · moved "+_mig.join(", "):"")+". Now run “Repair fee links for existing parents” (Accounts) so the parent login follows."):"✓ Saved — marks, attendance and the portal now follow the record automatically.");setEditing(false);onClose&&onClose();}
     catch(e){setEmsg(""+((e&&e.message)||"Could not save — check rules/connection."));}
   }
   // ── Transfer Certificate (printable, CBSE-style) — pulls from the directory record + fees/attendance ──
@@ -8931,7 +9029,7 @@ function DirectoryProfile({stu, testsDB, studentsDB, attendanceDB, wrongDB, fees
                 </div>
               </div>
               {canEditDir&&<div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginTop:14}}>
-                {isDir&&<button onClick={startEdit} style={{background:"var(--btn-pri-bg)",color:"#fff",border:"none",borderRadius:10,padding:"9px 16px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}><Icon name="edit" size={16}/> Edit details</button>}
+                {canEditDir&&<button onClick={startEdit} style={{background:"var(--btn-pri-bg)",color:"#fff",border:"none",borderRadius:10,padding:"9px 16px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}><Icon name="edit" size={16}/> Edit details</button>}
                 <button onClick={printTC} style={{background:"var(--c-fff)",color:"var(--brand-2)",border:"1px solid #0b3a82",borderRadius:10,padding:"9px 16px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}><Icon name="print" size={16}/> Transfer Certificate</button>
                 {isLeft?<button onClick={()=>setLeft(false)} style={{background:"var(--bg-grn)",color:"var(--tx-grn2)",border:"1px solid var(--tx-grn2)",borderRadius:10,padding:"9px 16px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>↩ Restore to active</button>:<button onClick={()=>{var due=(fees&&fees.bal>0)?fees.bal:0;var msg="Mark "+stu.name+" as LEFT?\n\nArchived — kept in records, removed from active class lists (attendance, tests, fees). Reversible.";if(due>0)msg="OUTSTANDING DUES: ₹"+Number(due).toLocaleString("en-IN")+"\n\nThis student still owes fees.\n\n"+msg+"\n\nMark as left anyway?";if(window.confirm(msg))setLeft(true);}} style={{background:"var(--bg-red)",color:"var(--tx-red)",border:"1px solid #f0b4ae",borderRadius:10,padding:"9px 16px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>⊘ Mark as left</button>}
               </div>}
@@ -8939,7 +9037,7 @@ function DirectoryProfile({stu, testsDB, studentsDB, attendanceDB, wrongDB, fees
                 <span style={{fontSize:11.5,color:"var(--c-94)",fontWeight:600}}>Certificates:</span>
                 {[["bonafide","Bonafide"],["character","Character"],["migration","Migration"],["fee","Fee"]].map(c=><button key={c[0]} onClick={()=>printCert(c[0])} style={{background:"var(--c-f7)",color:"var(--brand-2)",border:"1px solid var(--c-d2)",borderRadius:8,padding:"7px 12px",fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:"var(--ss-font)"}}>{c[1]}</button>)}
               </div>}
-              {(lw||(emsg&&!editing))&&<div style={{fontSize:12.5,fontWeight:600,marginTop:10,color:((lw&&lw.charAt(0)==="")||(emsg&&emsg.charAt(0)===""))?"#d2342a":"var(--tx-grn2)"}}>{lw||emsg}</div>}
+              {(lw||(emsg&&!editing))&&<div style={{fontSize:12.5,fontWeight:600,marginTop:10,color:((lw&&__isErrMsg(lw))||(emsg&&__isErrMsg(emsg)))?"#d2342a":"var(--tx-grn2)"}}>{lw||emsg}</div>}
             </div>}
           </div>
         </div>
@@ -8947,14 +9045,18 @@ function DirectoryProfile({stu, testsDB, studentsDB, attendanceDB, wrongDB, fees
       {editing&&<div onClick={()=>setEditing(false)} style={{position:"fixed",inset:0,background:"rgba(15,23,42,.55)",zIndex:1100,overflowY:"auto",padding:"24px 14px"}}>
         <div onClick={e=>e.stopPropagation()} style={{background:"var(--c-fff)",borderRadius:18,maxWidth:580,width:"100%",margin:"0 auto",padding:"22px 24px",boxShadow:"0 30px 80px rgba(0,0,0,.4)"}}>
           <div style={{fontSize:17,fontWeight:800,color:"var(--ap-ink)"}}>Edit {stu.name}</div>
-          <div style={{fontSize:12,color:"var(--c-64)",marginBottom:14}}>Class {clsNum} · Adm #{stu.admNo} <span style={{color:"var(--c-94)"}}>(admission no. can't be changed)</span></div>
+          <div style={{fontSize:12,color:"var(--c-64)",marginBottom:12}}>Class {clsNum} · current admission no. {stu.admNo||"—"}</div>
+          <label style={{fontSize:11,fontWeight:700,color:"var(--tx-org2)",display:"block",marginBottom:12}}>Admission No
+            <input value={eform.admNo||""} onChange={function(e){var v=e.target.value;setEform(function(p){var n=Object.assign({},p);n.admNo=v;return n;});}} className="ss-input" style={{display:"block",width:"100%",marginTop:3,padding:"8px 10px",borderRadius:8,border:"1px solid var(--tx-org2)",fontSize:13,boxSizing:"border-box",background:"var(--c-fff)",color:"var(--ap-ink)"}}/>
+            <span style={{fontWeight:500,color:"var(--c-94)",fontSize:10.5}}>Changing this re-tags the student's fees, waiver, portal balance, photo &amp; test links to the new number. Must be unique. Run “Repair fee links for existing parents” afterwards so the parent login follows.</span>
+          </label>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
             {EDITF.map(function(f){return <label key={f[1]} style={{fontSize:11,fontWeight:600,color:"var(--c-64)"}}>{f[0]}<input value={eform[f[1]]||""} onChange={function(e){var v=e.target.value;setEform(function(p){var n=Object.assign({},p);n[f[1]]=v;return n;});}} className="ss-input" style={{display:"block",width:"100%",marginTop:3,padding:"8px 10px",borderRadius:8,border:"1px solid var(--c-d2)",fontSize:13,boxSizing:"border-box",background:"var(--c-fff)",color:"var(--ap-ink)"}}/></label>;})}
           </div>
           <div style={{display:"flex",gap:10,marginTop:16,alignItems:"center"}}>
             <button onClick={saveEdit} style={{background:"#16a34a",color:"#fff",border:"none",borderRadius:9,padding:"10px 20px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Save changes</button>
             <button onClick={()=>setEditing(false)} style={{background:"var(--c-f5)",border:"1px solid var(--c-d2)",borderRadius:9,padding:"10px 18px",fontSize:13,fontWeight:600,cursor:"pointer",color:"var(--ap-ink)",fontFamily:"var(--ss-font)"}}>Cancel</button>
-            {emsg&&<span style={{fontSize:12.5,fontWeight:600,color:emsg.charAt(0)===""?"#d2342a":"var(--c-64)"}}>{emsg}</span>}
+            {emsg&&<span style={{fontSize:12.5,fontWeight:600,color:__isErrMsg(emsg)?"#d2342a":"var(--c-64)"}}>{emsg}</span>}
           </div>
         </div>
       </div>}
@@ -8980,7 +9082,7 @@ function StudentDirectory({user, dirDB, testsDB, studentsDB, attendanceDB, wrong
     const pay={};Object.keys((feesDB&&feesDB.data)||{}).forEach(id=>{if(id.startsWith("__"))return;const p=feesDB.data[id];if(!p||p.disc||!p.admNo)return;pay[String(p.admNo)]=(pay[String(p.admNo)]||0)+Number(p.amount||0);});
     const struct=Object.assign({},__feeClasses(),(feesDB&&feesDB.data&&feesDB.data.__structure&&feesDB.data.__structure.classes)||{});
     const m={};all.forEach(s=>{const a=String(s.admNo||"");if(!a)return;const ao=att[a];const attPct=ao&&ao.t>=3?Math.round(ao.p/ao.t*100):null;let dues=null,overdue=null;
-      if(canFees){const cls=/sip/i.test(String(s.clsNum||s.cls||""))?"Class SIP":("Class "+(s.clsNum||s.cls));const annual=(typeof studentAnnualFee==="function")?studentAnnualFee(cls,s.section,s.oldNew,struct):0;const w=(typeof waiverFor==="function")?waiverFor(feesDB.data,a):0;dues=Math.max(0,annual-w-(pay[a]||0));const dn=(typeof feeDueNow==="function")?feeDueNow(struct[cls]||[],pay[a]||0,today()):{hasDates:false};overdue=dn.hasDates?Math.max(0,Math.min(annual,dn.dueAmt)+dn.fineAmt-w):dues;}
+      if(canFees){const cls=/sip/i.test(String(s.clsNum||s.cls||""))?"Class SIP":("Class "+(s.clsNum||s.cls));const annual=(typeof studentAnnualFee==="function")?studentAnnualFee(cls,s.section,s.oldNew,struct):0;const w=(typeof waiverFor==="function")?waiverFor(feesDB.data,a):0;dues=Math.max(0,annual-w-(pay[a]||0));const dn=(typeof feeDueNow==="function")?feeDueNow(struct[cls]||[],pay[a]||0,today(),w):{hasDates:false};overdue=dn.hasDates?Math.max(0,Math.min(annual,dn.dueAmt)+dn.fineAmt-w):dues;}
       m[a]={attPct,dues,overdue};});
     return m;
   },[attendanceDB.data,feesDB&&feesDB.data,all,canFees]);
@@ -9065,7 +9167,7 @@ function StudentDirectory({user, dirDB, testsDB, studentsDB, attendanceDB, wrong
           <label style={{background:"var(--c-f5)",border:"1px solid var(--c-d2)",borderRadius:10,padding:"8px 14px",fontSize:12.5,fontWeight:600,cursor:"pointer",color:"var(--ap-ink)"}}>Update from file<input type="file" accept=".json" style={{display:"none"}} onChange={function(e){if(e.target.files[0])doImport(e.target.files[0]);}}/></label>
         </div>}
       </div>
-      {syncMsg&&<div style={{marginBottom:14,fontSize:13,fontWeight:600,padding:"10px 14px",borderRadius:10,background:syncMsg.charAt(0)==="✓"?"var(--bg-grn)":syncMsg.charAt(0)===""?"var(--bg-red)":"var(--c-f5)",color:syncMsg.charAt(0)==="✓"?"var(--tx-grn2)":syncMsg.charAt(0)===""?"#d2342a":"var(--c-64)"}}>{syncMsg}</div>}
+      {syncMsg&&<div style={{marginBottom:14,fontSize:13,fontWeight:600,padding:"10px 14px",borderRadius:10,background:syncMsg.charAt(0)==="✓"?"var(--bg-grn)":__isErrMsg(syncMsg)?"var(--bg-red)":"var(--c-f5)",color:syncMsg.charAt(0)==="✓"?"var(--tx-grn2)":__isErrMsg(syncMsg)?"#d2342a":"var(--c-64)"}}>{syncMsg}</div>}
       {all.length===0?(
         <InsPanel title="Import the student directory" sub="One-time upload — stays in your auth-protected database, never in the public page">
           <div style={{padding:"4px 2px 6px",fontSize:13,color:"var(--c-64)",lineHeight:1.7}}>
@@ -9075,7 +9177,7 @@ function StudentDirectory({user, dirDB, testsDB, studentsDB, attendanceDB, wrong
               <li>Choose <code>student_directory.json</code> (on your Desktop) below.</li>
             </ol>
             {canEdit?<label style={{display:"inline-block",background:"#16a34a",color:"#fff",borderRadius:10,padding:"10px 18px",fontSize:13,fontWeight:700,cursor:"pointer"}}><Icon name="upload" size={16}/> Choose JSON &amp; import<input type="file" accept=".json" style={{display:"none"}} onChange={function(e){if(e.target.files[0])doImport(e.target.files[0]);}}/></label>:<div style={{color:"var(--c-94)"}}>Only the office or director can import.</div>}
-            {imp&&<div style={{marginTop:12,fontSize:13,fontWeight:600,color:imp.charAt(0)==="✓"?"#16a34a":imp.charAt(0)===""?"#d2342a":"var(--c-64)"}}>{imp}</div>}
+            {imp&&<div style={{marginTop:12,fontSize:13,fontWeight:600,color:imp.charAt(0)==="✓"?"#16a34a":__isErrMsg(imp)?"#d2342a":"var(--c-64)"}}>{imp}</div>}
           </div>
         </InsPanel>
       ):(
@@ -9212,6 +9314,15 @@ service cloud.firestore {
             .data.get('username', '').replace('[^a-zA-Z0-9]', '_')
         : '';
     }
+    // Greencity is the LIVE, UNPREFIXED branch. Its money/PII collections below check only ROLE, so without this
+    // guard a signed-in OFFICE / STAFF / PARENT account belonging to ANOTHER branch would reach Greencity's money
+    // and PII. The Director (admin) reaches every branch; everyone else must have 'greencity' (or 'all') in their
+    // branches. Default ['greencity'] keeps every existing Greencity account (which may predate the branches field).
+    function inGreencity() {
+      return role() == 'admin'
+        || (signedIn() && exists(/databases/$(database)/documents/accounts/$(request.auth.uid))
+            && get(/databases/$(database)/documents/accounts/$(request.auth.uid)).data.get('branches', ['greencity']).hasAny(['greencity','all']));
+    }
 
     // ── Authoritative roles ────────────────────────────────────────────────
     // accounts/{uid}.role is the rules-authoritative role. Readable by any
@@ -9225,15 +9336,24 @@ service cloud.firestore {
       allow write: if isAny(['admin']);
     }
 
-    // ── Money — Director + Office only ───────────────────────────────────────
-    match /fees/{id} { allow read, write: if isAny(['admin','office']); }
+    // ── Money — Director + Office only, and only within Greencity ────────────
+    // Cash ledger is tamper-EVIDENT: office may create receipts and update non-amount fields (idempotent
+    // re-imports, note/mode fixes, the __structure/__waivers config docs which carry no 'amount'), but
+    // CHANGING an amount or DELETING a receipt is Director-only. This closes the cashier cash-theft window.
+    match /fees/{id} {
+      allow read:   if isAny(['admin','office']) && inGreencity();
+      allow create: if isAny(['admin','office']) && inGreencity();
+      allow update: if inGreencity() && (isAny(['admin'])
+        || (isAny(['office']) && request.resource.data.get('amount', 0) == resource.data.get('amount', 0)));
+      allow delete: if isAny(['admin']) && inGreencity();
+    }
 
     // Staff monthly salary (base pay per staff + payroll settings). Sensitive — Director + Office ONLY (hidden from teachers/VP).
-    match /salaries/{id} { allow read, write: if isAny(['admin','office']); }
+    match /salaries/{id} { allow read, write: if isAny(['admin','office']) && inGreencity(); }
 
     // Monotonic counters (e.g. counters/feeReceipts) — allocated atomically in a transaction during fee
     // collection so two simultaneous saves can't mint the same receipt number. Director + Office only.
-    match /counters/{id} { allow read, write: if isAny(['admin','office']); }
+    match /counters/{id} { allow read, write: if isAny(['admin','office']) && inGreencity(); }
 
     // (2) Fee summary published to the student/parent portal — portalFees/<admNo>.
     // admin/office read & write everything. A parent/student may read ONLY the
@@ -9241,13 +9361,13 @@ service cloud.firestore {
     // cannot enumerate other families' balances by guessing admission numbers.
     // Parents/students never write.
     match /portalFees/{id} {
-      allow read: if isAny(['admin','office'])
-        || (isAny(['parent','student']) && id == string(myAdmNo()));
-      allow write: if isAny(['admin','office']);
+      allow read: if inGreencity() && (isAny(['admin','office'])
+        || (isAny(['parent','student']) && id == string(myAdmNo())));
+      allow write: if isAny(['admin','office']) && inGreencity();
     }
 
     // New-admission welcome slips — Director + Office only
-    match /admissions/{id} { allow read, write: if isAny(['admin','office']); }
+    match /admissions/{id} { allow read, write: if isAny(['admin','office']) && inGreencity(); }
 
     // Discipline incidents (per-student behaviour log) — all staff read; admin/VP/teacher log them.
     match /discipline/{id} { allow read: if isAny(['admin','vp','office','teacher']); allow write: if isAny(['admin','vp','teacher']); }
@@ -9265,7 +9385,7 @@ service cloud.firestore {
     // Previously any signed-in user could read it. Now READ and WRITE are limited
     // to admin + office. Teachers/VP must use academicRoster (no PII) below.
     // VP / Principal may READ student records (full directory, no fees); only Director + Office can write/import.
-    match /studentDirectory/{id} { allow read: if isAny(['admin','vp','office']); allow write: if isAny(['admin','office']); }
+    match /studentDirectory/{id} { allow read: if isAny(['admin','vp','office']) && inGreencity(); allow write: if isAny(['admin','office']) && inGreencity(); }
 
     // Academic data — any signed-in user reads; only staff write
     match /tests/{id}             { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
@@ -9288,24 +9408,30 @@ service cloud.firestore {
     match /meta/{id}              { allow read: if signedIn(); allow write: if isAny(['admin','vp']); }
 
     // Pre-admission registration enquiries — office, VP & admin
-    match /registrations/{id}     { allow read, write: if isAny(['admin','vp','office']); }
+    match /registrations/{id}     { allow read, write: if isAny(['admin','vp','office']) && inGreencity(); }
 
     // Online UPI payment claims: a signed-in parent submits their own (create only, can't read others);
     // office/admin read the queue and confirm/reject. A claim is just a CLAIM — no money moves until the
     // office verifies the credit and records the receipt, so a spoofed admNo achieves nothing.
     match /paymentIntents/{id} {
-      allow read:           if isAny(['admin','office']);
-      allow create:         if signedIn()
+      allow read:           if isAny(['admin','office']) && inGreencity();
+      allow create:         if signedIn() && inGreencity()
                               && request.resource.data.status == 'pending'
                               && request.resource.data.admNo is string
                               && request.resource.data.amount is number && request.resource.data.amount > 0
                               && (isAny(['admin','office']) || request.resource.data.admNo == string(myAdmNo()));
-      allow update, delete: if isAny(['admin','office']);
+      allow update, delete: if isAny(['admin','office']) && inGreencity();
     }
 
     match /timetables/{id}        { allow read: if signedIn(); allow write: if isAny(['admin','vp']); }
     match /timetableSettings/{id} { allow read: if signedIn(); allow write: if isAny(['admin','vp']); }
-    match /notices/{id}           { allow read: if signedIn(); allow write: if isAny(['admin','vp','office']); }
+    match /notices/{id} {
+      allow read: if signedIn();
+      allow create, delete: if isAny(['admin','vp','office']);
+      // Staff post/edit/delete; a TEACHER may only acknowledge — an update that touches nothing but readBy/ackAt.
+      allow update: if isAny(['admin','vp','office'])
+        || (isAny(['teacher','office']) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readBy','ackAt']));
+    }
     match /calendar/{id}          { allow read: if signedIn(); allow write: if isAny(['admin','vp']); }
     match /lessonPlans/{id}       { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
     match /teacherLogs/{id}       { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
@@ -10309,6 +10435,7 @@ function AdminPanel({testsDB,studentsDB,usersDB,wrongDB}){
   // Which usernames have a REAL Firebase Auth login (an accounts/{uid} doc). Their password lives in Firebase,
   // which this app can't change client-side (no admin key) — so a legacy-password reset here would silently fail.
   const accountsDB=useFirestore("accounts");
+  const dirDB=useFirestore("studentDirectory"); // to resolve a child's admission no. when creating a parent login — the portalFees/paymentIntents rules key on accounts.admNo
   const _secureUsers=useMemo(()=>{const m={};Object.values(accountsDB.data||{}).forEach(a=>{if(a&&a.username)m[a.username]=true;});return m;},[accountsDB.data]);
 
   const handleReset=async()=>{
@@ -10337,12 +10464,20 @@ function AdminPanel({testsDB,studentsDB,usersDB,wrongDB}){
       setParentMsg("\""+newParentStudent+"\" isn't in "+newParentCls+"'s roster — pick the child from the list so the parent is linked correctly.");return;
     }
     if(!window.__authCreateOrGetUid){setParentMsg("Not connected to the login service. Try again in a moment.");return;}
+    // Resolve the child's ADMISSION NO. from the directory — the portalFees read rule and the paymentIntents
+    // create rule both key on accounts/{uid}.admNo, so a parent account without it can't see fees or report UPI.
+    let childAdm="";
+    {const cn=String(newParentCls).replace("Class ","").trim();const dk=/sip/i.test(cn)?"dir_SIP_CLASS":"dir_"+cn;
+     const st=((dirDB.data[dk]||{}).students)||[];
+     const hit=st.find(s=>s&&nmKey(s.name)===nmKey(newParentStudent));
+     childAdm=hit?String(hit.admNo||""):"";}
+    if(!childAdm){setParentMsg("Couldn't find \""+newParentStudent+"\"'s admission number in "+newParentCls+" — fix the student record first (the parent's fee view is keyed on it).");return;}
     setParentMsg("Creating secure login…");
     try{
       const email=AUTH_EMAIL(key);
       const uid=await window.__authCreateOrGetUid(email,newParentPass); // real Firebase Auth account (like staff)
-      await window.__fbSetDoc(window.__fbDoc(window.__db,"accounts",uid),{username:key,role:"parent",name:newParentName,student:newParentStudent,cls:newParentCls,email,branches:[(typeof window!=="undefined"&&window.__currentBranch)||"greencity"],createdAt:new Date().toISOString()});
-      await usersDB.set(key,{username:key,role:"parent",name:newParentName,student:newParentStudent,cls:newParentCls,branches:[(typeof window!=="undefined"&&window.__currentBranch)||"greencity"]}); // profile (no plaintext password — secure login is the Auth account)
+      await window.__fbSetDoc(window.__fbDoc(window.__db,"accounts",uid),{username:key,role:"parent",name:newParentName,student:newParentStudent,cls:newParentCls,admNo:childAdm,email,branches:[(typeof window!=="undefined"&&window.__currentBranch)||"greencity"],createdAt:new Date().toISOString()});
+      await usersDB.set(key,{username:key,role:"parent",name:newParentName,student:newParentStudent,cls:newParentCls,admNo:childAdm,branches:[(typeof window!=="undefined"&&window.__currentBranch)||"greencity"]}); // profile (no plaintext password — secure login is the Auth account)
       setParentMsg("✓ Parent \""+key+"\" added with a secure login.");
       setNewParentUser("");setNewParentName("");setNewParentStudent("");
       setTimeout(()=>setParentMsg(""),4000);
@@ -10350,6 +10485,28 @@ function AdminPanel({testsDB,studentsDB,usersDB,wrongDB}){
       const c=(e&&(e.code||e.message))||"error";
       setParentMsg(c.indexOf("email-already-in-use")>=0?"That username already has a login — pick another.":"Could not create parent: "+c);
     }
+  };
+  // BACKFILL: parent accounts created before admNo was written can't read portalFees or submit UPI (the rules
+  // key on accounts.admNo). Resolve each linked child's admission no. from the directory and stamp it on both docs.
+  const[fixParentsMsg,setFixParentsMsg]=useState("");
+  const repairParentLinks=async()=>{
+    const dirByClsName={};
+    Object.keys(dirDB.data||{}).forEach(k=>{if(k.indexOf("dir_")!==0)return;(((dirDB.data[k]||{}).students)||[]).forEach(s=>{if(s&&s.name&&s.admNo)dirByClsName[k+"||"+nmKey(s.name)]=String(s.admNo);});});
+    const targets=Object.entries(accountsDB.data||{}).filter(([,a])=>a&&a.role==="parent"&&!a.admNo&&a.student&&a.cls);
+    if(!targets.length){setFixParentsMsg("✓ Every parent account already carries the child's admission number.");setTimeout(()=>setFixParentsMsg(""),4000);return;}
+    let ok=0,miss=[];
+    setFixParentsMsg("Repairing "+targets.length+" parent account"+(targets.length>1?"s":"")+"…");
+    for(const[uid,a]of targets){
+      const cn=String(a.cls).replace("Class ","").trim();const dk=/sip/i.test(cn)?"dir_SIP_CLASS":"dir_"+cn;
+      const adm=dirByClsName[dk+"||"+nmKey(a.student)]||"";
+      if(!adm){miss.push(a.student);continue;}
+      try{
+        await window.__fbSetDoc(window.__fbDoc(window.__db,"accounts",uid),Object.assign({},a,{admNo:adm}));
+        if(a.username&&usersDB.data[safeId(a.username)])await usersDB.set(a.username,Object.assign({},usersDB.data[safeId(a.username)],{admNo:adm}));
+        ok++;
+      }catch(e){miss.push(a.student+" ("+((e&&e.code)||"write failed")+")");}
+    }
+    setFixParentsMsg((ok?"✓ Linked "+ok+" parent account"+(ok>1?"s":"")+" to their child's admission no.":"")+(miss.length?" · couldn't resolve: "+miss.slice(0,5).join(", ")+(miss.length>5?" +"+(miss.length-5)+" more":""):""));
   };
 
   if(testsDB.loading)return<Spinner/>;
@@ -10417,7 +10574,11 @@ function AdminPanel({testsDB,studentsDB,usersDB,wrongDB}){
           </div>
           <div style={{marginBottom:14}}><Lbl c="Student (pick from roster)"/>{(function(){var names=((studentsDB.data[safeId(newParentCls)]||{}).list)||[];return names.length?<Sel value={newParentStudent} onChange={setNewParentStudent} options={["",...names]}/>:<div style={{padding:"10px 14px",borderRadius:10,border:"1px solid var(--c-d2)",background:"var(--c-f7)",fontSize:13,color:"var(--c-94)"}}>No students in {newParentCls} — add them under Student Records first.</div>;})()}</div>
           {parentMsg&&<div style={{fontSize:12,color:parentMsg.startsWith("✓")?"#c9a84c":"var(--tx-red)",background:parentMsg.startsWith("✓")?"var(--bg-grn)":"var(--bg-red)",borderRadius:8,padding:"8px 12px",marginBottom:12}}>{parentMsg}</div>}
-          <Btn onClick={handleAddParent}>+ Add Parent</Btn>
+          <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+            <Btn onClick={handleAddParent}>+ Add Parent</Btn>
+            <Btn v="ghost" onClick={repairParentLinks} title="Older parent accounts were created without the child's admission number, so their fee view and UPI reporting are blocked. This looks each child up in Student Records and links them.">Repair fee links for existing parents</Btn>
+          </div>
+          {fixParentsMsg&&<div style={{fontSize:12,color:fixParentsMsg.startsWith("✓")?"var(--tx-grn2)":"var(--tx-org2)",marginTop:10}}>{fixParentsMsg}</div>}
           {Object.entries(_branchUsers(usersDB.data,(typeof window!=="undefined"&&window.__currentBranch)||"greencity")).filter(([,u])=>u.role==="parent").length>0&&(
             <div style={{marginTop:20}}>
               <Lbl c="Existing Parent Accounts"/>
@@ -13194,7 +13355,7 @@ function AdmissionForm({user, studentsDB, dirDB, academicRosterDB}){
 
       <div style={{display:"flex",alignItems:"center",gap:14,marginTop:14,flexWrap:"wrap"}}>
         <Btn onClick={submit} disabled={saving} v={(dup.reg||dup.nm)?"warn":"pri"} style={{padding:"11px 24px",fontSize:14}}>{saving?"Admitting…":(dup.reg||dup.nm)?"Admit anyway":"✓ Admit student"}</Btn>
-        {msg&&<div style={{width:"100%",fontSize:13.5,fontWeight:600,marginTop:2,background:msg.charAt(0)==="✓"?"var(--bg-grn)":msg.charAt(0)===""?"var(--bg-red)":"var(--bg-amb)",border:"1px solid var(--ap-line)",borderRadius:10,padding:"10px 14px",color:msg.charAt(0)==="✓"?"var(--tx-grn2)":msg.charAt(0)===""?"var(--tx-red)":"var(--tx-org2)"}}>{msg}</div>}
+        {msg&&<div style={{width:"100%",fontSize:13.5,fontWeight:600,marginTop:2,background:msg.charAt(0)==="✓"?"var(--bg-grn)":__isErrMsg(msg)?"var(--bg-red)":"var(--bg-amb)",border:"1px solid var(--ap-line)",borderRadius:10,padding:"10px 14px",color:msg.charAt(0)==="✓"?"var(--tx-grn2)":__isErrMsg(msg)?"var(--tx-red)":"var(--tx-org2)"}}>{msg}</div>}
       </div>
     </div>
   );
@@ -13999,7 +14160,7 @@ function UpiCollections({feesDB,metaDB,intentsDB,user,isDirector}){
         <label style={{fontSize:11.5,fontWeight:700,color:"var(--c-64)"}}>Payee name<input value={payee} onChange={e=>setPayee(e.target.value)} placeholder="Stepping Stone Educational Society" style={inp}/></label>
         <label style={{fontSize:11.5,fontWeight:700,color:"var(--c-64)"}}>QR image (optional)<input type="file" accept="image/*" onChange={onFile} style={{...inp,padding:"7px 11px"}}/></label>
         {qr&&<img src={qr} alt="UPI QR" style={{width:120,height:120,objectFit:"contain",border:"1px solid var(--ap-line)",borderRadius:10,background:"#fff",padding:6}}/>}
-        <div style={{display:"flex",alignItems:"center",gap:12}}><Btn onClick={saveCfg} disabled={busy}>Save</Btn><span style={{fontSize:12,color:msg.charAt(0)===""?"#d2342a":"var(--tx-grn2)"}}>{msg}</span></div>
+        <div style={{display:"flex",alignItems:"center",gap:12}}><Btn onClick={saveCfg} disabled={busy}>Save</Btn><span style={{fontSize:12,color:__isErrMsg(msg)?"#d2342a":"var(--tx-grn2)"}}>{msg}</span></div>
       </div>}
     </div>}
     <div style={card}>
@@ -14562,7 +14723,7 @@ function buildSchoolContext(dbs,includeFees){
     var ai=attIdx[s.adm],attp=ai&&ai.t?Math.round(ai.p/ai.t*100):"-";
     var mi=markIdx[s.adm],avg=mi&&mi.m?Math.round(mi.s/mi.m*100):"-";
     var row=[s.name,s.cls.replace("Class ","")+(s.sec?"-"+s.sec:""),s.adm];
-    if(includeFees){var pi=payIdx[s.adm]||{cash:0,conc:0};var annual=(typeof studentAnnualFee==="function")?studentAnnualFee(s.cls,s.sec,s.oldNew,struct):0;var bal=Math.max(0,annual-pi.cash-pi.conc);var _dn=(typeof feeDueNow==="function")?feeDueNow(struct[s.cls]||[],pi.cash,today()):{hasDates:false};var overdue=Math.max(0,(_dn.hasDates?_dn.dueAmt+_dn.fineAmt:annual)-pi.conc-pi.cash);totalDue+=bal;totalOverdue+=overdue;totalColl+=pi.cash;row.push(overdue>0?overdue:0);}
+    if(includeFees){var pi=payIdx[s.adm]||{cash:0,conc:0};var annual=(typeof studentAnnualFee==="function")?studentAnnualFee(s.cls,s.sec,s.oldNew,struct):0;var bal=Math.max(0,annual-pi.cash-pi.conc);var _dn=(typeof feeDueNow==="function")?feeDueNow(struct[s.cls]||[],pi.cash,today(),pi.conc||0):{hasDates:false};var overdue=Math.max(0,(_dn.hasDates?_dn.dueAmt+_dn.fineAmt:annual)-pi.conc-pi.cash);totalDue+=bal;totalOverdue+=overdue;totalColl+=pi.cash;row.push(overdue>0?overdue:0);}
     row.push(attp,avg);
     out.push(row.join("|"));});
   if(includeFees)out.push("\nFEE TOTALS: collected ≈ ₹"+totalColl.toLocaleString("en-IN")+" · outstanding now (overdue) ≈ ₹"+totalOverdue.toLocaleString("en-IN")+" · full-year balance ≈ ₹"+totalDue.toLocaleString("en-IN")+".");
@@ -14627,7 +14788,7 @@ function AIPanel({testsDB, studentsDB, topicsDB, dirDB, feesDB, attendanceDB, us
           <button onClick={saveSet} style={{background:"var(--btn-pri-bg)",color:"#fff",border:"none",borderRadius:9,padding:"9px 18px",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Save</button>
           <button onClick={testConn} style={{background:"var(--c-f5)",border:"1px solid var(--c-d2)",borderRadius:9,padding:"9px 16px",fontWeight:600,fontSize:13,cursor:"pointer",color:"var(--ap-ink)",fontFamily:"var(--ss-font)"}}>Test connection</button>
           {hasKey&&<button onClick={()=>{__gemSetKey("");setKeyVal("");setTestMsg("");}} style={{background:"var(--bg-red)",color:"var(--tx-red)",border:"1px solid #f0b4ae",borderRadius:9,padding:"9px 14px",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Remove</button>}
-          {testMsg&&<span style={{fontSize:12.5,fontWeight:600,color:testMsg.charAt(0)===""?"var(--tx-red)":"var(--tx-grn2)"}}>{testMsg}</span>}
+          {testMsg&&<span style={{fontSize:12.5,fontWeight:600,color:__isErrMsg(testMsg)?"var(--tx-red)":"var(--tx-grn2)"}}>{testMsg}</span>}
         </div>
         <div style={{fontSize:11.5,color:"var(--ap-faint)",marginTop:10,lineHeight:1.5}}>Default <b>gemini-2.0-flash</b> is fast &amp; free. Student names, classes, fees, attendance &amp; marks are sent to Google to answer; on the free tier Google may use it to improve their models. Aadhaar, address, parent names &amp; phone numbers are never sent.</div>
       </Card>}
@@ -14819,7 +14980,7 @@ function StudentMyReport({user,testsDB,studentsDB,attendanceDB,wrongDB,onBack}){
                   <div style={{fontSize:11.5,color:"var(--ap-muted)",marginTop:8,lineHeight:1.5}}>Tap to open your UPI app (GPay / PhonePe / Paytm) pre-filled. On a computer, scan the QR or pay to <b>{upiCfg.vpa}</b>.</div>
                   {upiCfg.qr&&<img src={upiCfg.qr} alt="Scan to pay" style={{width:150,height:150,objectFit:"contain",marginTop:10,border:"1px solid var(--ap-line)",borderRadius:12,background:"#fff",padding:8}}/>}
                   {paySent?(
-                    <div style={{marginTop:12,background:"var(--bg-grn)",color:"var(--tx-grn)",borderRadius:10,padding:"10px 14px",fontSize:12.5,fontWeight:600}}>✓ Thank you — your payment details are submitted. The office will verify against the account and your balance will update once confirmed.</div>
+                    <div style={{marginTop:12,background:"var(--bg-grn)",color:"var(--tx-grn)",borderRadius:10,padding:"10px 14px",fontSize:12.5,fontWeight:600}}>✓ Thank you — your payment details are submitted. The office will verify against the account and your balance will update once confirmed.<div><button onClick={()=>{try{localStorage.removeItem("ssic_upi_sent_"+String(adm||""));}catch(e){}setPaySent(false);setPayAmt("");setPayRef("");setPayOpen(true);}} style={{marginTop:8,background:"none",border:"none",color:"var(--ap-accent)",fontSize:12,fontWeight:700,cursor:"pointer",padding:0,textDecoration:"underline"}}>Report another payment</button></div></div>
                   ):payOpen?(
                     <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:8,maxWidth:340}}>
                       <div style={{fontSize:12,color:"var(--ap-muted)"}}>After paying, enter the details so the office can confirm it:</div>
@@ -15963,6 +16124,9 @@ function MyTimetablePanel(props) {
   if (!loading) {
     leaves.forEach(function(lv) {
       if (lv.status !== "approved") return;
+      // Only show cover periods for a leave that actually covers TODAY — otherwise every past approved leave
+      // kept showing its substitute on that weekday forever (the todayDate below was computed but never used).
+      if (lv.from && lv.to && !(String(lv.from) <= todayDate && todayDate <= String(lv.to))) return;
       var psubs = lv.periodSubstitutes || {};
       // Check if I am a substitute for any period
       Object.keys(psubs).forEach(function(day) {
