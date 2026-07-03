@@ -2346,7 +2346,19 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
   const isSchoolDay=["Mon","Tue","Wed","Thu","Fri","Sat"].indexOf(dayShort)>=0;
   const nowPeriod=useMemo(()=>{
     const gs=ttSetDB&&ttSetDB.data&&ttSetDB.data.global;if(!gs||!gs.schedules||!gs.schedules.length)return null;
-    const mkPeriods=(sc)=>((sc&&sc.periods)||[]).map(p=>({no:String(p.no),isBreak:!!p.isBreak,name:p.name||"",start:p.start||"",end:p.end||"",sMin:_toMin(p.start),eMin:_toMin(p.end)})).filter(p=>p.sMin!=null&&p.eMin!=null).sort((a,b)=>a.sMin-b.sMin);
+    const mkPeriods=(sc)=>{
+      const arr=((sc&&sc.periods)||[]).map(p=>({no:String(p.no),isBreak:!!p.isBreak,name:p.name||"",start:p.start||"",end:p.end||"",sMin:_toMin(p.start),eMin:_toMin(p.end)})).filter(p=>p.sMin!=null&&p.eMin!=null);
+      // Heal obvious PM typos in the settings (e.g. period saved as 10:40–23:10 — "11:10" entered as PM):
+      // subtract 12h when that turns an absurd slot into a sane ≤3h one that chains onto its neighbour.
+      const mm=v=>String(Math.floor(v/60)).padStart(2,"0")+":"+String(v%60).padStart(2,"0");
+      let prevEnd=null;
+      arr.sort((a,b)=>a.sMin-b.sMin).forEach(p=>{
+        if(prevEnd!=null&&p.sMin>=13*60&&(p.sMin-prevEnd>240||p.sMin<prevEnd)&&Math.abs(p.sMin-720-prevEnd)<=240&&p.sMin-720>=0){p.sMin-=720;p.start=mm(p.sMin);p.fixed=true;}
+        if(p.eMin<=p.sMin||p.eMin-p.sMin>180){const e2=p.eMin-720;if(e2>p.sMin&&e2-p.sMin<=180){p.eMin=e2;p.end=mm(e2);p.fixed=true;}}
+        prevEnd=p.eMin;
+      });
+      return arr.sort((a,b)=>a.sMin-b.sMin);
+    };
     // one entry per schedule (junior/senior run different clocks) + a class-token → schedule index
     const scheds=gs.schedules.map(sc=>({classes:(sc.assignedClasses||[]).map(String),periods:mkPeriods(sc)})).filter(sc=>sc.periods.length);
     if(!scheds.length)return null;
@@ -2357,7 +2369,8 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
     const teach=periods.filter(p=>!p.isBreak);
     const idx=cur&&!cur.isBreak?teach.indexOf(cur)+1:null;
     const next=periods.find(p=>p.sMin>nowMin);
-    return{periods,cur,next,idx,total:teach.length,byClass,main,before:nowMin<periods[0].sMin,after:nowMin>=periods[periods.length-1].eMin};
+    const fixedCount=scheds.reduce((a,sc)=>a+sc.periods.filter(p=>p.fixed).length,0);
+    return{periods,cur,next,idx,total:teach.length,byClass,main,fixedCount,before:nowMin<periods[0].sMin,after:nowMin>=periods[periods.length-1].eMin};
   },[ttSetDB&&ttSetDB.data,nowMin]);
   const liveNow=!isPastView&&isSchoolDay&&nowPeriod&&nowPeriod.cur;
 
@@ -2708,6 +2721,7 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
             {liveNow&&!periodBoard.allBreak&&showCovered&&periodBoard.covered.map((r,i)=>(<div key={"c"+i} style={{fontSize:12,color:"var(--ap-muted)",padding:"0 4px"}}>{r.label} · {r.subject} — <b style={{color:"var(--ap-ink2)"}}>{r.sub}</b> covering {r.teacher}</div>))}
             {liveNow&&!periodBoard.allBreak&&periodBoard.bench.length>0&&<div style={{fontSize:11.5,color:"var(--ap-muted)",borderTop:"1px dashed var(--ap-line)",paddingTop:8}}>Free this period ({periodBoard.bench.length}): {periodBoard.bench.slice(0,6).map((n,i)=><span key={n}>{i>0?", ":""}<NameLink onClick={()=>go("staffatt","__staffJump",{stab:"directory",q:n})}>{n}</NameLink></span>)}{periodBoard.bench.length>6?" +"+(periodBoard.bench.length-6):""}</div>}
             {!liveNow&&<div style={{fontSize:12.5,color:"var(--ap-muted)",padding:"6px 2px 2px"}}>{isPastView?"Switch the date back to today for the live room-by-room view.":!isSchoolDay?"No classes today — the board returns Monday morning.":"The board lights up during school hours: every room this period, uncovered classes first, plus which teachers are free to step in."}</div>}
+            {nowPeriod&&nowPeriod.fixedCount>0&&<div style={{fontSize:11.5,fontWeight:600,color:"var(--tx-org2)",background:"var(--bg-amb)",border:"1px solid var(--bd-amb)",borderRadius:10,padding:"8px 11px"}}>⚠ {nowPeriod.fixedCount} period timing{nowPeriod.fixedCount>1?"s":""} in the schedule look mistyped as PM (e.g. 23:10 instead of 11:10). The clock auto-corrects them for display — please fix the times in <button onClick={()=>go("timetable","__ttJump",{view:"settings"})} style={{background:"none",border:"none",padding:0,cursor:"pointer",color:"var(--ap-accent)",fontWeight:700,fontSize:"inherit",fontFamily:"inherit",textDecoration:"underline"}}>Operations → Schedules &amp; Settings</button>.</div>}
           </div>
         </div>
       </div>
@@ -7165,6 +7179,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
   const[cardStu,setCardStu]=useState("");
   const[extraDraft,setExtraDraft]=useState({});
   const[rcTpl,setRcTpl]=useState("cbse"); // report-card format: cbse · nep · icse
+  const[msSec,setMsSec]=useState(""); // marksheet scope: "" = whole class, else one section
   const[rcTog,setRcTog]=useState({rank:true,coscholastic:true,attendance:true,remarks:true}); // sections shown on the card
   // ── Term Result composer state ──
   const[trCls,setTrCls]=useState(examClasses[0]||SCHOOL.classes[0]);
@@ -7211,7 +7226,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
       (rosterObjsOf(exam.cls)||[]).forEach(function(stu){(exam.subjects||[]).forEach(function(s){if(!md[s.name])md[s.name]={};if(md[s.name][stu.name]===undefined){var v=_examMark(exam,s.name,stu.name,stu.admNo);if(v!==undefined&&v!=="")md[s.name][stu.name]=v;}});});
       setMarkDraft(md);
     }else setMarkDraft({});
-    setCardStu("");markDirty.current={}; // switching exam/section resets the edited-cell tracker
+    setCardStu("");markDirty.current={};setMsSec(""); // switching exam resets the edited-cell tracker + marksheet section
     // Default the section: teachers land on their own section; director/office see All.
     setExSec(exam?(canViewAllSecEx?"":(function(){var vs=visibleSecsFor(exam.cls);return vs.length===1?vs[0]:"";})()):"");
   },[selId]);
@@ -7398,10 +7413,16 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
 
   // ── Class MARKSHEET — the office's tabular statement of marks for one exam (whole class on one sheet,
   //    ranked, with signature lines) — distinct from the per-student report cards. Print → Save as PDF.
-  const openMarksheet=ex=>{
-    const cr=classResults(ex);
+  const openMarksheet=(ex,msec)=>{
+    let cr=classResults(ex);
+    const secMap=sectionsOf(ex.cls); // student name → normalized section (streams collapse to A/B/C/D)
+    if(msec)cr=cr.filter(x=>(secMap[x.student]||"")===msec);
+    // rank WITHIN the printed cohort (a section marksheet ranks that section, not the whole class)
+    let _rk=0;cr=cr.map(x=>x.hasMarks?{...x,rank:++_rk}:{...x,rank:null});
     const done=cr.filter(x=>x.hasMarks);
-    if(!done.length)return;
+    if(!done.length){if(window.__toast)window.__toast("No marks entered"+(msec?" for Section "+msec:"")+" yet.","err");return;}
+    // columns = subjects with marks IN THIS COHORT only — a Class 12-B (Commerce) sheet no longer
+    // carries empty Physics/Bio columns from the other stream.
     const subjNames=[...new Set(cr.flatMap(x=>x.subjects.map(s=>s.name)))];
     const maxBy={};(ex.subjects||[]).forEach(s=>{if(!s.graded)maxBy[s.name]=Number(s.max)||100;});
     const passCount=done.filter(x=>!x.anyFail&&x.pct>=33).length;
@@ -7414,10 +7435,10 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
     }).join("");
     const inner=`<div class="ms">
       <div class="hdr"><div class="hdrlogo"></div><h1>${esc(SCHOOL_NAME)}</h1><div class="sub">Session 2026–27</div></div>
-      <div class="rt">Marksheet — ${esc(ex.name)}</div>
-      <div class="msinfo"><span>Class: <b>${esc(ex.cls)}</b></span><span>Exam date: <b>${esc(ex.date||"—")}</b></span><span>Students assessed: <b>${done.length}</b> of ${cr.length}</span><span>Pass: <b>${passCount}</b> (${done.length?Math.round(passCount/done.length*100):0}%)</span><span>Class average: <b>${avg}%</b></span><span>Printed: <b>${today()}</b></span></div>
+      <div class="rt">Marksheet — ${esc(ex.name)}${msec?" · Section "+esc(msec):""}</div>
+      <div class="msinfo"><span>Class: <b>${esc(ex.cls)}${msec?" — Sec "+esc(msec):""}</b></span><span>Exam date: <b>${esc(ex.date||"—")}</b></span><span>Students assessed: <b>${done.length}</b> of ${cr.length}</span><span>Pass: <b>${passCount}</b> (${done.length?Math.round(passCount/done.length*100):0}%)</span><span>Class average: <b>${avg}%</b></span><span>Printed: <b>${today()}</b></span></div>
       <table><thead><tr><th>S.No</th><th>Adm No</th><th class="l">Student</th>${subjNames.map(n=>`<th>${esc(n)}${maxBy[n]?`<div class="wt">/${maxBy[n]}</div>`:""}</th>`).join("")}<th>Total</th><th>%</th><th>Grade</th><th>Rank</th><th>Result</th></tr></thead><tbody>${rows}</tbody></table>
-      <div class="legend">AB = absent (counted as 0) · blank = subject not taken · N.IMP = Needs Improvement (below 33% overall or in a subject) · rows in grey have no marks entered.</div>
+      <div class="legend">AB = absent (counted as 0) · blank = subject not taken · N.IMP = Needs Improvement (below 33% overall or in a subject) · rank is within ${msec?"this section":"the class"} · rows in grey have no marks entered.</div>
       <div class="sign"><span>Class Teacher</span><span>Examination In-charge</span><span>Principal</span></div>
     </div>`;
     const MS_CSS=`@page{size:A4 landscape;margin:10mm}
@@ -7430,7 +7451,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
       .ms .sign span{border-top:1px solid #333;padding:5px 26px 0;margin-top:44px}
       thead{display:table-header-group}tr{page-break-inside:avoid}`;
     const w=window.open("","_blank");
-    if(w){w.document.write(`<html><head><title>Marksheet — ${esc(ex.name)} ${esc(ex.cls)}</title><meta charset="utf-8"><style>${CARD_CSS}${MS_CSS}</style></head><body>${inner}</body></html>`);w.document.close();setTimeout(()=>w.print(),350);}
+    if(w){w.document.write(`<html><head><title>Marksheet — ${esc(ex.name)} ${esc(ex.cls)}${msec?" Sec "+esc(msec):""}</title><meta charset="utf-8"><style>${CARD_CSS}${MS_CSS}</style></head><body>${inner}</body></html>`);w.document.close();setTimeout(()=>w.print(),350);}
   };
 
   const createExam=async()=>{
@@ -7771,7 +7792,13 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
 
       {/* REPORTS */}
       {tab==="reports"&&<div>
-        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14,flexWrap:"wrap"}}><ExamPicker/>{exam&&marked.length>0&&<Btn onClick={()=>openMarksheet(exam)}><Icon name="print" size={16}/> Marksheet (PDF)</Btn>}{exam&&marked.length>0&&<Btn v="ghost" onClick={()=>printAll(exam,{tpl:rcTpl,tog:rcTog})}><Icon name="print" size={16}/> Print all cards ({marked.length})</Btn>}{exam&&marked.length>0&&<Btn v="ghost" onClick={()=>exportResults(exam)}>⬇ Export results CSV</Btn>}</div>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14,flexWrap:"wrap"}}><ExamPicker/>{exam&&marked.length>0&&(()=>{const _secs=visibleSecsFor(exam.cls);return(<span style={{display:"inline-flex",alignItems:"center",gap:6}}>
+          {_secs.length>1&&<select value={msSec} onChange={e=>setMsSec(e.target.value)} className="ss-input" title="Print the whole class or one section" style={{padding:"9px 10px",borderRadius:10,fontSize:12.5,fontWeight:600}}>
+            <option value="">All sections</option>
+            {_secs.map(sc=><option key={sc} value={sc}>Sec {sc} only</option>)}
+          </select>}
+          <Btn onClick={()=>openMarksheet(exam,msSec)}><Icon name="print" size={16}/> Marksheet{msSec?" · Sec "+msSec:""} (PDF)</Btn>
+        </span>);})()}{exam&&marked.length>0&&<Btn v="ghost" onClick={()=>printAll(exam,{tpl:rcTpl,tog:rcTog})}><Icon name="print" size={16}/> Print all cards ({marked.length})</Btn>}{exam&&marked.length>0&&<Btn v="ghost" onClick={()=>exportResults(exam)}>⬇ Export results CSV</Btn>}</div>
         {!exam?<Empty icon="📋" title="No exam selected" sub="Pick an exam to see results and print report cards."/>:
         marked.length===0?<Empty icon="📋" title="No marks entered" sub={"Enter marks for "+exam.name+" to generate report cards."}/>:<>
           <div style={{display:"grid",gap:14,gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))",marginBottom:16}}>
@@ -8189,7 +8216,10 @@ function Fees({user,feesDB,studentsDB,academicRosterDB,dirDB,metaDB}){
     // DIFFERENT fee lines under one number (installment + monthly + admission) is never wrongly flagged/deleted.
     const _s=p=>[String(p.admNo||""),String(p.date||""),String(p.amount||""),String(p.mode||""),String(p.receiptNo||""),p.disc?"d":"",String(p.note||"")].join("|");
     const byS={};
-    payments.forEach(p=>{if(p.disc)return;const rno=String(p.receiptNo||"").trim();if(!rno)return;const s=_s(p);(byS[s]=byS[s]||[]).push(p);});
+    // DISCOUNT rows are included too — the sig carries the disc flag, so a payment and its same-receipt discount
+    // can never collapse into one group; only a discount identical to ANOTHER discount is flagged (the July-1
+    // double-upload left exactly that: one positional-id copy + one hash-id copy of the same ₹320 concession).
+    payments.forEach(p=>{const rno=String(p.receiptNo||"").trim();if(!rno)return;const s=_s(p);(byS[s]=byS[s]||[]).push(p);});
     const groups=Object.keys(byS).map(k=>byS[k]).filter(g=>g.length>1);
     const extra=groups.reduce((a,g)=>a+g.slice(1).reduce((s,p)=>s+Number(p.amount||0),0),0);
     return{groups,count:groups.length,extra};
@@ -8197,10 +8227,10 @@ function Fees({user,feesDB,studentsDB,academicRosterDB,dirDB,metaDB}){
   const[dupMsg,setDupMsg]=useState("");const[dupBusy,setDupBusy]=useState(false);
   const removeDupes=async()=>{
     if(!isDirector||!dupReceipts.count)return;
-    if(!await window.__confirm({title:"Remove "+dupReceipts.count+" duplicated receipt"+(dupReceipts.count>1?"s":"")+"?",body:inr(dupReceipts.extra)+" of double-counted money. Each receipt is kept ONCE; only the extra copies (same admission no. + receipt no.) are deleted. This can't be undone here.",danger:true,confirmText:"Remove duplicates"}))return;
+    if(!await window.__confirm({title:"Remove "+dupReceipts.count+" duplicated entr"+(dupReceipts.count>1?"ies":"y")+"?",body:inr(dupReceipts.extra)+" of double-counted money or double-granted discount. Each receipt/discount is kept ONCE; only exact extra copies (identical student, date, amount, mode, receipt no. and note) are deleted. This can't be undone here.",danger:true,confirmText:"Remove duplicates"}))return;
     setDupBusy(true);setDupMsg("Removing duplicates…");let removed=0;
     for(const g of dupReceipts.groups){for(const p of g.slice(1)){try{await feesDB.del(p.id);removed++;}catch(e){}}}
-    setDupBusy(false);setDupMsg("✓ Removed "+removed+" duplicate receipt"+(removed===1?"":"s")+". Collection total is now correct.");
+    setDupBusy(false);setDupMsg("✓ Removed "+removed+" duplicate entr"+(removed===1?"y":"ies")+". Collection and concession totals are now correct.");
   };
   // Latest RECEIPT DATE first (then newest entry as tiebreaker). Imported receipts all share one createdAt, so
   // sorting by the payment DATE is what actually surfaces the most recent receipts instead of import order.
@@ -8400,8 +8430,8 @@ td.r,th.r{text-align:right}
       {sub==="overview"&&<>
         {isDirector&&dupReceipts.count>0&&<div style={{background:"var(--bg-red)",border:"1px solid var(--bd-red)",borderRadius:14,padding:"14px 18px",marginBottom:16}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}>
-            <div><div style={{fontWeight:800,fontSize:14,color:"var(--tx-red)"}}>{dupReceipts.count} duplicate receipt{dupReceipts.count>1?"s":""} found — {inr(dupReceipts.extra)} double-counted</div>
-              <div style={{fontSize:12,color:"var(--c-64)",marginTop:2}}>Same admission no. + receipt no. recorded more than once (from a re-upload). Removing keeps one copy of each.</div></div>
+            <div><div style={{fontWeight:800,fontSize:14,color:"var(--tx-red)"}}>{dupReceipts.count} duplicate entr{dupReceipts.count>1?"ies":"y"} found — {inr(dupReceipts.extra)} double-counted</div>
+              <div style={{fontSize:12,color:"var(--c-64)",marginTop:2}}>The same receipt or discount recorded more than once (from a re-upload). Removing keeps one copy of each — payments AND discounts are checked.</div></div>
             <Btn onClick={removeDupes} disabled={dupBusy} v="del" style={{padding:"9px 16px",fontSize:13,whiteSpace:"nowrap"}}>{dupBusy?"Removing…":"Remove "+dupReceipts.count+" duplicate"+(dupReceipts.count>1?"s":"")}</Btn>
           </div>
           {dupMsg&&<div style={{fontSize:12,color:dupMsg.charAt(0)==="✓"?"var(--tx-grn2)":"var(--c-64)",marginTop:10}}>{dupMsg}</div>}
@@ -10159,7 +10189,11 @@ function AccountsPanel({user,usersDB,studentsDB,dirDB,academicRosterDB}){
           if(newAdm)profile.admNo=newAdm;
         }catch(e){setMsg({ok:true,text:"Login created for "+name.trim()+", but the "+cls+" record couldn't be updated just now — add them under Student Records. (Record was NOT changed.)"});}
       }
-      await window.__fbSetDoc(window.__fbDoc(window.__db,"accounts",uid),{username:un,role,name:name.trim(),email,admNo:newAdm||undefined,cls:role==="student"?cls:undefined,section:role==="student"?section:undefined,branches:[(typeof window!=="undefined"&&window.__currentBranch)||"greencity"],createdBy:user.username,createdAt:new Date().toISOString()});
+      // Firestore setDoc throws invalid-argument on ANY undefined value — build the doc with only real fields
+      const _acct={username:un,role,name:name.trim(),email,branches:[(typeof window!=="undefined"&&window.__currentBranch)||"greencity"],createdBy:user.username,createdAt:new Date().toISOString()};
+      if(newAdm)_acct.admNo=newAdm;
+      if(role==="student"){_acct.cls=cls;_acct.section=section;}
+      await window.__fbSetDoc(window.__fbDoc(window.__db,"accounts",uid),_acct);
       await window.__fbSetDoc(window.__fbDoc(window.__db,"users",safeId(un)),profile);
       logAudit("account-create","accounts",un,null,{role,name:name.trim()});
       setMsg({ok:true,text:"Account created for "+name.trim()+" — username “"+un+"”. They can log in now with the password you set."});
@@ -11995,7 +12029,7 @@ function __ttChip(hex){
 
 function TimetablePanel({user}){
   const canManage=user.role==="admin"||user.role==="vp";   // Director + VP get the full timetable panel (view/edit/settings/coverage/clashes)
-  const[view,setView]=useState(function(){try{var j=window.__ttJump;if(j&&j.view==="edit"&&canManage)return "edit";}catch(_){}return "view";}); // view | edit | settings | workload (+ __ttJump.view, edit only for managers)
+  const[view,setView]=useState(function(){try{var j=window.__ttJump;if(j&&(j.view==="edit"||j.view==="settings")&&canManage)return j.view;}catch(_){}return "view";}); // view | edit | settings | workload (+ __ttJump.view, managers only)
   const[selClass,setSelClass]=useState(function(){try{var j=window.__ttJump;if(j&&j.cls)return String(j.cls);}catch(_){}return "10";}); // bare token ("7", not "Class 7")
   const[selSection,setSelSection]=useState(function(){try{var j=window.__ttJump;window.__ttJump=null;if(j&&j.sec)return j.sec;}catch(_){}return "A";}); // last __ttJump reader — nulls it
   const[timetables,setTimetables]=useState({});
