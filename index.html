@@ -2330,6 +2330,7 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
   // Every number/name is a DOOR: it opens the exact pre-filtered screen (one-shot window.__*Jump flags) or
   // acts inline (approve / call / WhatsApp) — nothing lands on a bare module root.
   const go=(tab,flag,val)=>{try{if(flag)window[flag]=val;}catch(_){}setTab&&setTab(tab);};
+  const goTeacherTT=(name)=>{try{window.__ttJump={teacher:name,view:"teacher"};}catch(_){}setTab&&setTab("timetable");}; // where/when does this teacher teach
   const goStu=(adm,tab360)=>{if(!adm||!jumpStudent)return;try{if(tab360)window.__dirProfileTab=tab360;}catch(_){}jumpStudent(String(adm));};
   const telA=(ph)=>ph?("tel:"+String(ph).replace(/[^\d+]/g,"")):null;
   const waA=(ph,msg)=>{const d=String(ph||"").replace(/\D/g,"").slice(-10);return d.length===10?("https://wa.me/91"+d+(msg?"?text="+encodeURIComponent(msg):"")):null;};
@@ -2719,7 +2720,7 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
               </div>))}
             {liveNow&&!periodBoard.allBreak&&periodBoard.covered.length>0&&<button onClick={()=>setShowCovered(!showCovered)} style={{background:"none",border:"none",cursor:"pointer",textAlign:"left",fontSize:11.5,fontWeight:600,color:"var(--tx-grn2)",fontFamily:"var(--ss-font)",padding:"2px 2px"}}>✓ {periodBoard.covered.length} absence{periodBoard.covered.length>1?"s":""} covered by substitutes {showCovered?"▴":"▾"}</button>}
             {liveNow&&!periodBoard.allBreak&&showCovered&&periodBoard.covered.map((r,i)=>(<div key={"c"+i} style={{fontSize:12,color:"var(--ap-muted)",padding:"0 4px"}}>{r.label} · {r.subject} — <b style={{color:"var(--ap-ink2)"}}>{r.sub}</b> covering {r.teacher}</div>))}
-            {liveNow&&!periodBoard.allBreak&&periodBoard.bench.length>0&&<div style={{fontSize:11.5,color:"var(--ap-muted)",borderTop:"1px dashed var(--ap-line)",paddingTop:8}}>Free this period ({periodBoard.bench.length}): {periodBoard.bench.slice(0,6).map((n,i)=><span key={n}>{i>0?", ":""}<NameLink onClick={()=>go("staffatt","__staffJump",{stab:"directory",q:n})}>{n}</NameLink></span>)}{periodBoard.bench.length>6?" +"+(periodBoard.bench.length-6):""}</div>}
+            {liveNow&&!periodBoard.allBreak&&periodBoard.bench.length>0&&<div style={{fontSize:11.5,color:"var(--ap-muted)",borderTop:"1px dashed var(--ap-line)",paddingTop:8}}>Free this period ({periodBoard.bench.length}): {periodBoard.bench.slice(0,6).map((n,i)=><span key={n}>{i>0?", ":""}<NameLink onClick={()=>goTeacherTT(n)}>{n}</NameLink></span>)}{periodBoard.bench.length>6?" +"+(periodBoard.bench.length-6):""}</div>}
             {!liveNow&&<div style={{fontSize:12.5,color:"var(--ap-muted)",padding:"6px 2px 2px"}}>{isPastView?"Switch the date back to today for the live room-by-room view.":!isSchoolDay?"No classes today — the board returns Monday morning.":"The board lights up during school hours: every room this period, uncovered classes first, plus which teachers are free to step in."}</div>}
             {nowPeriod&&nowPeriod.fixedCount>0&&<div style={{fontSize:11.5,fontWeight:600,color:"var(--tx-org2)",background:"var(--bg-amb)",border:"1px solid var(--bd-amb)",borderRadius:10,padding:"8px 11px"}}>⚠ {nowPeriod.fixedCount} period timing{nowPeriod.fixedCount>1?"s":""} in the schedule look mistyped as PM (e.g. 23:10 instead of 11:10). The clock auto-corrects them for display — please fix the times in <button onClick={()=>go("timetable","__ttJump",{view:"settings"})} style={{background:"none",border:"none",padding:0,cursor:"pointer",color:"var(--ap-accent)",fontWeight:700,fontSize:"inherit",fontFamily:"inherit",textDecoration:"underline"}}>Operations → Schedules &amp; Settings</button>.</div>}
           </div>
@@ -2755,7 +2756,7 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
           <div style={{padding:"0 16px 14px",display:"flex",flexDirection:"column",gap:10}}>
             {staffToday.absent.length===0&&staffToday.late.length===0&&marking.unmarked.length===0&&marking.red.length===0&&<AllClear msg={"All staff in · every section marked · none below 80% today."}/>}
             {staffToday.absent.map((t,i)=>(<div key={"ab"+i} className="dcx-card" style={{borderColor:"var(--bd-red)",background:"var(--bg-red)"}}>
-              <div style={{minWidth:0,flex:1}}><div style={{fontSize:13,fontWeight:700,color:"var(--ap-ink)"}}><NameLink onClick={()=>go("staffatt","__staffJump",{stab:"directory",q:t.name})}>{t.name}</NameLink> <span style={{color:"var(--tx-red)",fontWeight:700,fontSize:11.5}}>ABSENT</span></div>
+              <div style={{minWidth:0,flex:1}}><div style={{fontSize:13,fontWeight:700,color:"var(--ap-ink)"}}><NameLink onClick={()=>goTeacherTT(t.name)}>{t.name}</NameLink> <span style={{color:"var(--tx-red)",fontWeight:700,fontSize:11.5}}>ABSENT</span></div>
               {t.periods>0&&<div style={{fontSize:11.5,color:"var(--ap-muted)",marginTop:1}}>teaches {t.periods} period{t.periods>1?"s":""} today{t.uncovered>0?<b style={{color:"var(--tx-red)"}}> · {t.uncovered} uncovered</b>:" · all covered ✓"}</div>}</div>
               <div style={{display:"flex",gap:6,flex:"none"}}>{t.uncovered>0&&<Act tone="pri" onClick={()=>go("leave","__leaveJump",{sub:"today"})}>Assign</Act>}{t.phone&&<Act href={telA(t.phone)}>Call</Act>}</div></div>))}
             {staffToday.late.length>0&&<div style={{fontSize:12,color:"var(--ap-muted)"}}>Late today: {staffToday.late.map((t,i)=><span key={i}>{i>0?", ":""}<NameLink onClick={()=>go("staffatt","__staffJump",{stab:"register"})}>{t.name}</NameLink></span>)}</div>}
@@ -2850,7 +2851,7 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
       <StripPanel title="Teaching pulse" sub={teachPulse&&teachPulse.pct!=null?(teachPulse.logged+" of "+teachPulse.scheduled+" scheduled periods logged "+teachPulse.ydLabel+" ("+teachPulse.pct+"%)"):"period-log coverage from teacher diaries"} right={<Lnk onClick={()=>setTab&&setTab("teacherlog")}>All logs</Lnk>}>
         {!teachPulse&&<div style={{fontSize:12,color:"var(--ap-faint)"}}>{pulse&&pulse.err?"Couldn't load teacher logs — check the connection and reload.":"Loading teacher logs…"}</div>}
         {teachPulse&&teachPulse.zero.length===0&&<AllClear msg="Every teacher logged at least one period this week."/>}
-        {teachPulse&&teachPulse.zero.length>0&&<div style={{fontSize:12.5,color:"var(--ap-ink2)"}}><b style={{color:"var(--tx-org2)"}}>No logs in 7 days ({teachPulse.zero.length}):</b> {teachPulse.zero.slice(0,6).map((t,i)=><span key={i}>{i>0?", ":""}<NameLink onClick={()=>go("staffatt","__staffJump",{stab:"directory",q:t.name})}>{t.name}</NameLink></span>)}{teachPulse.zero.length>6?" +"+(teachPulse.zero.length-6)+" more":""}</div>}
+        {teachPulse&&teachPulse.zero.length>0&&<div style={{fontSize:12.5,color:"var(--ap-ink2)"}}><b style={{color:"var(--tx-org2)"}}>No logs in 7 days ({teachPulse.zero.length}):</b> {teachPulse.zero.slice(0,6).map((t,i)=><span key={i}>{i>0?", ":""}<NameLink onClick={()=>goTeacherTT(t.name)}>{t.name}</NameLink></span>)}{teachPulse.zero.length>6?" +"+(teachPulse.zero.length-6)+" more":""}</div>}
       </StripPanel>
 
       {/* ═══ 9+10 · ADMISSIONS + ACADEMIC RISK ═══ */}
@@ -7497,7 +7498,9 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
     {exams.map(e=><option key={e.id} value={e.id}>{e.name} · {e.cls} · {e.term}</option>)}
   </select>);
 
-  const cr=exam&&tab==="reports"?classResults(exam):[];
+  const cr=(()=>{if(!(exam&&tab==="reports"))return [];let r=classResults(exam);
+    if(msSec){const _sm=sectionsOf(exam.cls);r=r.filter(x=>(_sm[x.student]||"")===msSec);let _k=0;r=r.map(x=>x.hasMarks?{...x,rank:++_k}:{...x,rank:null});}
+    return r;})(); // section picker filters the whole Report Cards view + re-ranks within the section
   const marked=cr.filter(x=>x.hasMarks);
   const passCount=marked.filter(x=>!x.anyFail&&x.pct>=33).length;
   // Worst-first intervention data for the Reports tab: who's failing, which subjects are weak, and the
@@ -7792,15 +7795,15 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
 
       {/* REPORTS */}
       {tab==="reports"&&<div>
-        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14,flexWrap:"wrap"}}><ExamPicker/>{exam&&marked.length>0&&(()=>{const _secs=visibleSecsFor(exam.cls);return(<span style={{display:"inline-flex",alignItems:"center",gap:6}}>
-          {_secs.length>1&&<select value={msSec} onChange={e=>setMsSec(e.target.value)} className="ss-input" title="Print the whole class or one section" style={{padding:"9px 10px",borderRadius:10,fontSize:12.5,fontWeight:600}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14,flexWrap:"wrap"}}><ExamPicker/>
+          {exam&&(()=>{const _secs=visibleSecsFor(exam.cls);return _secs.length>1?(<select value={msSec} onChange={e=>setMsSec(e.target.value)} className="ss-input" title="View & print the whole class or one section" style={{padding:"9px 12px",borderRadius:10,fontSize:13,fontWeight:600}}>
             <option value="">All sections</option>
-            {_secs.map(sc=><option key={sc} value={sc}>Sec {sc} only</option>)}
-          </select>}
-          <Btn onClick={()=>openMarksheet(exam,msSec)}><Icon name="print" size={16}/> Marksheet{msSec?" · Sec "+msSec:""} (PDF)</Btn>
-        </span>);})()}{exam&&marked.length>0&&<Btn v="ghost" onClick={()=>printAll(exam,{tpl:rcTpl,tog:rcTog})}><Icon name="print" size={16}/> Print all cards ({marked.length})</Btn>}{exam&&marked.length>0&&<Btn v="ghost" onClick={()=>exportResults(exam)}>⬇ Export results CSV</Btn>}</div>
+            {_secs.map(sc=><option key={sc} value={sc}>Section {sc}</option>)}
+          </select>):null;})()}
+          {exam&&marked.length>0&&<Btn onClick={()=>openMarksheet(exam,msSec)}><Icon name="print" size={16}/> Marksheet{msSec?" · Sec "+msSec:""} (PDF)</Btn>}
+          {exam&&marked.length>0&&<Btn v="ghost" onClick={()=>printAll(exam,{tpl:rcTpl,tog:rcTog})}><Icon name="print" size={16}/> Print all cards ({marked.length})</Btn>}{exam&&marked.length>0&&<Btn v="ghost" onClick={()=>exportResults(exam)}>⬇ Export results CSV</Btn>}</div>
         {!exam?<Empty icon="📋" title="No exam selected" sub="Pick an exam to see results and print report cards."/>:
-        marked.length===0?<Empty icon="📋" title="No marks entered" sub={"Enter marks for "+exam.name+" to generate report cards."}/>:<>
+        marked.length===0?<Empty icon="📋" title={msSec?"No marks in Section "+msSec:"No marks entered"} sub={msSec?"No marks entered for Section "+msSec+" yet — pick All sections above, or enter marks in the Enter Marks tab.":"Enter marks for "+exam.name+" to generate report cards."}/>:<>
           <div style={{display:"grid",gap:14,gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))",marginBottom:16}}>
             <StatCard label="Students Assessed" val={marked.length} icon="👥" color="var(--ap-accent)" sub={"of "+_exRoster.length+" enrolled"}/>
             <StatCard label="Pass Rate" val={(marked.length?Math.round(passCount/marked.length*100):0)+"%"} icon="✅" color="#1f9d55" sub={passCount+" promoted"}/>
@@ -9776,7 +9779,8 @@ service cloud.firestore {
     // Term-exam marks & report cards — staff read; only markers write
     match /exams/{id} {
       allow read: if isAny(['admin','vp','teacher','office']);
-      allow write: if isAny(['admin','vp','teacher']);
+      // Office does post-exam mark corrections after teachers — same write access as a marker.
+      allow write: if isAny(['admin','vp','teacher','office']);
     }
 
     // ── (1) Student records (FULL PII) — admin + office ONLY ──────────────────
@@ -12029,8 +12033,9 @@ function __ttChip(hex){
 
 function TimetablePanel({user}){
   const canManage=user.role==="admin"||user.role==="vp";   // Director + VP get the full timetable panel (view/edit/settings/coverage/clashes)
-  const[view,setView]=useState(function(){try{var j=window.__ttJump;if(j&&(j.view==="edit"||j.view==="settings")&&canManage)return j.view;}catch(_){}return "view";}); // view | edit | settings | workload (+ __ttJump.view, managers only)
+  const[view,setView]=useState(function(){try{var j=window.__ttJump;if(j&&j.teacher)return "teacher";if(j&&(j.view==="edit"||j.view==="settings"||j.view==="teacher")&&canManage)return j.view;}catch(_){}return "view";}); // view | edit | settings | workload | teacher
   const[selClass,setSelClass]=useState(function(){try{var j=window.__ttJump;if(j&&j.cls)return String(j.cls);}catch(_){}return "10";}); // bare token ("7", not "Class 7")
+  const[selTeacher,setSelTeacher]=useState(function(){try{var j=window.__ttJump;if(j&&j.teacher)return String(j.teacher);}catch(_){}return "";}); // teacher-view selection
   const[selSection,setSelSection]=useState(function(){try{var j=window.__ttJump;window.__ttJump=null;if(j&&j.sec)return j.sec;}catch(_){}return "A";}); // last __ttJump reader — nulls it
   const[timetables,setTimetables]=useState({});
   const[globalSettings,setGlobalSettings]=useState(null);
@@ -12244,6 +12249,7 @@ function TimetablePanel({user}){
         <div style={{flex:1}}/>
         {view!=="edit"&&view!=="settings"&&!combined&&<button onClick={printTimetable} style={{...btnGh,fontSize:12,padding:"9px 14px"}}><Icon name="print" size={16}/> Print</button>}
         {canManage&&ttStats.clashCount>0&&<button onClick={()=>setView(v=>v==="conflicts"?"view":"conflicts")} style={{...btnGh,fontSize:12,padding:"9px 14px",...(view==="conflicts"?{borderColor:"var(--tx-red)",color:"var(--tx-red)"}:{color:"var(--tx-red)",borderColor:"#f0b8b2"})}}>{ttStats.clashCount} {isMob?"clash":"clashes"}</button>}
+        {canManage&&<button onClick={()=>setView(v=>v==="teacher"?"view":"teacher")} style={{...btnGh,fontSize:12,padding:"9px 14px",...(view==="teacher"?{borderColor:"var(--ap-accent)",color:"var(--ap-accent)"}:{})}}><Icon name="staff" size={15}/> {isMob?"Teacher":"Teacher timetable"}</button>}
         {canManage&&<button onClick={()=>setView(v=>v==="workload"?"view":"workload")} style={{...btnGh,fontSize:12,padding:"9px 14px",...(view==="workload"?{borderColor:"var(--ap-accent)",color:"var(--ap-accent)"}:{})}}><Icon name="staff" size={15}/> {isMob?"Load":"Teacher load"}</button>}
         {canManage&&<button onClick={()=>setView(v=>v==="settings"?"view":"settings")} style={{...btnGh,fontSize:12,padding:"9px 14px"}}>{isMob?"Settings":"Schedules & Settings"}</button>}
         {canManage&&combined&&<button onClick={mirrorAtoB} disabled={saving} style={{...btnGh,fontSize:12,padding:"9px 14px",color:"var(--ap-accent)",borderColor:"#bcd0ee"}} title="Copy Section A's grid onto B, keeping the Maths/Biology split">⇄ Mirror A→B</button>}
@@ -12272,6 +12278,8 @@ function TimetablePanel({user}){
         <SkeletonRows n={6}/>
       ):view==="settings"&&canManage?(
         <SettingsEditor gs={gs} onSave={saveGlobalSettings} saving={saving} onCancel={()=>setView("view")} card={card} hdr={hdr} btn={btn} btnG={btnG} btnGh={btnGh}/>
+      ):view==="teacher"&&canManage?(
+        <TeacherTimetable timetables={timetables} scheds={gs.schedules||[]} liveUsers={liveUsers} selTeacher={selTeacher} setSelTeacher={setSelTeacher} card={card} hdr={hdr} onJumpClass={(cls,sec)=>{setSelClass(String(cls));setSelSection(sec||"A");setView("view");}}/>
       ):view==="workload"&&canManage?(
         <TimetableWorkload stats={ttStats} card={card} hdr={hdr}/>
       ):view==="conflicts"&&canManage?(
@@ -12326,6 +12334,92 @@ function TimetableCoverage({stats,card,onJump,onShowClashes}){
 }
 
 // ── Teacher workload (director) ─────────────────────────
+// TEACHER TIMETABLE — pick any teacher, see their whole week: which class + subject each period, and the
+// free periods (the director's "where is this teacher right now / when is she free" view). Merges both
+// schedules by wall-clock time so junior & senior periods line up in one grid.
+function TeacherTimetable({timetables,scheds,liveUsers,selTeacher,setSelTeacher,card,hdr,onJumpClass}){
+  const isMob=useIsMobile();
+  const DAYS=["Mon","Tue","Wed","Thu","Fri","Sat"];
+  // teacher list: live teachers/VP (branch-filtered) + Greencity seed, minus left/removed — deduped by norm name
+  const teachers=useMemo(()=>{
+    const m={};
+    const add=(nm,role,left)=>{if(!nm||!(role==="teacher"||role==="vp"))return;const nk=__ttNorm(nm);if(left){delete m[nk];return;}if(!m[nk])m[nk]=nm;};
+    if((window.__currentBranch||"greencity")==="greencity")Object.values(DEFAULT_USERS).forEach(v=>add(v.name,v.role,false));
+    (liveUsers||[]).forEach(v=>add(v.name,v.role,v.left===true||v.removed===true));
+    return Object.values(m).sort((a,b)=>String(a).localeCompare(String(b)));
+  },[liveUsers]);
+  const cur=selTeacher||teachers[0]||"";
+  const tN=__ttNorm(cur);
+  // Walk every class grid × its own schedule; collect this teacher's engagements, keyed by day + start time.
+  const week=useMemo(()=>{
+    const slots={};      // "HH:MM|HH:MM" -> {start,end,label}
+    const cells={};      // day -> startKey -> {cls,sec,subject,period}
+    const perDay={};DAYS.forEach(d=>perDay[d]=0);
+    let total=0;const subjSet={},clsSet={};
+    Object.keys(timetables||{}).forEach(k=>{
+      if(String(k).indexOf("_")===0)return;
+      const doc=timetables[k]||{};const cls=doc._class||String(k).replace("Class_","").split("_")[0];const sec=doc._section||(String(k).replace("Class_","").split("_")[1]||"");
+      const sc=__ttSchedFor(scheds,cls);if(!sc)return;
+      const pt={};(sc.periods||[]).forEach(p=>{if(!p.isBreak)pt[String(p.no)]={start:p.start||"",end:p.end||"",label:p.label||("P"+p.no)};});
+      DAYS.forEach(dShort=>{
+        const dLong=__TT_DAYLONG[dShort]||dShort;const day=doc[dLong]||doc[dShort]||{};
+        Object.keys(day).forEach(pNo=>{
+          if(String(pNo).indexOf("_")===0)return;const cell=day[pNo];if(!cell||typeof cell!=="object")return;
+          const teacher=cell.teacher||"";if(!teacher||__ttNorm(teacher)!==tN)return;
+          const tm=pt[String(pNo)];if(!tm)return; // break/unknown slot
+          const sk=tm.start+"|"+tm.end;slots[sk]={start:tm.start,end:tm.end,label:tm.label};
+          cells[dShort]=cells[dShort]||{};
+          if(!cells[dShort][sk]){cells[dShort][sk]={cls,sec,subject:cell.subject||"",period:String(pNo)};perDay[dShort]++;total++;if(cell.subject)subjSet[cell.subject]=1;clsSet["Class "+cls+(sec?" "+sec:"")]=1;}
+        });
+      });
+    });
+    const rows=Object.keys(slots).sort((a,b)=>String(slots[a].start).localeCompare(String(slots[b].start)));
+    return{rows,slots,cells,perDay,total,subjects:Object.keys(subjSet).sort(),classes:Object.keys(clsSet).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}))};
+  },[timetables,scheds,tN]);
+  const th={padding:"8px 6px",fontSize:11,fontWeight:700,color:"var(--tt-hdr-tx)",textAlign:"center"};
+  const busiest=DAYS.reduce((m,d)=>week.perDay[d]>week.perDay[m]?d:m,DAYS[0]);
+  return(<div className="fi" style={{display:"flex",flexDirection:"column",gap:16}}>
+    <div style={card}>
+      <div style={hdr}><Icon name="staff" size={17}/><div style={{fontWeight:650,fontSize:15}}>Teacher timetable</div><div style={{marginLeft:"auto",fontSize:11.5,opacity:.85}}>where each teacher is, every period</div></div>
+      <div style={{padding:"14px 18px",display:"flex",gap:12,flexWrap:"wrap",alignItems:"center"}}>
+        <select value={cur} onChange={e=>setSelTeacher(e.target.value)} className="ss-input" style={{padding:"10px 14px",borderRadius:10,fontSize:14,fontWeight:700,minWidth:230,background:"var(--c-fff)",color:"var(--ap-ink)"}}>
+          {teachers.length===0&&<option value="">No teachers on record</option>}
+          {teachers.map(t=><option key={t} value={t}>{honorific(t)}</option>)}
+        </select>
+        {cur&&<div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <span style={{fontSize:12,fontWeight:700,background:"var(--bg-blu)",color:"var(--tx-blu)",borderRadius:8,padding:"6px 11px"}}>{week.total} periods / week</span>
+          {week.total>0&&<span style={{fontSize:12,fontWeight:700,background:"var(--c-f5)",color:"var(--ap-ink2)",borderRadius:8,padding:"6px 11px"}}>busiest: {busiest} ({week.perDay[busiest]})</span>}
+          {week.subjects.length>0&&<span style={{fontSize:12,fontWeight:600,background:"var(--c-f5)",color:"var(--ap-muted)",borderRadius:8,padding:"6px 11px"}}>{week.subjects.join(" · ")}</span>}
+        </div>}
+      </div>
+    </div>
+    {!cur?<Empty icon="👤" title="Pick a teacher" sub="Choose a teacher above to see their weekly timetable."/>:
+     week.total===0?<Empty icon="📅" title={honorific(cur)+" has no periods assigned"} sub="This teacher isn't placed in any class grid yet. Assign them in Edit Timetable, or check the spelling matches the timetable entries."/>:
+    <div style={card}>
+      <div style={{overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",minWidth:isMob?560:720}}>
+          <thead><tr style={{background:"var(--tt-hdr)"}}>
+            <th style={{...th,textAlign:"left",paddingLeft:14,minWidth:96}}>Period</th>
+            {(()=>{const _ts=new Date().toLocaleDateString("en-US",{weekday:"short",timeZone:"Asia/Kolkata"});return DAYS.map(d=><th key={d} style={th}>{d}{d===_ts?<span style={{display:"block",fontSize:8.5,color:"var(--tt-gold)",fontWeight:800}}>TODAY</span>:null}</th>);})()}
+          </tr></thead>
+          <tbody>{week.rows.map((sk,ri)=>{const sl=week.slots[sk];return(
+            <tr key={sk} style={{borderTop:ri?"1px solid var(--ap-line)":"none"}}>
+              <td style={{padding:"8px 10px 8px 14px",whiteSpace:"nowrap"}}><div style={{fontSize:12.5,fontWeight:700,color:"var(--ap-ink)"}}>{sl.label}</div><div style={{fontSize:10.5,color:"var(--ap-faint)",fontFamily:"var(--ss-font)"}}>{sl.start}–{sl.end}</div></td>
+              {DAYS.map(d=>{const c=(week.cells[d]||{})[sk];return(
+                <td key={d} style={{padding:5,textAlign:"center",verticalAlign:"middle"}}>
+                  {c?<button onClick={()=>onJumpClass&&onJumpClass(c.cls,c.sec)} title={"Open Class "+c.cls+(c.sec?" "+c.sec:"")+" timetable"} style={{display:"block",width:"100%",background:"var(--bg-blu)",border:"1px solid var(--tx-blu)",borderRadius:9,padding:"6px 5px",cursor:"pointer",fontFamily:"var(--ss-font)"}}>
+                    <div style={{fontSize:12,fontWeight:800,color:"var(--tx-blu)",lineHeight:1.1}}>{c.cls}{c.sec?"-"+c.sec:""}</div>
+                    {c.subject?<div style={{fontSize:10.5,color:"var(--ap-ink2)",marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.subject}</div>:null}
+                  </button>:<span style={{fontSize:11,color:"var(--c-cb)",fontWeight:600}}>Free</span>}
+                </td>);})}
+            </tr>);})}
+          </tbody>
+        </table>
+      </div>
+      <div style={{padding:"10px 16px",fontSize:11.5,color:"var(--ap-muted)",borderTop:"1px solid var(--ap-line)"}}>Tap any class cell to open that class's full timetable · <b style={{color:"var(--ap-ink2)"}}>Free</b> = no class assigned that period. Times merge both the junior &amp; senior schedules.</div>
+    </div>}
+  </div>);
+}
 function TimetableWorkload({stats,card,hdr}){
   const isMob=useIsMobile();
   if(!stats)return null;
@@ -14832,7 +14926,7 @@ function App(){
       {id:"directory", label:"Student Records"},
       {id:"admitcard", label:"Admit Cards"},
     ]},
-    {id:"exams-grp",     label:"Report Cards",sec:"MAIN",     single:"exams"},
+    {id:"exams-grp",     label:"Examination", sec:"MAIN",     single:"exams"},
     {id:"attendance-grp",label:"Attendance",  sec:"MAIN",     single:"attendance"},
     {id:"calendar-grp",  label:"Calendar",    sec:"MAIN",     single:"calendar"},
     // ═══ MANAGE ═══
@@ -15065,7 +15159,7 @@ function App(){
         {tab==="directory"&&(isAdmin||isOffice||user.role==="vp")&&<StudentDirectory user={user} dirDB={dirDB} testsDB={testsDB} studentsDB={studentsDB} attendanceDB={attendanceDB} wrongDB={wrongDB} feesDB={feesDB} canFees={canFees} academicRosterDB={academicRosterDB} studentLinksDB={studentLinksDB} jumpAdm={jumpAdm} onJumpDone={()=>setJumpAdm("")}/>}
         {tab==="registration"&&(isDirector||isOffice)&&<Registration user={user} registrationsDB={registrationsDB} setTab={setTab}/>}
         {tab==="admitcard"&&(isAdmin||isOffice)&&<AdmitCard user={user} dirDB={dirDB} setTab={setTab}/>}
-        {tab==="exams"&&(isAdmin||isTeacher||isOffice)&&<Exams user={user} studentsDB={studentsDB} examsDB={examsDB} attendanceDB={attendanceDB} dirDB={dirDB} academicRosterDB={academicRosterDB} examClasses={isOffice?SCHOOL.classes:getTeacherClasses(user)} reportsOnly={isOffice}/>}
+        {tab==="exams"&&(isAdmin||isTeacher||isOffice)&&<Exams user={user} studentsDB={studentsDB} examsDB={examsDB} attendanceDB={attendanceDB} dirDB={dirDB} academicRosterDB={academicRosterDB} examClasses={(isOffice||isAdmin)?SCHOOL.classes:getTeacherClasses(user)} reportsOnly={false}/>}
         {tab==="ai"&&isDirector&&<AIPanel testsDB={testsDB} studentsDB={studentsDB} topicsDB={topicsDB} dirDB={dirDB} feesDB={feesDB} attendanceDB={attendanceDB} usersDB={usersDB} academicRosterDB={academicRosterDB} examsDB={examsDB} canFees={canFees}/>}
         {tab==="admin"&&isAdmin&&<AdminPanel testsDB={testsDB} studentsDB={studentsDB} usersDB={usersDB} wrongDB={wrongDB}/>}
         {tab==="parent"&&isParent&&<ParentView user={user} testsDB={testsDB} studentsDB={studentsDB} attendanceDB={attendanceDB} noticesDB={noticesDB}/>}
