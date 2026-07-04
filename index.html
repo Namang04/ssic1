@@ -2110,6 +2110,8 @@ function PrincipalDashboard({user,attendanceDB,staffAttDB,leaveDB,disciplineDB,c
             <div style={{fontSize:12.5,color:"#c4cee0",lineHeight:1.5}}>{pulse.pct!=null?<>Student attendance is <b style={{color:pulse.pct<85?"#ff9a8f":"#9be3bd"}}>{pulse.pct}%</b> today — <b style={{color:"#fff"}}>{(pulse.P+pulse.L).toLocaleString("en-IN")}</b> of {pulse.t.toLocaleString("en-IN")} present. Your morning checklist is {allDone}/{allTotal} done.</>:"No attendance marked yet today — once class teachers mark, the day's pulse appears here."}</div>
           </div>
         </div>
+        {/* Staff self check-in — the VP/Principal marks their own on-campus attendance here */}
+        <StaffCheckIn user={user}/>
         {/* KPIs */}
         <div style={{display:"grid",gap:13,gridTemplateColumns:"repeat(auto-fit,minmax(158px,1fr))"}}>
           <StatCard label="Student attendance" val={pulse.pct==null?"—":pulse.pct+"%"} icon="✅" color="var(--tx-grn2)" sub={pulse.t?((pulse.P+pulse.L).toLocaleString("en-IN")+" / "+pulse.t.toLocaleString("en-IN")+" · "+pulse.A+" absent"):"nothing marked yet"} onClick={()=>setTab("attendance")}/>
@@ -2779,6 +2781,9 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
           </button>
         </div>
       </div>
+
+      {/* Staff self check-in — hidden for the actual Director (self-nulls); shows for a VP-as-director (admin·fees:false) */}
+      <StaffCheckIn user={user}/>
 
       {/* ═══ 1b · HEADLINE NUMBERS — the school at a glance, every tile a door ═══ */}
       <div className="dcc-kpis" style={{gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))"}}>
@@ -5406,8 +5411,22 @@ function TestTracker({user,testsDB,studentsDB,usersDB,dirDB}){
   const months=useMemo(()=>{const set=new Set([ymNow]);Object.values(testsDB.data||{}).forEach(t=>{if(t&&t.testDate)set.add(String(t.testDate).slice(0,7));});return [...set].sort().reverse();},[testsDB.data]);
   // A teacher sees ONLY their own classes/subjects (the compliance "chase teachers" board is admin-only; teachers land on Remedial).
   const isTeacherTT=!!user&&user.role==="teacher";
-  const teachPairs=useMemo(()=>{if(!isTeacherTT)return null;var s=new Set();(getTeacherClasses(user)||[]).forEach(function(c){(getTeacherSubjects(user,c)||[]).forEach(function(sub){s.add(c+"|"+sub);});});return s;},[isTeacherTT,user]);
-  const teachClassSet=useMemo(()=>{if(!isTeacherTT)return null;return new Set(getTeacherClasses(user)||[]);},[isTeacherTT,user]);
+  // STRICT teacher scope — the raw assignment only. getTeacherClasses/getTeacherSubjects FAIL OPEN (they
+  // return the WHOLE school when a teacher has nothing assigned), which showed an unassigned teacher every
+  // class's tests & remedial. Here an unassigned teacher scopes to NOTHING and lands on an empty state.
+  const teachClassSet=useMemo(()=>{if(!isTeacherTT)return null;return new Set([...new Set((user.classes||[]).map(function(c){return String(c).split("-")[0].trim();}))]);},[isTeacherTT,user]);
+  const teachPairs=useMemo(()=>{if(!isTeacherTT)return null;
+    var s=new Set();
+    var mine=(user.subjects||[]).map(function(x){return x==="English Language"||x==="English Literature"?"English":x==="Social Studies"?"Social Science":x==="Accounts"?"Accountancy":x==="Information Technology"?"Computer Science":x;});
+    [...(teachClassSet||[])].forEach(function(c){
+      var all=SCHOOL.subjects[c]||[];
+      var sub=mine.length?all.filter(function(x){return mine.indexOf(x)>=0;}):[];
+      if(!sub.length&&mine.length)sub=mine; // the teacher's subject isn't in the class's list → still theirs
+      sub.forEach(function(x){s.add(c+"|"+x);});
+    });
+    return s;
+  },[isTeacherTT,user,teachClassSet]);
+  const teacherUnassigned=isTeacherTT&&(!teachClassSet||teachClassSet.size===0||!teachPairs||teachPairs.size===0);
   const classes=useMemo(()=>SCHOOL.classes.filter(c=>(!teachClassSet||teachClassSet.has(c))&&rosterForCls(dirDB,studentsDB,c).length>0),[studentsDB.data,dirDB&&dirDB.data,teachClassSet]);
   const __brTT=useBranch();
   const allUsers=useMemo(()=>_branchUsers((usersDB&&usersDB.data)||{},__brTT),[usersDB&&usersDB.data,__brTT]);
@@ -5501,7 +5520,9 @@ function TestTracker({user,testsDB,studentsDB,usersDB,dirDB}){
                 <div style={{display:"flex",alignItems:"center",gap:6}}><input type="number" value={threshDraft===""?remedialThreshold:threshDraft} onChange={e=>setThreshDraft(e.target.value)} style={{width:62,border:"1px solid var(--ap-line2)",borderRadius:8,padding:"7px 8px",fontSize:13,textAlign:"center",fontFamily:"var(--ss-font)"}}/><span style={{fontSize:12,color:"var(--ap-muted)"}}>%</span>{threshDraft!==""&&Number(threshDraft)!==remedialThreshold&&<button onClick={saveThreshold} style={{background:"var(--ap-accent)",color:"#fff",border:"none",borderRadius:8,padding:"7px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Save</button>}</div></div>}
             </div>
           </div>
-          {remedialGroups.length===0?(
+          {teacherUnassigned?(
+            <div className="ap-panel" style={{padding:30,textAlign:"center",color:"var(--c-94)",fontSize:13.5}}>No classes or subjects are assigned to you yet. Ask the Director to assign your classes &amp; subjects in <b>Staff → Assign</b>, then your students' remedial list appears here.</div>
+          ):remedialGroups.length===0?(
             <div className="ap-panel" style={{padding:30,textAlign:"center",color:"var(--c-94)",fontSize:13.5}}>No student is below {remedialThreshold}% in {monthLabel}'s tests — no remedial needed.</div>
           ):remedialGroups.map(g=>(
             <div key={g.key} className="ap-panel" style={{overflow:"hidden"}}>
@@ -10294,11 +10315,16 @@ service cloud.firestore {
       // Director/Office manage all profiles & create users. VP may edit the
       // shared config docs (subjects list, class-teacher map). Anyone else may
       // edit ONLY an existing profile and may NOT change their role (blocks
-      // self-promotion) nor touch the shared config docs.
+      // self-promotion) nor touch the shared config docs. A signed-in staff
+      // member may also write their OWN profile doc (create or update — e.g. the
+      // one-time "add your phone" prompt) provided the role field equals their
+      // real account role, so they still can't self-promote or reach another's doc.
       allow write: if isAny(['admin','office'])
         || ((id.matches('.*__subjects') || id.matches('.*__classTeachers')) && isAny(['admin','vp']))
         || (!id.matches('.*__subjects') && !id.matches('.*__classTeachers') && resource != null
-            && request.resource.data.get('role', null) == resource.data.get('role', null));
+            && request.resource.data.get('role', null) == resource.data.get('role', null))
+        || (!id.matches('.*__subjects') && !id.matches('.*__classTeachers') && id != '' && id == myUserDocId()
+            && request.resource.data.get('role', role()) == role());
     }
 
     // ── (5b) PER-BRANCH DATA — "<branch>_<base>" collections (Phase 2, Option B) ──────────────
@@ -10396,8 +10422,29 @@ const CONCEPT_PREFIX={"Class 10|Mathematics":"M10","Class 10|Science":"S10","Cla
 const CONCEPT_SUBJECTS={"Class 10":["Mathematics","Science","Social Science","English","Computer"],"Class 12":["Mathematics","Physics","Chemistry","Biology","Accountancy","Business Studies","Economics","History","Political Science","Geography","Fine Art"]};
 function ConceptNotesPanel({user}){
   const notesDB=useFirestore("conceptNotes");
-  const[cls,setCls]=useState("Class 10");
-  const[subj,setSubj]=useState("Mathematics");
+  // A teacher may only see/edit concept notes for the classes & subjects they teach (Director/VP see all).
+  // Concept notes exist for Class 10 & 12 core subjects; Class 10 groups the sciences, so a Physics/Chemistry/
+  // Biology teacher matches its "Science" note. An unassigned teacher gets an empty state, not the whole school.
+  const isCNmgr=!user||user.role==="admin"||user.role==="vp";
+  const cnNorm=s=>String(s||"").toLowerCase().replace(/[^a-z0-9]/g,"");
+  const cnSubjFor=(c)=>{
+    var all=CONCEPT_SUBJECTS[c]||[];
+    if(isCNmgr)return all;
+    var mine=(user.subjects||[]).map(cnNorm);
+    if(!mine.length)return [];
+    var SCI=["physics","chemistry","biology","science"];
+    return all.filter(function(cn){var cc=cnNorm(cn);return mine.some(function(t){
+      if(t===cc)return true;
+      if(cc==="science"&&SCI.indexOf(t)>=0)return true;
+      if(cc==="socialscience"&&(t==="socialstudies"||t==="sst"))return true;
+      if(cc==="computer"&&(t==="computerscience"||t==="informationtechnology"||t==="it"))return true;
+      if(cc==="mathematics"&&(t==="maths"||t==="math"))return true;
+      return false;
+    });});
+  };
+  const cnClasses=isCNmgr?["Class 10","Class 12"]:(function(){var mine=[...new Set((user.classes||[]).map(function(c){return String(c).split("-")[0].trim();}))];return ["Class 10","Class 12"].filter(function(cl){return mine.indexOf(cl)>=0&&cnSubjFor(cl).length>0;});})();
+  const[cls,setCls]=useState(cnClasses[0]||"Class 10");
+  const[subj,setSubj]=useState((cnSubjFor(cnClasses[0]||"Class 10")[0])||"Mathematics");
   const prefix=CONCEPT_PREFIX[cls+"|"+subj]||null;
   const base=(typeof window!=="undefined"&&window.__CONCEPT_NOTES)||{};
   const chapters=useMemo(()=>{
@@ -10409,8 +10456,8 @@ function ConceptNotesPanel({user}){
   },[prefix,notesDB.data]);
   const[chapter,setChapter]=useState("");
   const[newChap,setNewChap]=useState("");
-  const subjOptions=CONCEPT_SUBJECTS[cls]||CONCEPT_SUBJECTS["Class 10"];
-  useEffect(()=>{if(!subjOptions.includes(subj))setSubj(subjOptions[0]);},[cls]);
+  const subjOptions=cnSubjFor(cls);
+  useEffect(()=>{if(!subjOptions.includes(subj))setSubj(subjOptions[0]||"");},[cls]);
   useEffect(()=>{setChapter(chapters[0]||"");setNewChap("");},[prefix,chapters.length]);
   const effChapter=(newChap.trim()||chapter);
   const key=prefix&&effChapter?prefix+"|"+effChapter:null;
@@ -10425,17 +10472,23 @@ function ConceptNotesPanel({user}){
   };
   if(notesDB.loading)return<Spinner/>;
   const fs={width:"100%",padding:"10px 14px",borderRadius:10,fontSize:13.5};
+  if(!isCNmgr&&cnClasses.length===0)return(
+    <div style={{maxWidth:1080,margin:"0 auto"}}>
+      <div style={{marginBottom:16}}><h1 className="ap-hi" style={{margin:0}}>Concept Notes</h1></div>
+      <div className="ap-panel" style={{padding:30,textAlign:"center",color:"var(--c-94)",fontSize:13.5}}>Concept notes are shown for the classes &amp; subjects you teach. You don't have a <b>Class 10</b> or <b>Class 12</b> core subject assigned yet — ask the Director to assign your classes &amp; subjects in <b>Staff → Assign</b>.</div>
+    </div>
+  );
   return(
     <div style={{maxWidth:1080,margin:"0 auto"}}>
       <div style={{marginBottom:16}}>
         <h1 className="ap-hi" style={{margin:0}}>Concept Notes</h1>
-        <p className="ap-hisub" style={{margin:"4px 0 0"}}>Revision notes shown with every solution in the Question Bank. One note per chapter. Use &lt;b&gt; for bold and &lt;br&gt; for line breaks.</p>
+        <p className="ap-hisub" style={{margin:"4px 0 0"}}>Revision notes shown with every solution in the Question Bank. One note per chapter. Use &lt;b&gt; for bold and &lt;br&gt; for line breaks.{!isCNmgr&&" You see only the classes & subjects you teach."}</p>
       </div>
       <div style={{display:"grid",gap:16,gridTemplateColumns:"repeat(auto-fit,minmax(330px,1fr))"}}>
         <InsPanel title="Pick a chapter">
           <div style={{display:"flex",flexDirection:"column",gap:12}}>
             <div style={{display:"flex",gap:10}}>
-              <div style={{flex:1}}><Lbl c="Class"/><Sel value={cls} onChange={setCls} options={["Class 10","Class 12"]}/></div>
+              <div style={{flex:1}}><Lbl c="Class"/><Sel value={cls} onChange={setCls} options={cnClasses}/></div>
               <div style={{flex:1}}><Lbl c="Subject"/><Sel value={subj} onChange={setSubj} options={subjOptions}/></div>
             </div>
             {!prefix?<div style={{background:"var(--bg-amb)",color:"var(--tx-org2)",borderRadius:10,padding:"10px 13px",fontSize:12.5}}>Concept notes are set up for <b>Class 10 Maths &amp; Science</b> so far. More subjects can be added on request.</div>:<>
@@ -14553,6 +14606,69 @@ function _attParseLatLng(s){
 }
 
 // Front-page card: a teacher / VP marks themselves PRESENT — only on campus, only once.
+// One-time prompt: a staff member with no phone number on file is asked for it at login. Saving writes
+// straight to their own users/{username} profile (the doc the Director's Staff Directory reads), so their
+// number lights up Call/WhatsApp app-wide. Shows on EVERY login until entered, then never again. Reads the
+// staff member's OWN profile doc directly (rules allow a self-read) rather than trusting the passed-in
+// user object, whose phone may be stale/absent depending on the login path.
+function StaffPhonePrompt({user,onSaved}){
+  const STAFF=["teacher","office","vp"]; // the roles that appear in the Staff Directory
+  const eligible=!!user&&STAFF.indexOf(user.role)>=0;
+  const[phase,setPhase]=useState("check"); // check | show | hidden
+  const[val,setVal]=useState("");
+  const[busy,setBusy]=useState(false);
+  const[err,setErr]=useState("");
+  useEffect(function(){
+    var live=true;
+    if(!eligible){setPhase("hidden");return;}
+    if(user.phone||user.mobile){setPhase("hidden");return;} // already known on the session user → never prompt
+    (async function(){
+      try{
+        if(!window.__db||!window.__fbGetDoc||!window.__fbDoc){setPhase("hidden");return;}
+        var snap=await window.__fbGetDoc(window.__fbDoc(window.__db,"users",safeId(user.username)));
+        var d=(snap&&snap.exists&&snap.exists())?snap.data():null;
+        if(!live)return;
+        if(d&&(d.phone||d.mobile)){if(onSaved)onSaved(d.phone||d.mobile);setPhase("hidden");}
+        else setPhase("show");
+      }catch(e){ if(live)setPhase("hidden"); } // never block the app on a read error
+    })();
+    return function(){live=false;};
+  },[eligible,user&&user.username]);
+  const save=async function(){
+    var ten=String(val||"").replace(/\D/g,"").replace(/^0/,"").slice(-10);
+    if(!/^[6-9]\d{9}$/.test(ten)){setErr("Enter a valid 10-digit mobile number (starts 6–9).");return;}
+    setBusy(true);setErr("");
+    try{
+      // updateDoc merges only the phone field — keeps role/classes/subjects intact and passes the users rule
+      // (role unchanged). We never read the whole doc into state (a teacher can't list the users collection).
+      await window.__fbUpdateDoc(window.__fbDoc(window.__db,"users",safeId(user.username)),{phone:ten});
+      if(onSaved)onSaved(ten);setPhase("hidden");
+    }catch(e){
+      try{ await window.__fbSetDoc(window.__fbDoc(window.__db,"users",safeId(user.username)),{username:user.username,name:user.name,role:user.role,phone:ten,branches:[(typeof window!=="undefined"&&window.__currentBranch)||"greencity"]},{merge:true}); if(onSaved)onSaved(ten); setPhase("hidden"); }
+      catch(e2){ setErr("Couldn't save — "+((e2&&(e2.code||e2.message))||"please try again")+"."); }
+    }
+    setBusy(false);
+  };
+  if(phase!=="show")return null;
+  var inp={width:"100%",padding:"11px 13px",borderRadius:10,border:"1px solid var(--ap-line,#e8eaed)",fontSize:15,boxSizing:"border-box",fontFamily:"var(--ss-font)",background:"var(--c-fff)",color:"var(--ap-ink)",letterSpacing:".02em"};
+  return(
+    <div style={{position:"fixed",inset:0,zIndex:4000,background:"rgba(9,15,26,.55)",display:"grid",placeItems:"center",padding:16}} onClick={function(e){if(e.target===e.currentTarget){/* backdrop click does NOT dismiss — keep nudging */}}}>
+      <div style={{width:"100%",maxWidth:400,background:"var(--c-fff,#fff)",borderRadius:20,padding:"24px 24px 20px",boxShadow:"0 24px 60px rgba(9,15,26,.35)",fontFamily:"var(--ss-font)"}}>
+        <div style={{width:52,height:52,borderRadius:15,background:"var(--bg-grn)",color:"var(--tx-grn2)",display:"grid",placeItems:"center",marginBottom:14}}>
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+        </div>
+        <div style={{fontSize:18.5,fontWeight:750,color:"var(--ap-ink)",letterSpacing:"-.01em"}}>Add your phone number</div>
+        <div style={{fontSize:13,color:"var(--ap-muted,#64748b)",marginTop:6,lineHeight:1.55}}>Hi {String(user.name||"").split(" ")[0]||"there"} — please add your mobile number so the office and Director can reach you for substitutions, leave and urgent updates. It's saved to your staff profile.</div>
+        <div style={{marginTop:16}}>
+          <input value={val} onChange={function(e){setVal(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter"&&!busy)save();}} placeholder="10-digit mobile number" inputMode="numeric" autoFocus style={inp}/>
+          {err&&<div style={{marginTop:8,background:"var(--bg-red)",color:"var(--tx-red)",borderRadius:9,padding:"8px 11px",fontSize:12.5}}>{err}</div>}
+        </div>
+        <button onClick={save} disabled={busy} style={{width:"100%",marginTop:14,background:busy?"var(--c-94)":"var(--btn-pri-bg,#0d1b2a)",color:"#fff",border:"none",borderRadius:11,padding:"12px",fontSize:14.5,fontWeight:750,cursor:busy?"default":"pointer",fontFamily:"var(--ss-font)"}}>{busy?"Saving…":"Save my number"}</button>
+        <button onClick={function(){setPhase("hidden");}} style={{width:"100%",marginTop:8,background:"none",border:"none",color:"var(--ap-muted,#64748b)",fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:"var(--ss-font)"}}>I'll add it later</button>
+      </div>
+    </div>
+  );
+}
 function StaffCheckIn({user}){
   const attDB=useFirestore("staffAttendance");
   const[busy,setBusy]=useState(false);
@@ -15456,7 +15572,7 @@ function App(){
   const jumpStudent=(adm,name)=>{setJumpAdm(String(adm||name||""));setTab("directory");window.scrollTo(0,0);};
 
   return(
-    <div className="ap-shell"><ToastHost/><ConfirmHost/><OfflineBanner/>
+    <div className="ap-shell"><ToastHost/><ConfirmHost/><OfflineBanner/><StaffPhonePrompt user={user} onSaved={ph=>setUser(u=>u?{...u,phone:ph}:u)}/>
       <div className={"ap-scrim"+(navOpen?" open":"")} onClick={()=>setNavOpen(false)}/>
       {/* ─── Sidebar ─── */}
       <aside className={"ap-sidebar"+(navOpen?" open":"")}>
