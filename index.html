@@ -1061,7 +1061,8 @@ const nmKey=s=>String(s==null?"":s).toLowerCase().replace(/\([^)]*\)/g," ").repl
 // "ADITI (VINOD PATEL)" — so name-keyed data (weekly-test rows) can never blur between them.
 function __disambigName(name,father,admNo){
   var f=String(father||"").trim().toUpperCase();
-  return String(name||"").trim().toUpperCase()+" ("+(f||("ADM "+admNo))+")";
+  var base=String(name||"").replace(/\s*\([^)]*\)/g," ").replace(/\s+/g," ").trim().toUpperCase(); // strip ALL old brackets → applying twice can never double the suffix
+  return base+" ("+(f||("ADM "+admNo))+")";
 }
 // Returns the name to STORE for a new/edited student: father-suffixed iff another ACTIVE student
 // (different admNo) in the same class list normalizes to the same name. Already-bracketed names pass through.
@@ -1115,12 +1116,20 @@ function PhotoAvatar(props){
 // and return {exam,date,obt,max,pct,grade,subjects:[{name,mark,max,pct,graded,grade,absent}]}.
 function __examMarkOf(ex,subjName,adm,name){
   var mba=ex.marksByAdm&&ex.marksByAdm[subjName];if(mba&&adm&&mba[String(adm)]!==undefined)return mba[String(adm)];
-  // If this subject is scored by admission no. at all, a missing adm = no mark for THIS student —
-  // never borrow a same-name student's name-keyed score (the ₹34k name-match trap). Only fall to
-  // name matching for genuinely name-only subjects (no admNo-keyed marks present for this subject).
-  if(mba&&Object.keys(mba).length>0)return undefined;
-  var mn=ex.marks&&ex.marks[subjName];if(mn){if(name&&mn[name]!==undefined)return mn[name];var k=nmKey(name),hit,n=0;for(var kk in mn){if(nmKey(kk)===k){n++;hit=mn[kk];}}if(n===1)return hit;}
-  return undefined;
+  var mn=ex.marks&&ex.marks[subjName];
+  // If this subject is scored by admission no. at all, a missing adm blocks LOOSE name matching —
+  // never borrow a same-name student's score (the ₹34k name-match trap). But an EXACT stored-name row
+  // (a map key is unique — it can only be this student's) and a row explicitly tagged with THIS
+  // admission no. ("NAME (141)") both stay valid: refusing them blanked a whole legacy subject in the
+  // profiles the moment ONE cell of it was corrected by admission no.
+  if(mba&&Object.keys(mba).length>0){
+    if(mn){
+      if(name&&mn[name]!==undefined)return mn[name];
+      if(adm){for(var kk in mn){if(__admInBrack(kk)===String(adm))return mn[kk];}}
+    }
+    return undefined;
+  }
+  return __rowValFor(mn,adm,name);
 }
 function __examPerfFor(examsData,clsLabel,adm,name){
   var out=[];var norm=function(c){return String(c||"").replace(/^class\s+/i,"").trim().toLowerCase();};
@@ -1180,10 +1189,54 @@ const AUTH_EMAIL=u=>String(u||"").trim().toLowerCase().replace(/[^a-z0-9._-]/g,"
 const getTeacherClasses=(user)=>{if(!user||user.role==="admin"||user.role==="vp")return SCHOOL.classes;const cls=user.classes||[];if(!cls.length)return SCHOOL.classes;return [...new Set(cls.map(function(c){return c.split("-")[0].trim();}))];};
 const getTeacherSubjects=(user,cls)=>{if(!user||user.role==="admin"||user.role==="vp")return SCHOOL.subjects[cls]||[];const subjs=(user.subjects||[]).map(function(s){if(s==="English Language"||s==="English Literature")return "English";if(s==="Social Studies")return "Social Science";if(s==="Accounts")return "Accountancy";if(s==="Information Technology")return "Computer Science";return s;});const all=SCHOOL.subjects[cls]||[];if(!subjs.length)return all;const filtered=all.filter(function(s){return subjs.indexOf(s)>=0;});if(filtered.length>0)return filtered;return subjs;};
 const getTeacherSections=(user,cls)=>{const ALL=["A","B","C","D"];if(!user||user.role==="admin"||user.role==="vp")return ALL;const want=String(cls).split("-")[0].trim();const secs=(user.classes||[]).filter(function(c){return c.split("-")[0].trim()===want;}).map(function(c){var p=c.split("-");return p.length>1?p.slice(1).join("-").trim():"";}).filter(Boolean);return secs.length?[...new Set(secs)]:ALL;};
+// Admission number written INSIDE a name's bracket group — "ANUSHKA SINGH (141)", "NAME (ADM 141)",
+// even a garbled "(141) (141) (141)" all yield "141"; father-name brackets yield "". Old rosters
+// disambiguated same-name students this way, so the number in the bracket is explicit attribution.
+function __admInBrack(nm){
+  var m=String(nm||"").match(/\(([^)]*)\)/g)||[];
+  for(var i=0;i<m.length;i++){
+    var g=m[i].slice(1,-1).trim().match(/^(?:adm\.?\s*(?:no\.?\s*)?)?(\d{1,6})$/i);
+    if(g)return g[1];
+  }
+  return "";
+}
+// Resolve a NAME-keyed row map for one student, without ever guessing between same-name students:
+// exact name → row whose bracket carries this admission no. → loose normalised-name fallback ONLY
+// when the student's stored name has no bracket (a bracketed name means a same-name pair exists in
+// this class — a loose match could be the other student), and only when exactly ONE row matches.
+// Candidate rows may themselves be bracketed (old "NAME (oldAdmNo)" spellings with a since-corrected
+// number still belong to the only student of that name) — the n===1 count is the safety, matching
+// what the app always resolved for unique-named students. Ambiguous → undefined; honest blank.
+function __rowValFor(rows,adm,name){
+  if(!rows)return undefined;
+  if(name&&rows[name]!==undefined)return rows[name];
+  var a=String(adm||"");
+  if(a){for(var kb in rows){if(__admInBrack(kb)===a)return rows[kb];}}
+  if(name&&!/\(/.test(name)){
+    var k=nmKey(name),hit,n=0;
+    for(var kk in rows){if(nmKey(kk)===k){n++;hit=rows[kk];}}
+    if(n===1)return hit;
+  }
+  return undefined;
+}
+// Does a practice/wrong-answer entry (stored by NAME only) belong to this student? Exact name, or a
+// loose bracket-stripped match ONLY when neither side is bracket-disambiguated — a renamed same-name
+// pair must never see each other's mistake logs merged into both portals/profiles.
+function __wrongEntFor(e,name){
+  if(!e||!e.name||!name)return false;
+  if(e.name===name)return true;
+  var strip=function(s){return String(s||"").toLowerCase().replace(/\(.*?\)/g,"").replace(/[^a-z0-9]+/g," ").trim();};
+  // Only brackets WITHOUT digits count as identity (father-name disambiguation). Digit brackets are
+  // legacy class tags on account names — "ARYAN YADAV (12)" is the same person as roster "ARYAN YADAV",
+  // but "ANUSHKA SINGH (RAJAN SINGH)" is NOT the same row-owner as plain "ANUSHKA SINGH".
+  var idb=function(s){return (String(s||"").match(/\(([^)]*)\)/g)||[]).map(function(g){return g.slice(1,-1).trim().toLowerCase();}).filter(function(t){return t&&!/\d/.test(t);}).sort().join("|");};
+  return strip(e.name)===strip(name)&&!!strip(name)&&idb(e.name)===idb(name);
+}
 // Read a student's score from a test, preferring the permanent admission no. (rowsByAdm) over the
-// name key (rows). This makes marks collision-proof for two same-name students. Falls back to exact
-// name, then a normalised-name match, so old name-only tests still resolve.
-function _markOf(test,adm,name){if(!test)return undefined;var rba=test.rowsByAdm;if(rba&&adm&&rba[String(adm)]!==undefined)return rba[String(adm)];var r=test.rows;if(!r)return undefined;if(name&&r[name]!==undefined)return r[name];if(name){var k=nmKey(name),hit,n=0;for(var kk in r){if(nmKey(kk)===k){n++;hit=r[kk];}}if(n===1)return hit;}return undefined;} // ambiguous same-name rows are never guessed — one student's marks can't show on another
+// name key (rows). This makes marks collision-proof for two same-name students. Name-keyed rows
+// resolve through __rowValFor: exact name, bracket-admNo tag, then a guarded loose match — an old
+// shared-name row that two students could both claim resolves for NEITHER (assign it in Sync instead).
+function _markOf(test,adm,name){if(!test)return undefined;var rba=test.rowsByAdm;if(rba&&adm&&rba[String(adm)]!==undefined)return rba[String(adm)];return __rowValFor(test.rows,adm,name);}
 // Notice visibility by audience — the "For …" picker now actually scopes who sees a circular (was decorative).
 // Canonical class(+section) key for parent-broadcast targeting. Directory tokens ("9", "IX", "Nursery"),
 // account labels ("Class 9") and broadcast keys ("9 A") all reduce to the same __clsNum form; a trailing
@@ -1205,7 +1258,7 @@ function _classBoard(testsDB,cls,studentsDB){
   Object.values((testsDB&&testsDB.data)||{}).filter(function(t){return t&&t.cls===cls;}).forEach(function(t){
     var mx=Number(t.total)||80;var seen={};
     if(t.rowsByAdm){for(var ad in t.rowsByAdm){var v=t.rowsByAdm[ad];if(v===null||v===undefined||v==="")continue;var nv=Number(v);if(isNaN(nv))continue;var k="ad:"+ad;(agg[k]=agg[k]||{s:0,m:0});agg[k].s+=nv;agg[k].m+=mx;seen[k]=1;}}
-    if(t.rows){for(var nm in t.rows){var v2=t.rows[nm];if(v2===null||v2===undefined||v2==="")continue;var nv2=Number(v2);if(isNaN(nv2))continue;var ad2=admMap[nm];var k2=ad2?("ad:"+ad2):("nm:"+nmKey(nm));if(seen[k2])continue;(agg[k2]=agg[k2]||{s:0,m:0});agg[k2].s+=nv2;agg[k2].m+=mx;}}
+    if(t.rows){for(var nm in t.rows){var v2=t.rows[nm];if(v2===null||v2===undefined||v2==="")continue;var nv2=Number(v2);if(isNaN(nv2))continue;var ad2=admMap[nm]||__admInBrack(nm);var k2=ad2?("ad:"+ad2):("nm:"+nmKey(nm));if(seen[k2])continue;(agg[k2]=agg[k2]||{s:0,m:0});agg[k2].s+=nv2;agg[k2].m+=mx;}}
   });
   return agg;
 }
@@ -1233,14 +1286,19 @@ function __clsTokLabel(cn){return /sip/i.test(cn)?"Class SIP":(/^\d+$/.test(Stri
 // so the admission no. is the reliable differentiator; father name distinguishes students in the directory.)
 function __payHits(p,admNo,cls,name){
   if(!p)return false;
-  if(p.admNo)return !!admNo&&String(p.admNo)===String(admNo);
-  return p.cls===cls&&nmKey(p.student)===nmKey(name);
+  var pa=p.admNo?String(p.admNo):__admInBrack(p.student);
+  if(pa)return !!admNo&&pa===String(admNo);
+  if(p.cls!==cls)return false;
+  if(p.student===name)return true;
+  // loose name match only when NEITHER side is bracket-disambiguated — a bracketed name means a
+  // same-name pair exists, and a shared plain receipt could belong to either (link it in Unlinked).
+  return !/\(/.test(String(name||""))&&!/\(/.test(String(p.student||""))&&nmKey(p.student)===nmKey(name);
 }
 // O(P) once-per-change index for the two S×P hot paths (Fees agg + dashboard fin). Buckets: payments WITH an
 // admission no. by admNo; the no-admNo legacy rows by cls+name. __payHitsIdx returns EXACTLY the set that
 // payments.filter(p=>__payHits(p,...)) would — sums are order-independent, so per-student cost drops to O(own).
-function __payIndex(pays){var byAdm={},byNC={};(pays||[]).forEach(function(p){if(!p)return;if(p.admNo){var a=String(p.admNo);(byAdm[a]=byAdm[a]||[]).push(p);}else{var k=String(p.cls||"")+"||"+nmKey(p.student);(byNC[k]=byNC[k]||[]).push(p);}});return{byAdm:byAdm,byNC:byNC};}
-function __payHitsIdx(idx,admNo,cls,name){var out=(admNo&&idx.byAdm[String(admNo)])?idx.byAdm[String(admNo)]:[];var nc=idx.byNC[String(cls||"")+"||"+nmKey(name)];return nc?out.concat(nc):out;}
+function __payIndex(pays){var byAdm={},byNC={};(pays||[]).forEach(function(p){if(!p)return;var a=p.admNo?String(p.admNo):__admInBrack(p.student);if(a){(byAdm[a]=byAdm[a]||[]).push(p);}else{var k=String(p.cls||"")+"||"+nmKey(p.student);(byNC[k]=byNC[k]||[]).push(p);}});return{byAdm:byAdm,byNC:byNC};}
+function __payHitsIdx(idx,admNo,cls,name){var out=(admNo&&idx.byAdm[String(admNo)])?idx.byAdm[String(admNo)]:[];var nc=idx.byNC[String(cls||"")+"||"+nmKey(name)];if(!nc)return out;var plain=!/\(/.test(String(name||""));var extra=nc.filter(function(p){return p.student===name||(plain&&!/\(/.test(String(p.student||"")));});return extra.length?out.concat(extra):out;}
 // Status-message tone. Replaces a dead `charAt(0)===""` sentinel that could NEVER be true, so every failure used
 // to render in the calm neutral/success colour instead of red. "✓ …" = success; a ⚠/✗ prefix or failure-phrasing
 // = error (red); an in-progress "…" or anything else = neutral. Cosmetic only — never blocks anything.
@@ -1316,12 +1374,18 @@ function attHealth(recs,byAdm,opts){
   // Canonical identity: collapse a student's days whether they were saved under the admission no.
   // (newer roster) or the bare name (legacy/imported) — so nobody is double-counted as two "students".
   var _nk=function(s){return (typeof nmKey==="function")?nmKey(s):String(s||"").toLowerCase().replace(/\s+/g," ").trim();};
-  var nameToAdm={};if(byAdm)Object.keys(byAdm).forEach(function(adm){var k=_nk(byAdm[adm]);if(k&&nameToAdm[k]===undefined)nameToAdm[k]=adm;});
+  var nameToAdm={},exactToAdm={};
+  if(byAdm)Object.keys(byAdm).forEach(function(adm){var nmv=byAdm[adm];if(!nmv)return;exactToAdm[nmv]=adm;
+    var k=_nk(nmv);if(!k)return;
+    if(nameToAdm[k]===undefined)nameToAdm[k]=adm;else if(nameToAdm[k]!==adm)nameToAdm[k]=null;}); // two students share the key → ambiguous, never credit either
   var resolve=function(key){
     if(byAdm&&byAdm[key])return{id:"ad:"+key,admNo:String(key),name:byAdm[key]}; // key is an admission no
-    var adm=nameToAdm[_nk(key)];
-    if(adm)return{id:"ad:"+adm,admNo:String(adm),name:byAdm[adm]};               // name → its admission no
-    return{id:"nm:"+_nk(key),admNo:"",name:key};                                  // unknown → name only
+    if(exactToAdm[key])return{id:"ad:"+exactToAdm[key],admNo:String(exactToAdm[key]),name:key}; // exact stored name
+    var ba=__admInBrack(key);
+    if(ba&&byAdm&&byAdm[ba])return{id:"ad:"+ba,admNo:String(ba),name:byAdm[ba]}; // "NAME (141)" → explicit
+    var adm=(!/\(/.test(String(key||"")))?nameToAdm[_nk(key)]:null;
+    if(adm)return{id:"ad:"+adm,admNo:String(adm),name:byAdm[adm]};               // unique plain name → its admission no
+    return{id:"nm:"+_nk(key),admNo:"",name:key};                                  // unknown/ambiguous → name only
   };
   var byClass={};
   (recs||[]).forEach(function(r){
@@ -2359,13 +2423,13 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
   const aging=useMemo(()=>{if(!canFees||!fin)return null;
     const structure=Object.assign({},__feeClasses(),(feesDB.data.__structure&&feesDB.data.__structure.classes)||{});
     const rosterFor=c=>{const d=academicRosterDB&&academicRosterDB.data&&academicRosterDB.data[safeId(c)];if(d&&Array.isArray(d.students)&&d.students.length)return d.students.map(s=>({admNo:String(s.admNo||""),name:s.name}));return ((studentsDB.data[safeId(c)]||{}).list||[]).map(nm=>({admNo:"",name:nm}));};
-    const payByAdm={},payByName={};
-    Object.keys(feesDB.data||{}).forEach(id=>{if(id.startsWith("__"))return;const p=feesDB.data[id];if(!p||p.disc)return;const amt=Number(p.amount||0);if(p.admNo)payByAdm[p.cls+"||"+String(p.admNo)]=(payByAdm[p.cls+"||"+String(p.admNo)]||0)+amt;payByName[p.cls+"||"+nmKey(p.student)]=(payByName[p.cls+"||"+nmKey(p.student)]||0)+amt;});
+    const payByAdm={},payByName={},payByExact={};
+    Object.keys(feesDB.data||{}).forEach(id=>{if(id.startsWith("__"))return;const p=feesDB.data[id];if(!p)return;const amt=Number(p.amount||0);const pa=p.admNo?String(p.admNo):__admInBrack(p.student);if(pa)payByAdm[pa]=(payByAdm[pa]||0)+amt;else if(/\(/.test(String(p.student||"")))payByExact[p.cls+"||"+p.student]=(payByExact[p.cls+"||"+p.student]||0)+amt;else payByName[p.cls+"||"+nmKey(p.student)]=(payByName[p.cls+"||"+nmKey(p.student)]||0)+amt;});
     const buckets={b1:0,b2:0,b3:0,b4:0};const dayMs=864e5;
     SCHOOL.classes.forEach(c=>{const heads=(structure[c]||[]).filter(h=>h&&Number(h.amount)>0);if(!heads.length)return;
       const annual=heads.reduce((a,h)=>a+Number(h.amount||0),0);
       const sorted=heads.slice().sort((a,b)=>String(a.due||"").localeCompare(String(b.due||"")));
-      rosterFor(c).forEach(s=>{const paid=(s.admNo&&payByAdm[c+"||"+s.admNo]!==undefined)?payByAdm[c+"||"+s.admNo]:(payByName[c+"||"+nmKey(s.name)]||0);
+      rosterFor(c).forEach(s=>{const paid=(s.admNo?(payByAdm[String(s.admNo)]||0):0)+(payByExact[c+"||"+s.name]||0)+(!/\(/.test(String(s.name||""))?(payByName[c+"||"+nmKey(s.name)]||0):0);
         const waiver=waiverFor(feesDB.data,s.admNo);let cum=0,firstDue="";
         for(let j=0;j<sorted.length;j++){const due=String(sorted[j].due||"");if(due&&due>today)break;cum+=Number(sorted[j].amount||0);if(!firstDue&&cum-waiver>paid)firstDue=due;}
         const overdue=Math.max(0,Math.min(cum,annual)-waiver-paid);
@@ -3033,13 +3097,15 @@ function OfficeDashboard({user, dirDB, feesDB, academicRosterDB, attendanceDB, s
   const dues=useMemo(()=>{
     const structure=Object.assign({},__feeClasses(),(feesDB.data.__structure&&feesDB.data.__structure.classes)||{});
     const annualFor=c=>(structure[c]||[]).reduce((a,h)=>a+Number(h.amount||0),0);
-    const payByAdm={},payByName={};
-    Object.keys(feesDB.data||{}).forEach(id=>{if(id.startsWith("__"))return;const p=feesDB.data[id];if(!p||p.disc)return;const amt=Number(p.amount||0);
-      if(p.admNo)payByAdm[p.cls+"||"+String(p.admNo)]=(payByAdm[p.cls+"||"+String(p.admNo)]||0)+amt;
-      payByName[p.cls+"||"+nmKey(p.student)]=(payByName[p.cls+"||"+nmKey(p.student)]||0)+amt;});
+    const payByAdm={},payByName={},payByExact={};
+    Object.keys(feesDB.data||{}).forEach(id=>{if(id.startsWith("__"))return;const p=feesDB.data[id];if(!p)return;const amt=Number(p.amount||0);
+      const pa=p.admNo?String(p.admNo):__admInBrack(p.student);
+      if(pa)payByAdm[pa]=(payByAdm[pa]||0)+amt;
+      else if(/\(/.test(String(p.student||"")))payByExact[p.cls+"||"+p.student]=(payByExact[p.cls+"||"+p.student]||0)+amt;
+      else payByName[p.cls+"||"+nmKey(p.student)]=(payByName[p.cls+"||"+nmKey(p.student)]||0)+amt;});
     const rows=[];let total=0,overdueTotal=0,overdueN=0;
     stats.studying.forEach(s=>{const cls="Class "+s.clsNum;const annual=annualFor(cls);if(annual<=0)return;
-      const paid=(s.admNo&&payByAdm[cls+"||"+String(s.admNo)]!==undefined)?payByAdm[cls+"||"+String(s.admNo)]:(payByName[cls+"||"+nmKey(s.name)]||0);
+      const paid=(s.admNo?(payByAdm[String(s.admNo)]||0):0)+(payByExact[cls+"||"+s.name]||0)+(!/\(/.test(String(s.name||""))?(payByName[cls+"||"+nmKey(s.name)]||0):0);
       const waiver=waiverFor(feesDB.data,s.admNo);const bal=Math.max(0,annual-waiver-paid);
       const dn=feeDueNow(structure[cls]||[],paid,today());
       const dueNow=dn.hasDates?Math.min(annual,dn.dueAmt):annual;
@@ -3992,10 +4058,10 @@ function __dirIndex(dirDB){
   var byAdm={}, byClsName={}, leftByAdm={}, leftByClsName={}, all=[];
   Object.keys(dirDB.data||{}).forEach(function(k){((dirDB.data[k]||{}).students||[]).forEach(function(s){
     var cn=String(s.clsNum||__clsNum(s.cls));
-    if(String(s.status||"").toLowerCase()==="left"){ if(s.admNo)leftByAdm[String(s.admNo)]=s; (leftByClsName[cn]=leftByClsName[cn]||{})[nmKey(s.name)]=s; return; }
+    if(String(s.status||"").toLowerCase()==="left"){ if(s.admNo)leftByAdm[String(s.admNo)]=s; var _lc=(leftByClsName[cn]=leftByClsName[cn]||{});var _lk=nmKey(s.name);_lc[_lk]=(_lc[_lk]===undefined)?s:null; return; }
     all.push(s);
     if(s.admNo)byAdm[String(s.admNo)]=s;
-    (byClsName[cn]=byClsName[cn]||{})[nmKey(s.name)]=s;
+    var _bc=(byClsName[cn]=byClsName[cn]||{});var _bk=nmKey(s.name);_bc[_bk]=(_bc[_bk]===undefined)?s:null; /* same-name pair in one class → ambiguous, receipts go to Unlinked for a human to place */
   })});
   return {byAdm:byAdm, byClsName:byClsName, leftByAdm:leftByAdm, leftByClsName:leftByClsName, all:all};
 }
@@ -4089,9 +4155,9 @@ function ImportFees({feesDB, dirDB, curSession, viewSession, card, btn, canRepla
       if(!receiptNo){var sn=__col(r,["Receipt No.","__EMPTY","","Sr","Sr No","S.No","Serial","Sl No","#"]);var sp=String(sn).split(/[-–]/);if(sp.length>1)receiptNo=sp[sp.length-1].trim();else if(/^\d+$/.test(String(sn).trim()))receiptNo=String(sn).trim();}
       var note=__col(r,["Note","Detail","Particulars"]);
       var hit=null; if(adm&&idx.byAdm[adm])hit=idx.byAdm[adm];
-      if(!hit&&name){var pool=idx.byClsName[cn]||{}; if(pool[nmKey(name)])hit=pool[nmKey(name)]; else {var best=-1,bn=null;Object.keys(pool).forEach(function(k){var rr=__ratio(k,nmKey(name));if(rr>best){best=rr;bn=pool[k];}});if(bn&&best>=0.82)hit=bn;
-        if(!hit){var ft=nmKey(name).split(" ")[0];var fc=Object.keys(pool).filter(function(k){return k.split(" ")[0]===ft;});if(fc.length===1)hit=pool[fc[0]];}}}// unique first-name in class → safe match
-      var leftHit=null; if(!hit){ if(adm&&idx.leftByAdm[adm])leftHit=idx.leftByAdm[adm]; else if(name){var lp=idx.leftByClsName[cn]||{}; if(lp[nmKey(name)])leftHit=lp[nmKey(name)];} } // fall back to students who left
+      if(!hit&&name){var pool=idx.byClsName[cn]||{}; if(pool[nmKey(name)])hit=pool[nmKey(name)]; else if(pool[nmKey(name)]!==null){var best=-1,bk=null;Object.keys(pool).forEach(function(k){var rr=__ratio(k,nmKey(name));if(rr>best){best=rr;bk=k;}});if(bk&&best>=0.82&&pool[bk])hit=pool[bk]; /* a null (same-name pair) winner blocks the fuzzy match → Unlinked */
+        if(!hit){var ft=nmKey(name).split(" ")[0];var fc=Object.keys(pool).filter(function(k){return k.split(" ")[0]===ft;});if(fc.length===1&&pool[fc[0]])hit=pool[fc[0]];}}} /* tombstones COUNT toward first-name ambiguity but are never returned */// unique first-name in class → safe match
+      var leftHit=null; if(!hit){ if(adm&&idx.leftByAdm[adm])leftHit=idx.leftByAdm[adm]; else if(name){var lp=idx.leftByClsName[cn]||{}; if(lp[nmKey(name)])leftHit=lp[nmKey(name)];} } /* null (ambiguous) slots stay unmatched on purpose */ // fall back to students who left
       var who=hit||leftHit;
       var base={admNo:who?String(who.admNo):(adm||""),student:who?who.name:name,cls:"Class "+(who?who.clsNum:cn),date:date,receiptNo:receiptNo,note:note,session:curSession};
       var recs=[];
@@ -4189,11 +4255,15 @@ function ImportMarks({testsDB, studentsDB, academicRosterDB, curSession, card, b
       var cls="Class "+cn; var id=("Class_"+cn+"__"+subj+"__"+test).replace(/[^a-zA-Z0-9_]/g,"_");
       // Bounds: a mark above its Total is almost always a typo (e.g. 200/20) — flag it (still imported so the teacher can fix it).
       if(mk!==""&&mk!=null&&!isNaN(Number(mk))&&tot!==""&&!isNaN(Number(tot))&&Number(mk)>Number(tot))over++;
-      // match name to roster for correct spelling
+      // match name to roster for correct spelling — exact name, then explicit "(admNo)" tag, then a
+      // loose match ONLY when it's unique: with two same-name students, last-match-wins used to re-key
+      // BOTH sheet rows onto ONE roster name (the second row silently overwrote the first student's mark)
       var rd=academicRosterDB&&academicRosterDB.data&&academicRosterDB.data[safeId(cls)];var roster=(rd&&rd.students)||[];var hit=null;
-      roster.forEach(function(s){if(nmKey(s.name)===nmKey(name))hit=s;});
+      roster.forEach(function(s){if(s.name===name)hit=s;});
+      if(!hit){var ib=__admInBrack(name);if(ib)roster.forEach(function(s){if(String(s.admNo)===ib)hit=s;});}
+      if(!hit&&!/\(/.test(String(name||""))){var cands=roster.filter(function(s){return s.name&&!/\(/.test(s.name)&&nmKey(s.name)===nmKey(name);});if(cands.length===1)hit=cands[0];}
       var finalName=hit?hit.name:name; if(!hit)unmatched++;
-      tests[id]=tests[id]||{cls:cls,subj:subj,week:test,name:test,total:Number(tot)||undefined,rows:{}}; tests[id].rows[finalName]=mk; marks++;});
+      tests[id]=tests[id]||{cls:cls,subj:subj,week:test,name:test,total:Number(tot)||undefined,rows:{}}; if(tests[id].rows[finalName]!==undefined&&tests[id].rows[finalName]!==mk){var _sx=2;while(tests[id].rows[finalName+" (dup "+_sx+")"]!==undefined)_sx++;finalName=finalName+" (dup "+_sx+")";} tests[id].rows[finalName]=mk; marks++;});
     setPreview({tests:tests,marks:marks,unmatched:unmatched,skipped:skipped,over:over,n:Object.keys(tests).length});
     setMsg(marks+" marks across "+Object.keys(tests).length+" tests"+(unmatched?" · "+unmatched+" names not on roster (kept as typed)":"")+(skipped?" · "+skipped+" row"+(skipped>1?"s":"")+" skipped (need Name + Subject)":"")+(over?" · "+over+" mark"+(over>1?"s":"")+" exceed the Total — check for typos":"")+".");setBusy(false);
   }
@@ -4409,15 +4479,18 @@ function SyncTrackerFromRecords({user, studentsDB, studentLinksDB, dirDB, testsD
       if(!dir.length)continue;
       var cls="Class "+n;var tdoc=studentsDB.data[safeId(cls)]||{list:[]};var list=(tdoc.list||[]).slice();
       var claimedBy={},adds=[],links=[];
+      var dirDupKeys={};dir.forEach(function(s){var k=nmKey(s.name);dirDupKeys[k]=(dirDupKeys[k]||0)+1;});
       dir.forEach(function(s){
         var idx=-1;
         // 0) honour an existing link (a match the director already confirmed): admNo → a tracker name that still exists
         var lk=studentLinksDB.data&&studentLinksDB.data[String(s.admNo)];
         if(lk&&lk.testName)for(var q=0;q<list.length;q++){if(claimedBy[q]===undefined&&nmKey(list[q])===nmKey(lk.testName)){idx=q;break;}}
-        // 1) EXACT normalised name only — never fuzzy-match silently (that wrongly linked AYUSHI SINGH ↔
-        //    AYUSH PRATAP SINGH). Close-but-not-exact names with marks are surfaced below for the director
-        //    to confirm by hand, so two different children are never merged.
-        if(idx<0)for(var i=0;i<list.length;i++){if(claimedBy[i]===undefined&&nmKey(list[i])===nmKey(s.name)){idx=i;break;}}
+        // 1) exact stored name, or a tracker entry whose bracket carries THIS admission no. — always safe
+        if(idx<0)for(var e=0;e<list.length;e++){if(claimedBy[e]!==undefined)continue;if(list[e]===s.name||(s.admNo&&__admInBrack(list[e])===s.admNo)){idx=e;break;}}
+        // 2) EXACT normalised name — never fuzzy-match silently (that wrongly linked AYUSHI SINGH ↔
+        //    AYUSH PRATAP SINGH), and never for a same-name PAIR (two records share the key: claiming in
+        //    roster order stamps the shared legacy marks onto an arbitrary twin — leave it a leftover to link by hand).
+        if(idx<0&&dirDupKeys[nmKey(s.name)]===1)for(var i=0;i<list.length;i++){if(claimedBy[i]===undefined&&nmKey(list[i])===nmKey(s.name)){idx=i;break;}}
         if(idx>=0){claimedBy[idx]=s.admNo;if(nmKey(list[idx])!==nmKey(s.name))links.push({admNo:s.admNo,record:s.name,tracker:list[idx]});}
         else adds.push({admNo:s.admNo,name:s.name,section:s.section});
       });
@@ -4478,18 +4551,21 @@ function SyncTrackerFromRecords({user, studentsDB, studentLinksDB, dirDB, testsD
     setRemoving(cls+"§"+nm);var target=nmKey(nm),gone=0;
     var _snap={student:nm,cls:cls,removedMarks:[]};   // full before-snapshot → the audit entry doubles as a recovery record
     try{
+      var _tdL=studentsDB.data[safeId(cls)];var _others={};(((_tdL&&_tdL.list)||[])).forEach(function(x){if(x!==nm)_others[x]=1;});
+      var _strayBa=__admInBrack(nm);
       var ids=Object.keys(testsDB.data||{});
       for(var i=0;i<ids.length;i++){var t=testsDB.data[ids[i]];if(!t||!t.rows||String(t.cls||"")!==cls)continue;
-        var hits=Object.keys(t.rows).filter(function(k){return nmKey(k)===target;});
+        var hits=Object.keys(t.rows).filter(function(k){if(k===nm)return true;if(_others[k])return false;var _ba=__admInBrack(k);if(_ba&&_ba!==_strayBa)return false;return nmKey(k)===target;});
         if(!hits.length)continue;var nr=Object.assign({},t.rows);hits.forEach(function(k){_snap.removedMarks.push({test:ids[i],testName:t.name||t.topic||"",row:k,marks:t.rows[k]});delete nr[k];});
         await testsDB.set(ids[i],Object.assign({},t,{rows:nr}));gone+=hits.length;
       }
       var sk=safeId(cls),td=studentsDB.data[sk];
       if(td&&Array.isArray(td.list)&&td.list.some(function(x){return nmKey(x)===target;})){
         var ns=Object.assign({},td.sections||{}),na=Object.assign({},td.admNo||{});
-        Object.keys(ns).forEach(function(x){if(nmKey(x)===target){_snap.section=ns[x];delete ns[x];}});
-        Object.keys(na).forEach(function(x){if(nmKey(x)===target){_snap.admNo=na[x];delete na[x];}});
-        await studentsDB.set(cls,{cls:cls,list:td.list.filter(function(x){return nmKey(x)!==target;}),sections:ns,admNo:na,updatedAt:new Date().toISOString()});
+        var _rm=function(x){return x===nm||(nmKey(x)===target&&!/\(/.test(x));}; /* bracket-named entries are real disambiguated students — only the stray itself goes */
+        Object.keys(ns).forEach(function(x){if(_rm(x)){_snap.section=ns[x];delete ns[x];}});
+        Object.keys(na).forEach(function(x){if(_rm(x)){_snap.admNo=na[x];delete na[x];}});
+        await studentsDB.set(cls,{cls:cls,list:td.list.filter(function(x){return !_rm(x);}),sections:ns,admNo:na,updatedAt:new Date().toISOString()});
       }
       logAudit("remove-student","students",cls+" · "+nm,_snap,null);   // recoverable from the audit log's before-snapshot
       setMsg('✓ Removed "'+nm+'" — deleted '+gone+' mark'+(gone===1?"":"s")+' from '+cls+'.');
@@ -4506,18 +4582,19 @@ function SyncTrackerFromRecords({user, studentsDB, studentLinksDB, dirDB, testsD
     try{
       var ids=Object.keys(testsDB.data||{});
       for(var i=0;i<ids.length;i++){var t=testsDB.data[ids[i]];if(!t||!t.rows||String(t.cls||"")!==cls)continue;
-        var sKey=Object.keys(t.rows).filter(function(k){return nmKey(k)===snk;})[0];if(!sKey)continue;
+        var sKey=(t.rows[strayName]!==undefined)?strayName:Object.keys(t.rows).filter(function(k){if(k===targetName)return false;var _b=__admInBrack(k);if(_b&&_b!==String(admNo))return false;if(/\(/.test(k)&&k!==strayName)return false;return nmKey(k)===snk;})[0];if(!sKey)continue;
         var nr=Object.assign({},t.rows);
-        var tKey=Object.keys(nr).filter(function(k){return nmKey(k)===tnk;})[0]||targetName;
-        if(nr[tKey]===undefined||nr[tKey]===""){nr[tKey]=nr[sKey];moved++;}else{coll++;}
-        delete nr[sKey];
+        var tKey=(nr[targetName]!==undefined)?targetName:(Object.keys(nr).filter(function(k){return __admInBrack(k)===String(admNo);})[0]||targetName);
+        if(tKey===sKey){nr[targetName]=nr[sKey];if(targetName!==sKey)delete nr[sKey];moved++;} /* the stray row is itself the target-tagged row — re-key it, never delete the only copy */
+        else{if(nr[tKey]===undefined||nr[tKey]===""){nr[tKey]=nr[sKey];moved++;}else{coll++;}
+        delete nr[sKey];}
         await testsDB.set(ids[i],Object.assign({},t,{rows:nr}));
       }
       var sk=safeId(cls),td=studentsDB.data[sk]||{list:[],sections:{},admNo:{}};
       var nl=(td.list||[]).slice(),na=Object.assign({},td.admNo||{}),nsec=Object.assign({},td.sections||{});
-      nl=nl.filter(function(x){return nmKey(x)!==snk;});                 // clear the stray name if it was listed
-      if(!nl.some(function(x){return nmKey(x)===tnk;}))nl.push(targetName); // ensure the real student is listed
-      var realName=nl.filter(function(x){return nmKey(x)===tnk;})[0]||targetName;
+      nl=nl.filter(function(x){return !(x===strayName||(nmKey(x)===snk&&!/\(/.test(x)&&x!==targetName));}); // clear the stray; bracket-named entries are real students
+      if(nl.indexOf(targetName)<0)nl.push(targetName); // ensure the real student is listed under their exact name
+      var realName=targetName;
       na[realName]=admNo;
       await studentsDB.set(cls,{cls:cls,list:nl,sections:nsec,admNo:na,updatedAt:new Date().toISOString()});
       setMsg('✓ Merged "'+strayName+'" → "'+realName+'" ('+moved+' mark'+(moved===1?"":"s")+' moved'+(coll?', '+coll+' kept — the student already had a mark there':"")+').');
@@ -4989,13 +5066,14 @@ function _attResolveStatus(raw,students,report){
     var v;
     if(raw[st.key]!==undefined){v=raw[st.key];usedKey[st.key]=1;}
     else if(raw[st.name]!==undefined){v=raw[st.name];usedKey[st.name]=1;}
-    else{var nk=nmKey(st.name);for(var k in raw){if(usedKey[k])continue;if(nmKey(k)===nk){v=raw[k];usedKey[k]=1;break;}}}
+    else{var _sa=String(st.key||"");for(var kb in raw){if(usedKey[kb])continue;if(_sa&&__admInBrack(kb)===_sa){v=raw[kb];usedKey[kb]=1;break;}}
+      if(v===undefined&&!/\(/.test(String(st.name||""))){var nk=nmKey(st.name);for(var k in raw){if(usedKey[k])continue;if(/\(/.test(k))continue;if(nmKey(k)===nk){v=raw[k];usedKey[k]=1;break;}}}}
     if(v!==undefined){out[st.key]=v;usedNm[nmKey(st.name)]=1;}
   });
   var openStu=students.filter(function(st){return out[st.key]===undefined;});
   var openKeys=Object.keys(raw).filter(function(k){return !usedKey[k];});
   var pairs=[];
-  openStu.forEach(function(st,si){openKeys.forEach(function(k,ki){var sc=_attNameSim(st.name,k);if(sc>=0.6)pairs.push([sc,si,ki]);});});
+  openStu.forEach(function(st,si){if(/\(/.test(String(st.name||"")))return;openKeys.forEach(function(k,ki){var sc=_attNameSim(st.name,k);if(sc>=0.6)pairs.push([sc,si,ki]);});}); /* bracket-named students are a same-name pair — never fuzzy-guess their legacy days (pass 1 exact/bracket-adm only) */
   pairs.sort(function(a,b){return b[0]-a[0];});
   var sDone={},kDone={};
   pairs.forEach(function(p){var si=p[1],ki=p[2];if(sDone[si]||kDone[ki])return;sDone[si]=1;kDone[ki]=1;var st=openStu[si],k=openKeys[ki];out[st.key]=raw[k];usedNm[nmKey(st.name)]=1;usedKey[k]=1;if(report)report.push({name:st.name,from:k,score:Math.round(p[0]*100)});});
@@ -5008,9 +5086,7 @@ function _attResolveStatus(raw,students,report){
 function _attValIn(status,adm,name){
   if(!status)return undefined;
   if(adm&&status[adm]!==undefined)return status[adm];
-  if(name&&status[name]!==undefined)return status[name];
-  if(name){var k2=nmKey(name);for(var k in status){if(nmKey(k)===k2)return status[k];}}
-  return undefined;
+  return __rowValFor(status,adm,name);
 }
 function Attendance({user,attendanceDB,studentsDB,usersDB,academicRosterDB,dirDB}){
   const ROMAN_MAP={"I":"1","II":"2","III":"3","IV":"4","V":"5","VI":"6","VII":"7","VIII":"8","IX":"9","X":"10","XI":"11","XII":"12"};
@@ -6481,10 +6557,16 @@ function StudentProfile({user,testsDB,examsDB,studentsDB,attendanceDB,wrongDB,fe
   // refused for the whole class), so fall back to the admission-keyed roster, then the live directory.
   const padm=useMemo(()=>{
     var m=(studentsDB.data[safeId(cls)]||{}).admNo||{};var a=String(m[student]||"");if(a)return a;
+    // Loose match only when UNAMBIGUOUS: a first-nmKey-match used to bind a same-name twin to the
+    // OTHER student's admission no. (wrong marks, fees, attendance AND photo doc for the profile).
+    var pick=function(list){if(!Array.isArray(list))return "";var h=list.find(x=>x&&x.name===student);if(h&&h.admNo)return String(h.admNo);
+      if(/\(/.test(String(student||"")))return "";
+      var c=list.filter(x=>x&&x.name&&!/\(/.test(x.name)&&nmKey(x.name)===nmKey(student));
+      return (c.length===1&&c[0].admNo)?String(c[0].admNo):"";};
     var ar=academicRosterDB&&academicRosterDB.data&&academicRosterDB.data[safeId(cls)];
-    if(ar&&Array.isArray(ar.students)){var h=ar.students.find(x=>x&&x.name===student)||ar.students.find(x=>x&&nmKey(x.name)===nmKey(student));if(h&&h.admNo)return String(h.admNo);}
+    var a1=ar?pick(ar.students):"";if(a1)return a1;
     var dd=dirDB&&dirDB.data&&dirDB.data["dir_"+String(__clsNum(cls))];
-    if(dd&&Array.isArray(dd.students)){var h2=dd.students.find(x=>x&&x.name===student)||dd.students.find(x=>x&&nmKey(x.name)===nmKey(student));if(h2&&h2.admNo)return String(h2.admNo);}
+    var a2=dd?pick(dd.students):"";if(a2)return a2;
     return "";
   },[studentsDB.data,academicRosterDB&&academicRosterDB.data,dirDB&&dirDB.data,cls,student]);
 
@@ -6553,7 +6635,7 @@ function StudentProfile({user,testsDB,examsDB,studentsDB,attendanceDB,wrongDB,fe
   const norm=s=>(s||"").toLowerCase().replace(/\(.*?\)/g,"").replace(/\s+/g," ").trim();
   const practice=useMemo(()=>{
     const me=norm(student);if(!me)return{count:0,chapters:[],recent:[]};
-    const ents=Object.values(wrongDB.data||{}).filter(e=>e&&norm(e.name)===me);
+    const ents=Object.values(wrongDB.data||{}).filter(e=>__wrongEntFor(e,student));
     const byCh={};ents.forEach(e=>{byCh[e.chapter]=(byCh[e.chapter]||0)+1;});
     return{count:ents.length,chapters:Object.entries(byCh).sort((a,b)=>b[1]-a[1]).slice(0,8),recent:ents.sort((a,b)=>(b.timestamp||"").localeCompare(a.timestamp||"")).slice(0,6)};
   },[wrongDB.data,student]);
@@ -7348,6 +7430,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
   const[tab,setTab]=useState(reportsOnly?"reports":"exams");
   const[selId,setSelId]=useState("");
   const[markDraft,setMarkDraft]=useState({});const markDirty=useRef({}); // cells THIS teacher edited — so a save merges only those over the live doc, never clobbering another teacher's subject
+  const[orphanSel,setOrphanSel]=useState({});const[orphanBusy,setOrphanBusy]=useState(""); // "not linked to any student" rows → who each belongs to
   const[saving,setSaving]=useState(false);
   const[cardStu,setCardStu]=useState("");
   const[extraDraft,setExtraDraft]=useState({});
@@ -7416,8 +7499,10 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
   const rosterOf=c=>rosterObjsOf(c).map(s=>s.name);
   const sectionsOf=c=>{var m={};rosterObjsOf(c).forEach(s=>{if(s.name)m[s.name]=_rosterSec(s.section,c);});return m;};
   const admOfExam=(c,stu)=>{var h=rosterObjsOf(c).find(s=>s.name===stu);return h?h.admNo:"";};
-  // Exam mark for a student: admission-no.-first (marksByAdm), then exact name, then normalised name (marks).
-  const _examMark=(ex,subjName,stu,adm)=>{var mba=ex.marksByAdm&&ex.marksByAdm[subjName];if(mba&&adm&&mba[String(adm)]!==undefined)return mba[String(adm)];var mn=ex.marks&&ex.marks[subjName];if(mn){if(mn[stu]!==undefined)return mn[stu];var k=nmKey(stu);for(var kk in mn){if(nmKey(kk)===k)return mn[kk];}}return undefined;};
+  // Exam mark for a student: admission-no.-first (marksByAdm), then name rows via __rowValFor (exact
+  // name → bracket-admNo tag → guarded loose match). A legacy shared-name row that two same-name
+  // students could both claim resolves for NEITHER — it shows in the "not linked" panel to be assigned.
+  const _examMark=(ex,subjName,stu,adm)=>{var mba=ex.marksByAdm&&ex.marksByAdm[subjName];if(mba&&adm&&mba[String(adm)]!==undefined)return mba[String(adm)];return __rowValFor(ex.marks&&ex.marks[subjName],adm,stu);};
   // Attendance for a student on their OWN class only, resolved by admission no. (then name) so a same-name
   // student in another class can't inflate the count and admNo-keyed days are found. Was: school-wide, by name.
   const attFor=(stu,cls)=>{let p=0,t=0;var adm=String(admOfExam(cls||"",stu)||"");Object.values(attendanceDB.data||{}).forEach(r=>{if(!r||!r.status||(cls&&String(r.cls||"")!==cls))return;var v=_attValIn(r.status,adm,stu);if(v===undefined||v==="U")return;t++;if(v==="P"||v==="L")p++;});return{p,t,pct:t?Math.round(p/t*100):null};};
@@ -7442,7 +7527,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
   };
   const cardHTML=(ex,stu,rank,total,pm,opts)=>{
     opts=opts||{};const tpl=opts.tpl||"cbse";const tog=Object.assign({rank:true,coscholastic:true,attendance:true,remarks:true},opts.tog||{});
-    const r=examResult(ex,stu);const e=(ex.extra&&ex.extra[stu])||{};const att=attFor(stu,ex.cls);
+    const r=examResult(ex,stu);const e=__rowValFor(ex.extra,admOfExam(ex.cls,stu),stu)||{};const att=attFor(stu,ex.cls);
     const sec=sectionsOf(ex.cls)[stu]||"-";
     const _adm=String(admOfExam(ex.cls,stu)||"");const _photo=(pm&&pm[_adm])||"";
     // Roll = position within the student's own SECTION (alphabetical, stable), from the record — not a class-wide list index.
@@ -7574,7 +7659,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
     const subjNames=[...new Set(cr.flatMap(x=>x.subjects.map(s=>s.name)))];
     const head=["Rank","Name",...subjNames,"Total","Max","Percentage","Grade","Result"];
     const rows=cr.map(x=>{
-      const e=(ex.extra&&ex.extra[x.student])||{};
+      const e=__rowValFor(ex.extra,admOfExam(ex.cls,x.student),x.student)||{};
       const result=e.result||(x.hasMarks?((!x.anyFail&&x.pct>=33)?"PROMOTED":"NEEDS IMPROVEMENT"):"—");
       const byName={};x.subjects.forEach(s=>{byName[s.name]=(s.marks==null?"AB":s.marks);});
       return [x.rank||"",x.student,...subjNames.map(n=>byName[n]!==undefined?byName[n]:""),x.hasMarks?x.obt:"",x.max,x.hasMarks?x.pct+"%":"",x.grade||"",result];
@@ -7658,6 +7743,54 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
     if(window.__toast)window.__toast("Marks saved","ok");
   }catch(e){if(window.__toast)window.__toast("Couldn't save marks — "+((e&&e.message)||"check your connection")+". Nothing was lost; try again.","err");}setSaving(false);};
   const setMark=(subj,stu,val)=>{(markDirty.current[subj]=markDirty.current[subj]||{})[stu]=true;setMarkDraft(d=>({...d,[subj]:{...(d[subj]||{}),[stu]:val}}));};
+  // Name-keyed mark rows of the selected exam that NO roster student can claim any more — typically marks
+  // entered before a same-name student was renamed (a shared plain name two students would both match),
+  // or a student who has since left. Surfaced below the grid so the office can assign each row to the
+  // right student (the marks move to that admission no.) instead of the marks silently disappearing.
+  const examOrphans=useMemo(()=>{
+    if(!exam)return[];
+    var ros=rosterObjsOf(exam.cls)||[];
+    var names={},adms={},plainByKey={};
+    ros.forEach(s=>{if(s.name)names[s.name]=1;if(s.admNo)adms[String(s.admNo)]=1;
+      if(s.name&&!/\(/.test(s.name))plainByKey[nmKey(s.name)]=(plainByKey[nmKey(s.name)]||0)+1;});
+    var out={};
+    Object.keys(exam.marks||{}).forEach(subj=>{
+      var mn=exam.marks[subj]||{};
+      var keyN={};Object.keys(mn).forEach(kk=>{var k2=nmKey(kk);keyN[k2]=(keyN[k2]||0)+1;});
+      Object.keys(mn).forEach(kk=>{
+        if(names[kk])return;
+        var ba=__admInBrack(kk);if(ba&&adms[ba])return;
+        if(plainByKey[nmKey(kk)]===1&&keyN[nmKey(kk)]===1)return; // exactly the rows __rowValFor's loose pass resolves — never list a row the grid already shows
+        if(mn[kk]===undefined||mn[kk]==="")return;
+        (out[kk]=out[kk]||{})[subj]=mn[kk];
+      });
+    });
+    return Object.keys(out).sort().map(k=>({row:k,subs:out[k]}));
+  },[exam,dirDB.data,studentsDB.data]);
+  const assignOrphan=async(rowKey)=>{
+    var adm=String(orphanSel[rowKey]||"");if(!exam||!adm)return;
+    var stu=(rosterObjsOf(exam.cls)||[]).find(s=>String(s.admNo)===adm);if(!stu)return;
+    if(!await window.__confirm({title:"Assign these marks to "+stu.name+"?",body:"Every subject mark saved under “"+rowKey+"” moves to admission no. "+adm+" ("+stu.name+"). Subjects where "+stu.name+" already has a mark keep the existing mark. The old row is then removed.",confirmText:"Assign marks"}))return;
+    setOrphanBusy(rowKey);
+    try{
+      const fresh=examsDB.data[selId]||exam;
+      const marks=JSON.parse(JSON.stringify(fresh.marks||{}));
+      const mba=JSON.parse(JSON.stringify(fresh.marksByAdm||{}));
+      let moved=0,kept=0;const patch={};
+      Object.keys(marks).forEach(subj=>{
+        if(!marks[subj]||marks[subj][rowKey]===undefined)return;
+        const v=marks[subj][rowKey];
+        mba[subj]=mba[subj]||{};
+        const already=(mba[subj][adm]!==undefined)?mba[subj][adm]:__rowValFor(marks[subj],adm,stu.name); /* their own exact-name row counts too — never silently replace it */
+        if(already===undefined&&v!==""){mba[subj][adm]=v;patch[subj]=v;moved++;}else kept++;
+        delete marks[subj][rowKey];
+      });
+      await examsDB.set(selId,{...fresh,marks,marksByAdm:mba,updatedAt:new Date().toISOString()});
+      setMarkDraft(d=>{const nd=JSON.parse(JSON.stringify(d||{}));Object.keys(patch).forEach(subj=>{(nd[subj]=nd[subj]||{})[stu.name]=patch[subj];});return nd;});
+      if(window.__toast)window.__toast(moved+" subject mark"+(moved===1?"":"s")+" assigned to "+stu.name+(kept?" · "+kept+" kept the mark already entered":""),"ok");
+    }catch(e){if(window.__toast)window.__toast("Couldn't assign — "+((e&&e.message)||"try again"),"err");}
+    setOrphanBusy("");
+  };
   const delExam=async(id)=>{if(await window.__confirm({title:"Delete this exam?",body:"All its marks go with it. It moves to “Recently Deleted” (Administration) and can be restored.",danger:true,confirmText:"Delete exam"})){await softDelete(examsDB,id,user);if(selId===id)setSelId("");}};
   const saveExtra=async()=>{if(!exam||!cardStu)return;const next={...(exam.extra||{}),[cardStu]:extraDraft};await examsDB.set(selId,{...exam,extra:next,updatedAt:new Date().toISOString()});};
 
@@ -7783,6 +7916,22 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
             </table>
           </div>
           <div style={{padding:"12px 16px",borderTop:"1px solid var(--c-ec)",display:"flex",justifyContent:"flex-end"}}><Btn onClick={saveMarks} disabled={saving}>{saving?"Saving…":"Save marks"}</Btn></div>
+        </div>}
+        {exam&&examOrphans.length>0&&(user.role==="admin"||user.role==="office")&&<div style={{marginTop:14,background:"var(--bg-amb)",border:"1px solid var(--bd-amb)",borderRadius:14,padding:"13px 16px"}}>
+          <div style={{fontWeight:800,fontSize:13.5,color:"var(--tx-org2)"}}>{examOrphans.length} old mark row{examOrphans.length>1?"s":""} not linked to any student on this roster</div>
+          <div style={{fontSize:12,color:"var(--ap-muted)",marginTop:3}}>Marks entered before a same-name student was renamed (or for a student who has left). Pick who each row belongs to — its marks move to that student's admission number and show in the grid, marksheets and report cards.</div>
+          <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:10}}>
+            {examOrphans.map(o=>{
+              const opts=(rosterObjsOf(exam.cls)||[]).slice().sort((a,b)=>{const k=nmKey(o.row);const ax=nmKey(a.name)===k?0:1,bx=nmKey(b.name)===k?0:1;return ax-bx||String(a.name).localeCompare(String(b.name));});
+              return(<div key={o.row} style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                <div style={{fontSize:12.5,minWidth:220}}><b style={{color:"var(--ap-ink)"}}>{o.row}</b><div style={{fontSize:11.5,color:"var(--ap-muted)"}}>{Object.keys(o.subs).map(s=>s+": "+o.subs[s]).join(" · ")}</div></div>
+                <select value={orphanSel[o.row]||""} onChange={e=>setOrphanSel(x=>({...x,[o.row]:e.target.value}))} className="ss-input" style={{padding:"7px 10px",borderRadius:8,fontSize:12.5,maxWidth:260}}>
+                  <option value="">Belongs to…</option>
+                  {opts.map(s=><option key={s.admNo} value={s.admNo}>{s.name} · Adm {s.admNo}</option>)}
+                </select>
+                <button onClick={()=>assignOrphan(o.row)} disabled={!orphanSel[o.row]||!!orphanBusy} style={{background:"var(--btn-pri-bg)",color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>{orphanBusy===o.row?"Assigning…":"Assign"}</button>
+              </div>);})}
+          </div>
         </div>}
       </div>}
 
@@ -8200,13 +8349,13 @@ function UnrosteredPayments({user,payments,studentsDB,feesDB}){
   const nameOf=u=>edits[u.key]!==undefined?edits[u.key]:titleCase(u.name);
   const addOne=async u=>{const nm=(nameOf(u)||"").trim();if(!nm)return;setBusy(u.key);
     const cur=studentsDB.data[safeId(u.cls)]||{cls:u.cls,list:[],sections:{}};
-    if(!(cur.list||[]).some(x=>nmKey(x)===nmKey(nm))){try{await studentsDB.set(u.cls,{cls:u.cls,list:(cur.list||[]).concat([nm]),sections:Object.assign({},cur.sections||{}),updatedAt:new Date().toISOString()});}catch(e){}}
+    if(!(cur.list||[]).some(x=>nmKey(x)===nmKey(nm))){try{await studentsDB.set(u.cls,Object.assign({},cur,{cls:u.cls,list:(cur.list||[]).concat([nm]),sections:Object.assign({},cur.sections||{}),admNo:Object.assign({},cur.admNo||{}),updatedAt:new Date().toISOString()}));}catch(e){}} /* merge over cur — a plain rewrite WIPED the class admNo map (portal identity/fees went blank) */
     setBusy("");};
   const addAllNew=async()=>{setBusy("__all");const byCls={};
     newOnes.forEach(u=>{const nm=(nameOf(u)||"").trim();if(nm)(byCls[u.cls]=byCls[u.cls]||[]).push(nm);});
     for(const cls of Object.keys(byCls)){const cur=studentsDB.data[safeId(cls)]||{cls,list:[],sections:{}};
       const toAdd=byCls[cls].filter(nm=>!(cur.list||[]).some(x=>nmKey(x)===nmKey(nm)));
-      if(toAdd.length){try{await studentsDB.set(cls,{cls,list:(cur.list||[]).concat(toAdd),sections:Object.assign({},cur.sections||{}),updatedAt:new Date().toISOString()});}catch(e){}}}
+      if(toAdd.length){try{await studentsDB.set(cls,Object.assign({},cur,{cls,list:(cur.list||[]).concat(toAdd),sections:Object.assign({},cur.sections||{}),admNo:Object.assign({},cur.admNo||{}),updatedAt:new Date().toISOString()}));}catch(e){}}}
     setBusy("");};
   // Rename a payer's fee records to the matching roster name so the money credits (no roster/attendance change).
   const linkRecords=async u=>{const target=titleCase(u.close);const recs=(payments||[]).filter(p=>p&&p.cls===u.cls&&nmKey(p.student)===nmKey(u.name));
@@ -8307,7 +8456,6 @@ function Fees({user,feesDB,studentsDB,academicRosterDB,dirDB,metaDB}){
   // ONE fee formula for the whole app — delegate to the global studentAnnualFee (stream + admission-fee aware)
   // so the Fees page, DirectoryProfile, the dashboard and the portal can never compute a different number.
   const annualForStu=(c,sec,oldNew)=>studentAnnualFee(c,sec,oldNew,structure);
-  const paidFor=(c,s)=>payments.filter(p=>p.cls===c&&nmKey(p.student)===nmKey(s)).reduce((a,p)=>a+Number(p.amount||0),0);
 
   // Fees & Student Records cover ALL classes (1–12 + SIP), sourced from the directory. (Attendance & the
   // Test Tracker stay 6–12 via the academic roster.)
@@ -8439,7 +8587,7 @@ function Fees({user,feesDB,studentsDB,academicRosterDB,dirDB,metaDB}){
   const TABS=[{id:"overview",label:"Overview"},{id:"collect",label:"Collect Fee"},{id:"ledger",label:"Day Book"},{id:"defaulters",label:"Defaulters"},{id:"waivers",label:"Waivers"},{id:"structure",label:"Fee Structure"}];
 
   const printReceipt=(rec,paidBefore,conc=0)=>{
-    const _rs=rosterFor(rec.cls).find(s=>(rec.admNo&&String(s.admNo)===String(rec.admNo))||nmKey(s.name)===nmKey(rec.student))||{};const ann=annualForStu(rec.cls,_rs.section,_rs.oldNew);const waiver=waiverFor(feesDB.data,rec.admNo);const balAfter=Math.max(0,ann-waiver-conc-(paidBefore+rec.amount));
+    const _rs=(rec.admNo&&rosterFor(rec.cls).find(s=>String(s.admNo)===String(rec.admNo)))||rosterFor(rec.cls).find(s=>s.name===rec.student)||(!/\(/.test(String(rec.student||""))&&(function(){var c=rosterFor(rec.cls).filter(s=>!/\(/.test(String(s.name||""))&&nmKey(s.name)===nmKey(rec.student));return c.length===1?c[0]:null;})())||{};const ann=annualForStu(rec.cls,_rs.section,_rs.oldNew);const waiver=waiverFor(feesDB.data,rec.admNo);const balAfter=Math.max(0,ann-waiver-conc-(paidBefore+rec.amount));
     const heads=structure[rec.cls]||[];
     const dt=fmtDate(rec.date);
     let h=`<html><head><title>Receipt ${rec.receiptNo}</title><meta charset="utf-8"><style>
@@ -8712,7 +8860,7 @@ td.r,th.r{text-align:right}
         const allStu=ALL_CLASSES.flatMap(c=>rosterFor(c).map(s=>{var _d=dirByAdm[String(s.admNo)]||{};return Object.assign({},s,{cls:c,father:_d.father||"",mother:_d.mother||"",address:_d.address||"",phone:_feePhone(s.admNo)});}));
         const qx=gq.trim().toLowerCase();const qd=qx.replace(/\D/g,"");
         const results=qx?allStu.filter(s=>String(s.name).toLowerCase().includes(qx)||String(s.admNo).toLowerCase().includes(qx)||String(s.father||"").toLowerCase().includes(qx)||(qd.length>=3&&String(s.phone||"").replace(/\D/g,"").includes(qd))).slice(0,10):[];
-        const pickStu=(r)=>{const full=(r.admNo&&allStu.find(s=>String(s.admNo)===String(r.admNo)))||allStu.find(s=>s.cls===(r.cls||cls)&&nmKey(s.name)===nmKey(r.name||r.student))||r;setLastReceipt(null);setConcMsg("");setGOpen(false);setGq(full.name);setCls(full.cls);setStudent(full.name);setMode("Cash");setPayRef("");setIsConc(false);const pi=payInfo(full.cls,full);setAmount(String(pi.overdue>0?pi.overdue:(pi.bal>0?pi.bal:"")));};
+        const pickStu=(r)=>{const _pn=r.name||r.student;const full=(r.admNo&&allStu.find(s=>String(s.admNo)===String(r.admNo)))||allStu.find(s=>s.cls===(r.cls||cls)&&s.name===_pn)||(!/\(/.test(String(_pn||""))&&(function(){var c=allStu.filter(s=>s.cls===(r.cls||cls)&&s.name&&!/\(/.test(s.name)&&nmKey(s.name)===nmKey(_pn));return c.length===1?c[0]:null;})())||r;setLastReceipt(null);setConcMsg("");setGOpen(false);setGq(full.name);setCls(full.cls);setStudent(full.name);setMode("Cash");setPayRef("");setIsConc(false);const pi=payInfo(full.cls,full);setAmount(String(pi.overdue>0?pi.overdue:(pi.bal>0?pi.bal:"")));};
         const resetStu=()=>{setLastReceipt(null);setConcMsg("");setStudent("");setGq("");setAmount("");setPayRef("");setIsConc(false);};
         const cur=student?{name:student,cls,admNo:selAdm,section:selStu.section,oldNew:selStu.oldNew,father:(dirByAdm[String(selAdm)]||{}).father||"",mother:(dirByAdm[String(selAdm)]||{}).mother||"",address:(dirByAdm[String(selAdm)]||{}).address||"",phone:_feePhone(selAdm)}:null;
         const heads=structure[cls]||[];
@@ -9116,9 +9264,14 @@ function DirectoryProfile({stu, testsDB, examsDB, studentsDB, attendanceDB, wron
   const clsNum=String(stu.clsNum||"");
   const academicCls=/^([6-9]|1[0-2])$/.test(clsNum)?("Class "+clsNum):null;
   const rosterList=academicCls?((studentsDB.data[safeId(academicCls)]||{}).list||[]):[];
-  const rosterName=rosterList.find(r=>nmKey(r)===nmKey(stu.name))||null;
-  const aName=rosterName||stu.name;
   const adm=String(stu.admNo||"");
+  // Roster alias for this student: exact stored name → an entry whose bracket carries THIS admission
+  // no. → loose match ONLY when it's unambiguous (neither side bracketed, single candidate) — a
+  // first-nmKey-match here used to hand one same-name twin the OTHER's marks/attendance/fees.
+  const rosterName=rosterList.find(r=>r===stu.name)
+    ||rosterList.find(r=>__admInBrack(r)===adm&&adm)
+    ||((!/\(/.test(String(stu.name||""))&&rosterList.filter(r=>!/\(/.test(r)&&nmKey(r)===nmKey(stu.name)).length===1)?rosterList.find(r=>!/\(/.test(r)&&nmKey(r)===nmKey(stu.name)):null);
+  const aName=rosterName||stu.name;
   // Student photo — its own Firestore doc (studentPhotos/{admNo}), loaded on demand so the class roster stays light.
   const[photo,setPhoto]=useState(null);const[photoBusy,setPhotoBusy]=useState("");
   useEffect(()=>{let live=true;setPhoto(null);setPhotoBusy("");
@@ -9157,7 +9310,7 @@ function DirectoryProfile({stu, testsDB, examsDB, studentsDB, attendanceDB, wron
   const examPerf=useMemo(()=>__examPerfFor(examsDB&&examsDB.data,examCls,adm,aName),[examsDB&&examsDB.data,examCls,adm,aName]);
   const att=useMemo(()=>{let p=0,a=0,l=0;const recent=[];Object.values(attendanceDB.data||{}).forEach(r=>{if(!r||!r.status)return;var v=(adm&&r.status[adm]!==undefined)?r.status[adm]:r.status[aName];if(v===undefined||v==="U")return;if(v==="P")p++;else if(v==="A")a++;else if(v==="L")l++;recent.push({date:r.date||"",v});});recent.sort((x,y)=>String(y.date).localeCompare(String(x.date)));const total=p+a+l;return{p,a,l,total,pct:total?Math.round((p+l)/total*100):null,recent:recent.slice(0,28).reverse()};},[attendanceDB.data,aName,adm]);
   const norm=s=>(s||"").toLowerCase().replace(/\(.*?\)/g,"").replace(/\s+/g," ").trim();
-  const practice=useMemo(()=>{const me=norm(aName);if(!me)return{count:0,chapters:[]};const ents=Object.values(wrongDB.data||{}).filter(e=>e&&norm(e.name)===me);const byCh={};ents.forEach(e=>{byCh[e.chapter]=(byCh[e.chapter]||0)+1;});return{count:ents.length,chapters:Object.entries(byCh).sort((a,b)=>b[1]-a[1]).slice(0,8)};},[wrongDB.data,aName]);
+  const practice=useMemo(()=>{const me=norm(aName);if(!me)return{count:0,chapters:[]};const ents=Object.values(wrongDB.data||{}).filter(e=>__wrongEntFor(e,aName));const byCh={};ents.forEach(e=>{byCh[e.chapter]=(byCh[e.chapter]||0)+1;});return{count:ents.length,chapters:Object.entries(byCh).sort((a,b)=>b[1]-a[1]).slice(0,8)};},[wrongDB.data,aName]);
   // Fees for ANY class (1–12 + SIP), using the shared stream/admission-aware helper so the profile balance
   // matches the Fees page exactly. Payments match by admission no. (then class+name) — was 6–12 only + a
   // plain structure-sum that under-counted Class 11/12 streams and admission fees.
@@ -9407,7 +9560,14 @@ function DirectoryProfile({stu, testsDB, examsDB, studentsDB, attendanceDB, wron
   const incidents=useMemo(()=>{
     const k=s=>(typeof nmKey==="function"?nmKey(s):String(s||"").toLowerCase().replace(/\s+/g," ").trim());
     const me=k(aName);if(!me)return[];
-    return Object.values(disciplineDB.data||{}).filter(d=>d&&!d.deleted&&k(d.student)===me).sort((a,b)=>String(b.date||b.at||"").localeCompare(String(a.date||a.at||"")));
+    return Object.values(disciplineDB.data||{}).filter(d=>{
+      if(!d||d.deleted||!d.student)return false;
+      if(d.student===aName||d.student===stu.name)return true;
+      if(adm&&__admInBrack(d.student)===adm)return true;
+      // loose only when neither side is bracket-disambiguated — nmKey strips "(…)", so a renamed
+      // same-name pair would otherwise see each other's discipline records on both 360 profiles
+      return !/\(/.test(String(aName||""))&&!/\(/.test(String(d.student||""))&&k(d.student)===me;
+    }).sort((a,b)=>String(b.date||b.at||"").localeCompare(String(a.date||a.at||"")));
   },[disciplineDB.data,aName]);
   const openInc=incidents.filter(d=>d.status!=="resolved").length;
   // Timeline — the student's institutional memory: admission, fee payments, test results, incidents, recent absences, all on one thread.
@@ -9678,7 +9838,7 @@ function StudentDirectory({user, dirDB, testsDB, examsDB, studentsDB, attendance
     return m;
   },[attendanceDB.data,feesDB&&feesDB.data,all,canFees]);
   // Global search jump: open the searched student's full record automatically.
-  useEffect(()=>{if(!jumpAdm)return;var hit=all.find(function(s){return String(s.admNo)===String(jumpAdm);})||all.find(function(s){return s.name&&(typeof nmKey==="function"?nmKey(s.name)===nmKey(jumpAdm):s.name===jumpAdm);});if(hit)setSel(hit);else{try{window.__dirProfileTab=null;}catch(_){}}if(onJumpDone)onJumpDone();},[jumpAdm,all]);
+  useEffect(()=>{if(!jumpAdm)return;var hit=all.find(function(s){return String(s.admNo)===String(jumpAdm);})||all.find(function(s){return s.name===jumpAdm;})||(function(){var c=all.filter(function(s){return s.name&&(typeof nmKey==="function"?nmKey(s.name)===nmKey(jumpAdm):s.name===jumpAdm);});return c.length===1?c[0]:null;})();if(hit)setSel(hit);else{try{window.__dirProfileTab=null;}catch(_){}}if(onJumpDone)onJumpDone();},[jumpAdm,all]);
   const classes=useMemo(()=>{var set={};all.forEach(function(s){var c=s.clsNum||s.cls||"?";set[c]=(set[c]||0)+1;});return Object.keys(set).sort(function(a,b){var na=parseInt(a),nb=parseInt(b);if(isNaN(na)&&isNaN(nb))return a.localeCompare(b);if(isNaN(na))return 1;if(isNaN(nb))return -1;return na-nb;}).map(function(c){return{c:c,n:set[c]};});},[all]);
   const isLeftS=s=>String(s.status||"").toLowerCase()==="left";
   const leftCount=useMemo(()=>all.filter(isLeftS).length,[all]);
@@ -9687,22 +9847,31 @@ function StudentDirectory({user, dirDB, testsDB, examsDB, studentsDB, attendance
   // rebuilds the class caches, so the roster, profiles and future marks all carry the distinct name.
   const dupNames=useMemo(function(){
     var groups=[];
+    // FULL-name key (brackets KEPT) — nmKey strips "(...)", which made a renamed pair look like a
+    // duplicate forever (and a second click doubled the father suffix). With brackets in the key,
+    // "ZEESHAN (IRSHAD)" vs "ZEESHAN (HARUN)" are distinct → the card clears itself after the fix.
+    var fullKey=function(n){return String(n||"").toLowerCase().replace(/[^a-z0-9()\s]/g," ").replace(/\s+/g," ").trim();};
     Object.keys((dirDB&&dirDB.data)||{}).forEach(function(k){
       if(k.indexOf("dir_")!==0)return;var st=((dirDB.data[k]||{}).students||[]).filter(function(x){return x&&x.name&&String(x.status||"").toLowerCase()!=="left";});
-      var by={};st.forEach(function(x){var key=nmKey(x.name);(by[key]=by[key]||[]).push(x);});
+      var by={};st.forEach(function(x){var key=fullKey(x.name);(by[key]=by[key]||[]).push(x);});
       Object.keys(by).forEach(function(key){var g=by[key];var adms={};g.forEach(function(x){adms[String(x.admNo||"?")]=1;});
-        if(g.length>1&&Object.keys(adms).length>1)groups.push({dirKey:k,cls:__clsTokLabel(k.slice(4)),members:g});});
+        if(g.length>1&&Object.keys(adms).length>1)groups.push({kind:"dup",dirKey:k,cls:__clsTokLabel(k.slice(4)),members:g});});
+      // malformed: a name carrying MORE than one "(...)" (e.g. the father suffix applied twice) → one-click clean-up
+      st.forEach(function(x){var m=String(x.name).match(/\(/g);if(m&&m.length>1)groups.push({kind:"malformed",dirKey:k,cls:__clsTokLabel(k.slice(4)),members:[x]});});
     });
     return groups;
   },[dirDB&&dirDB.data]);
   const[dupFixBusy,setDupFixBusy]=useState("");
   const fixDupGroup=async function(g){
-    if(!await window.__confirm({title:"Rename "+g.members.length+" same-name students?",body:g.members.map(function(m){return m.name+" (Adm "+(m.admNo||"?")+") → "+__disambigName(m.name,m.father,m.admNo);}).join("  ·  ")+" — the father's name is added in Student Records and every roster rebuilds from it. Weekly-test marks recorded under the old shared name will surface in Academics → Class Roster → Sync for you to assign.",confirmText:"Rename with father's name"}))return;
+    if(!await window.__confirm({title:g.kind==="malformed"?"Clean up this name?":("Rename "+g.members.length+" same-name students?"),body:g.members.map(function(m){return m.name+" (Adm "+(m.admNo||"?")+") → "+__disambigName(m.name,m.father,m.admNo);}).join("  ·  ")+(g.kind==="malformed"?"":" — the father's name is added in Student Records and every roster rebuilds from it. Weekly-test marks recorded under the old shared name will surface in Academics → Class Roster → Sync for you to assign."),confirmText:g.kind==="malformed"?"Clean up":"Rename with father's name"}))return;
     setDupFixBusy(g.dirKey+g.members[0].name);
     try{
       var doc=dirDB.data[g.dirKey];var sts=(doc.students||[]).slice();
-      g.members.forEach(function(m){var i=sts.findIndex(function(x){return x&&String(x.admNo)===String(m.admNo)&&x.name===m.name;});
-        if(i>=0)sts[i]=Object.assign({},sts[i],{name:__disambigName(m.name,m.father,m.admNo)});});
+      var _newN={};g.members.forEach(function(m){var nn=__disambigName(m.name,m.father,m.admNo);
+        if(_newN[nn])nn=__disambigName(m.name,(String(m.father||"").trim()?String(m.father).trim()+" · ADM "+m.admNo:""),m.admNo); /* same father too → add the admission no. so the pair is truly distinct */
+        _newN[nn]=1;
+        var i=sts.findIndex(function(x){return x&&String(x.admNo)===String(m.admNo)&&x.name===m.name;});
+        if(i>=0)sts[i]=Object.assign({},sts[i],{name:nn});});
       var cn=String(g.dirKey).slice(4);
       await dirDB.set(g.dirKey,Object.assign({},doc,{students:sts,updatedAt:new Date().toISOString()}));
       await syncCachesForClass(studentsDB,academicRosterDB,__clsTokLabel(cn),sts);
@@ -9756,9 +9925,16 @@ function StudentDirectory({user, dirDB, testsDB, examsDB, studentsDB, attendance
       });
       try{await academicRosterDB.set("Class "+n,{cls:"Class "+n,students:studs,updatedAt:new Date().toISOString()});}
       catch(e){setSyncMsg(""+((e&&e.message)||"write failed")+" — is the academicRoster rule published?");return;}
+      /* Rebuild the class CACHE too (list + sections + name→admission-no. map) — the student portal,
+         photos, fees and rank all key off this map, and a legacy fee-panel write used to wipe it. */
+      try{
+        var _list=[],_secs={},_adm={};
+        d.students.forEach(function(s){if(!s||!s.name||String(s.status||"").toLowerCase()==="left")return;_list.push(s.name);_secs[s.name]=s.section||"";_adm[s.name]=String(s.admNo||"");});
+        if(studentsDB&&studentsDB.set)await studentsDB.set("Class "+n,{cls:"Class "+n,list:_list,sections:_secs,admNo:_adm,updatedAt:new Date().toISOString()});
+      }catch(e){}
       total+=studs.length;done++;
     }
-    setSyncMsg("✓ Synced "+total+" current students across "+done+" classes. Attendance & Fees now run off this roster (by admission no.).");
+    setSyncMsg("✓ Synced "+total+" current students across "+done+" classes — roster AND class caches (names, sections, admission numbers). Attendance, Fees and the student portal now run off this.");
   }
   var GRADS=[["var(--ap-accent)","#4aa6ff"],["#7b61ff","#8f8aef"],["#16a34a","#56c98a"],["#d97706","#e9a64f"],["#d2342a","#f06a60"]];
   function initials(n){return String(n||"?").split(" ").filter(Boolean).map(function(w){return w[0];}).slice(0,2).join("").toUpperCase();}
@@ -9810,12 +9986,12 @@ function StudentDirectory({user, dirDB, testsDB, examsDB, studentsDB, attendance
             <StatCard label="Left this year" val={leftCount} icon="🚪" color="var(--tx-org2)" sub="TCs issued · off the rolls"/>
           </div>
           {(user.role==="admin"||user.role==="office")&&dupNames.length>0&&<div style={{background:"var(--bg-amb)",border:"1px solid var(--bd-amb)",borderRadius:14,padding:"13px 16px",marginBottom:14}}>
-            <div style={{fontWeight:800,fontSize:13.5,color:"var(--tx-org2)"}}>{dupNames.length} same-name pair{dupNames.length>1?"s":""} in the same class — add the father's name so their data can never mix</div>
+            <div style={{fontWeight:800,fontSize:13.5,color:"var(--tx-org2)"}}>{(function(){var d=dupNames.filter(function(g){return g.kind!=="malformed";}).length,m=dupNames.length-d,p=[];if(d)p.push(d+" same-name pair"+(d>1?"s":"")+" — add the father's name so their data can never mix");if(m)p.push(m+" garbled name"+(m>1?"s":"")+" to clean up");return p.join(" · ");})()}</div>
             <div style={{display:"flex",flexDirection:"column",gap:7,marginTop:9}}>
               {dupNames.slice(0,8).map(function(g,i){return(
                 <div key={i} style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-                  <span style={{fontSize:12.5,color:"var(--ap-ink)"}}><b>{g.members[0].name}</b> ×{g.members.length} in {g.cls} <span style={{color:"var(--ap-muted)"}}>({g.members.map(function(m){return "Adm "+(m.admNo||"?")+(m.father?" · s/o "+m.father:"");}).join("  vs  ")})</span></span>
-                  <button onClick={function(){fixDupGroup(g);}} disabled={!!dupFixBusy} style={{marginLeft:"auto",background:"var(--btn-pri-bg)",color:"#fff",border:"none",borderRadius:8,padding:"6px 13px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>{dupFixBusy===(g.dirKey+g.members[0].name)?"Renaming…":"Rename with father's name"}</button>
+                  <span style={{fontSize:12.5,color:"var(--ap-ink)"}}><b>{g.members[0].name}</b>{g.kind==="malformed"?<span style={{color:"var(--tx-red)",fontWeight:700}}> · name garbled (father added twice)</span>:" ×"+g.members.length+" in "+g.cls}{g.kind!=="malformed"&&<span style={{color:"var(--ap-muted)"}}> ({g.members.map(function(m){return "Adm "+(m.admNo||"?")+(m.father?" · s/o "+m.father:"");}).join("  vs  ")})</span>}</span>
+                  <button onClick={function(){fixDupGroup(g);}} disabled={!!dupFixBusy} style={{marginLeft:"auto",background:"var(--btn-pri-bg)",color:"#fff",border:"none",borderRadius:8,padding:"6px 13px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>{dupFixBusy===(g.dirKey+g.members[0].name)?"Fixing…":(g.kind==="malformed"?"Clean up name":"Rename with father's name")}</button>
                 </div>);})}
               {dupNames.length>8&&<div style={{fontSize:11.5,color:"var(--ap-faint)"}}>+{dupNames.length-8} more pairs — fix these first.</div>}
             </div>
@@ -10414,7 +10590,12 @@ function AccountsPanel({user,usersDB,studentsDB,dirDB,academicRosterDB}){
           const snap=await window.__fbGetDoc(window.__fbDoc(window.__db,"studentDirectory",dk));
           const doc=(snap&&snap.exists&&snap.exists())?snap.data():{cls:cn,clsNum:cn,students:[]};
           const sts=Array.isArray(doc.students)?doc.students.slice():[];
-          const ex=sts.find(s=>s&&nmKey(s.name)===nmKey(name.trim()));
+          /* exact name, then explicit "(admNo)" tag, then loose ONLY when unique — a first-nmKey-match
+             here used to bind the second same-name child's login to the FIRST child's admission no. */
+          const _nmq=name.trim();
+          let ex=sts.find(s=>s&&s.name===_nmq);
+          if(!ex){const _ib=__admInBrack(_nmq);if(_ib)ex=sts.find(s=>s&&String(s.admNo)===_ib);}
+          if(!ex&&!/\(/.test(_nmq)){const _c=sts.filter(s=>s&&s.name&&!/\(/.test(s.name)&&nmKey(s.name)===nmKey(_nmq));if(_c.length===1)ex=_c[0];else if(_c.length>1){setMsg({ok:false,text:_c.length+" students in "+cls+" share this name — type the stored name exactly, e.g. \""+_c[0].name+"\", so the login binds to the right child."});setBusy(false);return;}}
           if(ex){newAdm=String(ex.admNo||"");}
           else{newAdm=nextAdmNo(dirDB);sts.push({admNo:newAdm,name:__uniqueNameIn(sts,name.trim(),"",newAdm),section:section||"A",status:"studying",oldNew:"new"});
             await window.__fbSetDoc(window.__fbDoc(window.__db,"studentDirectory",dk),{cls:cn,clsNum:cn,students:sts,updatedAt:new Date().toISOString()});}
@@ -11133,7 +11314,11 @@ function AdminPanel({testsDB,studentsDB,usersDB,wrongDB}){
     let childAdm="";
     {const cn=String(newParentCls).replace("Class ","").trim();const dk=/sip/i.test(cn)?"dir_SIP_CLASS":"dir_"+cn;
      const st=((dirDB.data[dk]||{}).students)||[];
-     const hit=st.find(s=>s&&nmKey(s.name)===nmKey(newParentStudent));
+     /* exact name → "(admNo)" tag → loose only when UNIQUE: a first-nmKey-match here linked a parent
+        to the WRONG same-name child (their fees, attendance and UPI intents all key on this admNo) */
+     let hit=st.find(s=>s&&s.name===newParentStudent);
+     if(!hit){const _ib=__admInBrack(newParentStudent);if(_ib)hit=st.find(s=>s&&String(s.admNo)===_ib);}
+     if(!hit&&!/\(/.test(String(newParentStudent||""))){const _c=st.filter(s=>s&&s.name&&!/\(/.test(s.name)&&nmKey(s.name)===nmKey(newParentStudent));if(_c.length===1)hit=_c[0];else if(_c.length>1){setParentMsg(_c.length+" students in "+newParentCls+" share this name — type the stored name exactly (e.g. \""+_c[0].name+"\") so the parent is linked to the right child.");return;}}
      childAdm=hit?String(hit.admNo||""):"";}
     if(!childAdm){setParentMsg("Couldn't find \""+newParentStudent+"\"'s admission number in "+newParentCls+" — fix the student record first (the parent's fee view is keyed on it).");return;}
     setParentMsg("Creating secure login…");
@@ -11155,7 +11340,11 @@ function AdminPanel({testsDB,studentsDB,usersDB,wrongDB}){
   const[fixParentsMsg,setFixParentsMsg]=useState("");
   const repairParentLinks=async()=>{
     const dirByClsName={};
-    Object.keys(dirDB.data||{}).forEach(k=>{if(k.indexOf("dir_")!==0)return;(((dirDB.data[k]||{}).students)||[]).forEach(s=>{if(s&&s.name&&s.admNo)dirByClsName[k+"||"+nmKey(s.name)]=String(s.admNo);});});
+    Object.keys(dirDB.data||{}).forEach(k=>{if(k.indexOf("dir_")!==0)return;(((dirDB.data[k]||{}).students)||[]).forEach(s=>{if(!s||!s.name||!s.admNo)return;if(String(s.status||"").toLowerCase()==="left")return; /* a left student must never claim an active child's parent link */
+      const kk=k+"||"+nmKey(s.name);const ex=dirByClsName[kk];
+      dirByClsName[kk]=(ex===undefined)?String(s.admNo):(ex===String(s.admNo)?ex:null); /* two same-name children → ambiguous, never stamp a guess */
+      const ke=k+"::"+s.name;const exe=dirByClsName[ke];
+      dirByClsName[ke]=(exe===undefined)?String(s.admNo):(exe===String(s.admNo)?exe:null);});});
     const targets=Object.entries(accountsDB.data||{}).filter(([,a])=>a&&a.role==="parent"&&!a.admNo&&a.student&&a.cls);
     if(!targets.length){setFixParentsMsg("✓ Every parent account already carries the child's admission number.");setTimeout(()=>setFixParentsMsg(""),4000);return;}
     let ok=0,miss=[];
@@ -11166,8 +11355,8 @@ function AdminPanel({testsDB,studentsDB,usersDB,wrongDB}){
       const uDoc=(a.username&&usersDB.data[safeId(a.username)])||null;
       const liveCls=String((uDoc&&uDoc.cls)||a.cls);
       const cn=liveCls.replace("Class ","").trim();const dk=/sip/i.test(cn)?"dir_SIP_CLASS":"dir_"+cn;
-      const adm=dirByClsName[dk+"||"+nmKey(a.student)]||"";
-      if(!adm){miss.push(a.student);continue;}
+      const adm=dirByClsName[dk+"::"+a.student]||(!/\(/.test(String(a.student||""))?dirByClsName[dk+"||"+nmKey(a.student)]:null)||"";
+      if(!adm){miss.push(a.student+(dirByClsName[dk+"||"+nmKey(a.student)]===null?" (two students share this name — set the admission no. by hand)":""));continue;}
       try{
         await window.__fbSetDoc(window.__fbDoc(window.__db,"accounts",uid),Object.assign({},a,{admNo:adm,cls:liveCls})); // also heal the stale accounts.cls
         if(uDoc)await usersDB.set(a.username,Object.assign({},uDoc,{admNo:adm}));
@@ -14159,7 +14348,8 @@ function AdmissionWelcome({user,studentsDB}){
         const list=studentsDB.data[safeId(cls)]?.list||[];
         const sections=studentsDB.data[safeId(cls)]?.sections||{};
         if(!list.some(s=>s.toLowerCase()===name.trim().toLowerCase())){
-          await studentsDB.set(cls,{cls,list:[...list,name.trim()],sections:{...sections,[name.trim()]:(section.trim()||"A")},updatedAt:new Date().toISOString()});
+          const _curDoc=studentsDB.data[safeId(cls)]||{};
+          await studentsDB.set(cls,Object.assign({},_curDoc,{cls,list:[...list,name.trim()],sections:{...sections,[name.trim()]:(section.trim()||"A")},admNo:Object.assign({},_curDoc.admNo||{}),updatedAt:new Date().toISOString()}));
         }
       }
       setMsg("✓ Saved"+(addToRoster?" and added to the "+cls+" roster":"")+".");
@@ -15488,20 +15678,23 @@ function buildSchoolContext(dbs,includeFees){
     var cn=String(d.clsNum||d.cls||k.replace("dir_","")).replace(/_CLASS$/i,"");var clsLabel=/sip/i.test(cn)?"Class SIP":("Class "+cn);
     d.students.forEach(function(s){if(!s||String(s.status||"").toLowerCase()==="left")return;
       var rec={adm:String(s.admNo||""),name:s.name,cls:clsLabel,sec:s.section||"",oldNew:s.oldNew||"",father:s.father||"",contact:s.contact||""};
-      students.push(rec);if(s.name)nameToAdm[nmKey(s.name)]=rec.adm;});});
+      students.push(rec);
+      if(s.name){var _nk2=nmKey(s.name);var _ex2=nameToAdm[_nk2];
+        nameToAdm[_nk2]=(_ex2===undefined)?rec.adm:(_ex2===rec.adm?_ex2:null);} /* same-name pair → ambiguous: name-keyed rows credit NEITHER (adm-keyed data still counts) */
+      });});
   const payIdx={};
   Object.keys((feesDB&&feesDB.data)||{}).forEach(function(id){if(id.indexOf("__")===0)return;var p=feesDB.data[id];if(!p)return;
-    var adm=String(p.admNo||"");if(!adm){var a=nameToAdm[nmKey(p.student||"")];if(a)adm=a;}if(!adm)return;
+    var adm=String(p.admNo||"")||__admInBrack(p.student);if(!adm){var a=nameToAdm[nmKey(p.student||"")];if(a)adm=a;}if(!adm)return;
     (payIdx[adm]=payIdx[adm]||{cash:0,conc:0});if(p.disc)payIdx[adm].conc+=Number(p.amount||0);else payIdx[adm].cash+=Number(p.amount||0);});
   const attIdx={};
   Object.values((attendanceDB&&attendanceDB.data)||{}).forEach(function(r){if(!r||!r.status)return;
     Object.keys(r.status).forEach(function(key){var v=r.status[key];if(v===undefined||v==="U")return;
-      var adm=key;if(!/^\d/.test(key)){var a=nameToAdm[nmKey(key)];if(a)adm=a;}
+      var adm=key;if(!/^\d/.test(key)){var a=__admInBrack(key)||nameToAdm[nmKey(key)];if(a)adm=a;else return;}
       (attIdx[adm]=attIdx[adm]||{p:0,t:0});attIdx[adm].t++;if(v==="P"||v==="L")attIdx[adm].p++;});});
   const markIdx={};
   Object.values((testsDB&&testsDB.data)||{}).forEach(function(t){if(!t)return;var mx=Number(t.total)||0;if(!mx)return;
     if(t.rowsByAdm)Object.keys(t.rowsByAdm).forEach(function(ad){var v=t.rowsByAdm[ad];if(v===""||v==null)return;(markIdx[ad]=markIdx[ad]||{s:0,m:0});markIdx[ad].s+=Number(v);markIdx[ad].m+=mx;});
-    if(t.rows)Object.keys(t.rows).forEach(function(nm){var v=t.rows[nm];if(v===""||v==null)return;var ad=nameToAdm[nmKey(nm)];if(!ad)return;if(t.rowsByAdm&&t.rowsByAdm[ad]!==undefined)return;(markIdx[ad]=markIdx[ad]||{s:0,m:0});markIdx[ad].s+=Number(v);markIdx[ad].m+=mx;});});
+    if(t.rows)Object.keys(t.rows).forEach(function(nm){var v=t.rows[nm];if(v===""||v==null)return;var ad=__admInBrack(nm)||nameToAdm[nmKey(nm)];if(!ad)return;if(t.rowsByAdm&&t.rowsByAdm[ad]!==undefined)return;(markIdx[ad]=markIdx[ad]||{s:0,m:0});markIdx[ad].s+=Number(v);markIdx[ad].m+=mx;});});
   const struct=Object.assign({},__feeClasses(),(feesDB&&feesDB.data&&feesDB.data.__structure&&feesDB.data.__structure.classes)||{});
   out.push("\nSTUDENTS ("+students.length+" active). Pipe-separated columns: Name|Class-Sec|Adm|"+(includeFees?"DueNow(₹)|":"")+"Att%|Avg%  (a dash = no data). Parent names & phone numbers are NOT included here — look those up in Student Records."+(includeFees?"":" (Fee data is hidden for your role — you cannot see or answer fee questions.)"));
   var totalDue=0,totalColl=0,totalOverdue=0;
@@ -15664,7 +15857,8 @@ function resolveStudent(user,studentsDB){
   // Roll = A–Z position within the student's section (same scheme as admit cards & report cards).
   const azRoll=(d,nm)=>{const secs=d.sections||{};const mySec=secs[nm]||"";return (d.list||[]).filter(n=>(secs[n]||"")===mySec).sort((a,b)=>String(a).localeCompare(String(b))).indexOf(nm)+1;};
   const inClass=cls=>{const d=studentsDB.data&&studentsDB.data[safeId(cls)];if(!d||!Array.isArray(d.list))return null;
-    let hit=d.list.find(n=>n===user.name)||d.list.find(n=>norm(n)===me&&me);
+    let hit=d.list.find(n=>n===user.name);
+    if(!hit&&me){const full=d.list.filter(n=>norm(n)===me);if(full.length===1)hit=full[0];} // full-name match must be UNIQUE — norm strips "(…)", so a plain login name matches BOTH of a renamed same-name pair; never bind to an arbitrary one (set the admission no. on the account instead)
     if(!hit&&me){ // account name is a partial (e.g. first name only, "Alaina") — accept ONLY if it points to exactly ONE roster student (never guess between same-first-name kids)
       const toks=me.split(" ").filter(Boolean);
       const cand=d.list.filter(n=>{const nn=norm(n);return nn===me||nn.indexOf(me+" ")===0||toks.every(t=>(" "+nn+" ").indexOf(" "+t+" ")>=0);});
@@ -15735,7 +15929,7 @@ function StudentMyReport({user,testsDB,studentsDB,attendanceDB,wrongDB,onBack}){
   const rank=useMemo(()=>_rankIn(testsDB,cls,studentsDB,adm,student),[testsDB.data,cls,student,adm,studentsDB.data]);
   const att=useMemo(()=>{let p=0,a=0,l=0;const recent=[];Object.values(attendanceDB.data||{}).forEach(r=>{if(!r||!r.status||(cls&&String(r.cls||"")!==cls))return;var v=_attValIn(r.status,adm,student);if(v===undefined||v==="U")return;if(v==="P")p++;else if(v==="A")a++;else if(v==="L")l++;recent.push({date:r.date||"",v});});recent.sort((x,y)=>y.date.localeCompare(x.date));const total=p+a+l;return{p,a,l,total,pct:total?Math.round((p+l)/total*100):null,recent:recent.slice(0,30).reverse()};},[attendanceDB.data,student,adm,cls]);
   const norm=s=>(s||"").toLowerCase().replace(/\(.*?\)/g,"").replace(/\s+/g," ").trim();
-  const mistakes=useMemo(()=>{const me=norm(student);const ents=Object.values(wrongDB.data||{}).filter(e=>e&&norm(e.name)===me);const byCh={};ents.forEach(e=>{byCh[e.chapter]=(byCh[e.chapter]||0)+1;});return{count:ents.length,chapters:Object.entries(byCh).sort((a,b)=>b[1]-a[1]).slice(0,10),recent:ents.sort((a,b)=>(b.timestamp||"").localeCompare(a.timestamp||"")).slice(0,15)};},[wrongDB.data,student]);
+  const mistakes=useMemo(()=>{const me=norm(student);const ents=Object.values(wrongDB.data||{}).filter(e=>__wrongEntFor(e,student));const byCh={};ents.forEach(e=>{byCh[e.chapter]=(byCh[e.chapter]||0)+1;});return{count:ents.length,chapters:Object.entries(byCh).sort((a,b)=>b[1]-a[1]).slice(0,10),recent:ents.sort((a,b)=>(b.timestamp||"").localeCompare(a.timestamp||"")).slice(0,15)};},[wrongDB.data,student]);
   const allWeak=[...new Set(sd.flatMap(s=>s.weak))];
   const dotC=v=>v==="P"?"var(--tx-grn2)":v==="A"?"#d2342a":v==="L"?"var(--tx-org)":"var(--c-cb)";
   if(testsDB.loading||studentsDB.loading||attendanceDB.loading)return<div style={{padding:60}}><Spinner/></div>;
@@ -16418,7 +16612,7 @@ function PracticeTest({user,onBack,onFinish,saved,saveDone,wrongDB}){
   const _norm=s=>(s||"").toLowerCase().replace(/\(.*?\)/g,"").replace(/\s+/g," ").trim();
   const weakChapters=useMemo(()=>{
     const me=_norm(user.name);const subjChs=new Set((QB_DATA[lvl]||[]).map(q=>q.c));const m={};
-    Object.values((wrongDB&&wrongDB.data)||{}).forEach(e=>{if(e&&_norm(e.name)===me&&e.chapter&&subjChs.has(e.chapter))m[e.chapter]=(m[e.chapter]||0)+1;});
+    Object.values((wrongDB&&wrongDB.data)||{}).forEach(e=>{if(__wrongEntFor(e,student)&&e.chapter&&subjChs.has(e.chapter))m[e.chapter]=(m[e.chapter]||0)+1;});
     return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(x=>x[0]);
   },[wrongDB&&wrongDB.data,lvl,user.name]);
 
@@ -16440,7 +16634,7 @@ function PracticeTest({user,onBack,onFinish,saved,saveDone,wrongDB}){
   // Re-attempt: match the student's logged mistakes back to the full QB questions (across all subjects)
   const mistakeQs=useMemo(()=>{
     const me=_norm(user.name);const out=[];const seen=new Set();
-    Object.values((wrongDB&&wrongDB.data)||{}).filter(e=>e&&_norm(e.name)===me).forEach(e=>{
+    Object.values((wrongDB&&wrongDB.data)||{}).filter(e=>__wrongEntFor(e,student)).forEach(e=>{
       const pool=QB_DATA[e.subject]||[];const snip=(e.question||"").trim();if(!snip)return;
       const q=pool.find(x=>x&&x.c===e.chapter&&x.o&&x.o.length>0&&x.r&&(x.q||"").replace(/<[^>]+>/g,"").substring(0,120).trim()===snip);
       if(q&&!seen.has(q.q)){seen.add(q.q);out.push(q);}
