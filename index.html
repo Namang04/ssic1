@@ -2296,7 +2296,7 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
   },[usersDB.data,__br]);
   const staffStat=(u)=>{const rec=staffAttDB.data&&staffAttDB.data[safeId(safeId(u.username)+"__"+today)];
     if(rec)return rec.status||"present";
-    const onLeave=Object.values(leaveDB.data||{}).some(l=>l&&l.status==="approved"&&l.teacherName===u.name&&l.from<=today&&l.to>=today);
+    const onLeave=Object.values(leaveDB.data||{}).some(l=>l&&l.status==="approved"&&__ttNorm(l.teacherName)===__ttNorm(u.name)&&l.from<=today&&l.to>=today); // title-agnostic (leave "Ms. X" vs account "X")
     return onLeave?"leave":"none";};
   const staff=useMemo(()=>{const c={present:0,late:0,absent:0,leave:0,none:0};const out=[];
     staffRoster.forEach(u=>{const k=staffStat(u);c[k]++;if(k==="absent"||k==="leave"||k==="late")out.push({name:u.name,kind:k});});
@@ -2561,17 +2561,21 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
       const myCur=sch&&sch.cur;
       if(!myCur||myCur.isBreak)return; // this class is between periods / on break right now
       const cell=day[myCur.no];rooms++;
-      const teacher=cell&&typeof cell==="object"?(cell.teacher||""):"";
-      const subject=cell&&typeof cell==="object"?(cell.subject||""):(cell?String(cell):"");
-      if(teacher)busy[_tKey(teacher)]=1;
       const label="Class "+clsTok+(sec?" · "+sec:"");
-      if(!cell||(!teacher&&!subject)){rows.push({kind:"empty",label,clsTok,sec,subject:"",teacher:""});return;}
-      const ak=absentSet[_tKey(teacher)];
-      if(ak){
-        const sub=(subsByTeacher[_tKey(teacher)]||{})[myCur.no]||"";
-        if(sub){busy[_tKey(sub)]=1;rows.push({kind:"covered",label,clsTok,sec,subject,teacher,sub});}
-        else rows.push({kind:"uncovered",label,clsTok,sec,subject,teacher,why:ak});
-      }
+      const pairs=__ttPairs(cell);
+      if(!pairs.length){rows.push({kind:"empty",label,clsTok,sec,subject:"",teacher:""});return;}
+      // Combined class / lab / co-teaching → a cell can hold several teachers; track each one's presence + cover.
+      pairs.forEach(pr=>{
+        const teacher=pr.teacher||"",subject=pr.subject||"";
+        if(teacher)busy[_tKey(teacher)]=1;
+        if(!teacher)return;
+        const ak=absentSet[_tKey(teacher)];
+        if(ak){
+          const sub=(subsByTeacher[_tKey(teacher)]||{})[myCur.no]||"";
+          if(sub){busy[_tKey(sub)]=1;rows.push({kind:"covered",label,clsTok,sec,subject,teacher,sub});}
+          else rows.push({kind:"uncovered",label,clsTok,sec,subject,teacher,why:ak});
+        }
+      });
     });
     // bench = active teachers checked in today, not in any room this period
     const bench=[];
@@ -2604,7 +2608,7 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
     const tt=(timetablesDB&&timetablesDB.data)||{};
     const load=(name)=>{let total=0,uncov=0;const nk=_tKey(name);
       let subs={};Object.values(leaveDB.data||{}).forEach(l=>{if(!l||l.status!=="approved"||!(l.from<=today&&l.to>=today))return;if(_tKey(l.teacherName||"")===nk)subs=(l.periodSubstitutes&&(l.periodSubstitutes[dayShort]||l.periodSubstitutes[dayLong]))||{};});
-      Object.keys(tt).forEach(k=>{if(String(k).indexOf("_")===0)return;const day=(tt[k]||{})[dayLong]||(tt[k]||{})[dayShort]||{};Object.keys(day).forEach(pn=>{const c=day[pn];if(c&&typeof c==="object"&&_tKey(c.teacher||"")===nk){total++;if(!subs[pn])uncov++;}});});
+      Object.keys(tt).forEach(k=>{if(String(k).indexOf("_")===0)return;const day=(tt[k]||{})[dayLong]||(tt[k]||{})[dayShort]||{};Object.keys(day).forEach(pn=>{const c=day[pn];if(__ttPairs(c).some(pr=>_tKey(pr.teacher||"")===nk)){total++;if(!subs[pn])uncov++;}});});
       return{total,uncov};};
     const absent=[],late=[],onLeave=[];
     staff.flagged.forEach(f=>{
@@ -2621,7 +2625,7 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
     const unmarked=!isSchoolDay?[]:stu.perClass.filter(x=>!x.marked).map(x=>({...x,ct:ctOf(String(x.cls).replace("Class ","").trim(),x.section)})); // Sundays/holidays: nobody gets chased
     const partial=stu.perClass.filter(x=>x.marked&&x.rc>0&&x.mk<x.rc*0.6).map(x=>({...x,t:x.mk,roster:x.rc})); // save-time coverage, not live-roster drift
     const red=stu.perClass.filter(x=>x.marked&&x.pct<80);
-    const healthy=stu.perClass.filter(x=>x.marked&&x.pct>=80).length;
+    const healthy=stu.perClass.filter(x=>x.marked&&x.pct>=80).slice().sort((a,b)=>a.pct-b.pct); // full list (was a bare count) so the director can expand to see every marked section's %
     return{unmarked,partial,red,healthy};
   },[stu,ctMap,usersDB.data,isSchoolDay]);
 
@@ -2662,7 +2666,7 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
     const ydShort=yd?new Date(yd+"T12:00").toLocaleDateString("en-US",{weekday:"short"}):null;
     const ydLong=ydShort?(__TT_DAYLONG[ydShort]||ydShort):null;
     const tt=(timetablesDB&&timetablesDB.data)||{};let scheduled=0;
-    if(ydLong)Object.keys(tt).forEach(k=>{if(String(k).indexOf("_")===0)return;const day=(tt[k]||{})[ydLong]||(tt[k]||{})[ydShort?ydShort:""]||{};Object.keys(day).forEach(pn=>{const c=day[pn];if(c&&typeof c==="object"&&(c.teacher||c.subject))scheduled++;});});
+    if(ydLong)Object.keys(tt).forEach(k=>{if(String(k).indexOf("_")===0)return;const day=(tt[k]||{})[ydLong]||(tt[k]||{})[ydShort?ydShort:""]||{};Object.keys(day).forEach(pn=>{if(__ttPairs(day[pn]).length)scheduled++;});});
     const ydLogs=pulse.logs.filter(l=>l.date===yd&&String(l.class||"")!=="Staffroom");
     const loggedTeachers={};pulse.logs.forEach(l=>{if(l.teacherName)loggedTeachers[_tKey(l.teacherName)]=1;});
     const zero=staffRoster.filter(u=>u.role==="teacher"&&!loggedTeachers[_tKey(u.name)]).map(u=>({name:u.name,phone:staffPhone(u.name)}));
@@ -2944,7 +2948,10 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
             {marking.red.length>0&&<div>
               <div style={{fontSize:11,fontWeight:800,letterSpacing:.5,textTransform:"uppercase",color:"var(--tx-red)",margin:"4px 0 7px"}}>Below 80% today</div>
               <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>{marking.red.map((x,i)=><SecChip key={i} x={x}/>)}</div></div>}
-            {marking.healthy>0&&<div style={{fontSize:11.5,color:"var(--tx-grn2)",fontWeight:600}}>✓ {marking.healthy} section{marking.healthy>1?"s":""} marked ≥80%</div>}
+            {marking.healthy.length>0&&<div>
+              <div style={{fontSize:11,fontWeight:800,letterSpacing:.5,textTransform:"uppercase",color:"var(--tx-grn2)",margin:"8px 0 7px"}}>✓ {marking.healthy.length} section{marking.healthy.length>1?"s":""} marked ≥80%</div>
+              <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>{marking.healthy.map((x,i)=><SecChip key={i} x={x}/>)}</div>
+            </div>}
           </div>
         </div>
 
@@ -3112,7 +3119,7 @@ function OfficeDashboard({user, dirDB, feesDB, academicRosterDB, attendanceDB, s
     stats.studying.forEach(s=>{const cls="Class "+s.clsNum;const annual=annualFor(cls);if(annual<=0)return;
       const paid=(s.admNo?(payByAdm[String(s.admNo)]||0):0)+(payByExact[cls+"||"+s.name]||0)+(!/\(/.test(String(s.name||""))?(payByName[cls+"||"+nmKey(s.name)]||0):0);
       const waiver=waiverFor(feesDB.data,s.admNo);const bal=Math.max(0,annual-waiver-paid);
-      const dn=feeDueNow(structure[cls]||[],paid,today());
+      const dn=feeDueNow(structure[cls]||[],paid,today(),waiver); // count the waiver toward installment coverage, else a fully-waived student shows a spurious late fine (Fees page passes it too)
       const dueNow=dn.hasDates?Math.min(annual,dn.dueAmt):annual;
       const overdue=Math.max(0,dueNow+(dn.hasDates?dn.fineAmt:0)-waiver-paid);
       if(bal>0){rows.push({name:s.name,cls,section:normSection(cls,s.section),admNo:s.admNo||"",contact:s.contact||s.phone||"",annual,waiver,paid,bal,overdue});total+=bal;overdueTotal+=overdue;if(overdue>0)overdueN++;}});
@@ -4724,8 +4731,10 @@ function ManageStudents({user,usersDB,studentsDB,testsDB,academicRosterDB,studen
   },[data,cls,academicRosterDB&&academicRosterDB.data,dirDB&&dirDB.data]);
   const mgPhotos=useStudentPhotos(useMemo(()=>students.map(n=>String(admMap[n]||"")).filter(Boolean),[students,admMap]));
   const filtered=students.filter(s=>s.toLowerCase().includes(search.toLowerCase()));
-  const save=async(list,newSections)=>await set(cls,{cls,list,sections:newSections||sections,updatedAt:new Date().toISOString()});
-  const assignSection=async(name,sec)=>{const ns={...sections,[name]:sec};await set(cls,{cls,list:students,sections:ns,updatedAt:new Date().toISOString()});};
+  // MERGE over the current class doc — a plain set() would drop the name→admission-no. map, blanking it for
+  // the whole class (breaks the student/parent portal, fees & attendance until the next directory sync heals it).
+  const save=async(list,newSections)=>{const cur=data[safeId(cls)]||{};await set(cls,Object.assign({},cur,{cls,list,sections:newSections||sections,updatedAt:new Date().toISOString()}));};
+  const assignSection=async(name,sec)=>{const cur=data[safeId(cls)]||{};const ns=Object.assign({},cur.sections||sections,{[name]:sec});await set(cls,Object.assign({},cur,{cls,list:students,sections:ns,updatedAt:new Date().toISOString()}));};
   // Students are CREATED in the directory (Student Records) and the roster is rebuilt from it — one
   // write path, so the roster and records can never hold two different spellings of the same child.
   const _dirKeyMS=()=>"dir_"+String(__clsNum(cls));
@@ -5225,9 +5234,14 @@ function Attendance({user,attendanceDB,studentsDB,usersDB,academicRosterDB,dirDB
     // Save-time rule: if anyone is present (P/L), every leftover unmarked student becomes Absent.
     // If NOBODY is marked present, the day is treated as a holiday and stays uncounted (all "U").
     const anyPresent=students.some(st=>{const v=status[st.key];return v==="P"||v==="L";});
+    const anyMarked=students.some(st=>_isMarked(status[st.key])); // any P/A/L at all
     const unmk=students.filter(st=>!_isMarked(status[st.key]));
-    if(!anyPresent){
-      if(!window.confirm("No student is marked present.\n\nSave this day as a HOLIDAY? It will not count in any attendance %.\n\n(Cancel to go back and mark attendance.)"))return;
+    if(!anyMarked){
+      // NOTHING marked → a genuine holiday / no-attendance day (stays uncounted, all "U").
+      if(!window.confirm("No student has been marked.\n\nSave this day as a HOLIDAY? It will not count in any attendance %.\n\n(Cancel to go back and mark attendance.)"))return;
+    } else if(!anyPresent){
+      // Marked, but nobody present → a REAL all-absent day (strike/exam) — it COUNTS in attendance %. Not a holiday.
+      if(!window.confirm("No student is marked present — this saves a full-attendance day with everyone ABSENT (it WILL count in attendance %)."+(unmk.length?" "+unmk.length+" unmarked student"+(unmk.length>1?"s":"")+" will also be recorded Absent.":"")+"\n\nSave?"))return;
     } else if(unmk.length){
       const present=students.filter(st=>status[st.key]==="P").length;
       const absent=students.filter(st=>status[st.key]==="A").length;
@@ -5241,13 +5255,13 @@ function Attendance({user,attendanceDB,studentsDB,usersDB,academicRosterDB,dirDB
       if(!window.confirm(loud+unmk.length+" unmarked student"+(unmk.length>1?"s":"")+" will be recorded ABSENT:\n"+list+"\n\n"+present+" present · "+absent+" absent.\n\nSave attendance?"))return;
     }
     const finalStatus={};
-    students.forEach(st=>{const v=status[st.key];finalStatus[st.key]=_isMarked(v)?v:(anyPresent?"A":"U");});
+    students.forEach(st=>{const v=status[st.key];finalStatus[st.key]=_isMarked(v)?v:(anyMarked?"A":"U");}); // a real attendance day (anything marked) → unmarked become Absent; a true holiday (nothing marked) → all "U"
     // Marking coverage (how many students the teacher explicitly marked vs the full roster) — lets
     // dashboards tell a half-marked day apart from a genuinely low-attendance day. Additive; old docs lack it.
     const markedCount=students.filter(st=>_isMarked(status[st.key])).length;
     setSaving(true);
     try{
-      await attendanceDB.set(safeId(attKey),{cls,section:sec,date,status:finalStatus,markedCount,rosterCount:students.length,by:user.name,savedAt:new Date().toISOString(),holiday:!anyPresent});
+      await attendanceDB.set(safeId(attKey),{cls,section:sec,date,status:finalStatus,markedCount,rosterCount:students.length,by:user.name,savedAt:new Date().toISOString(),holiday:!anyMarked});
       setStatus(finalStatus);setDirty(false);
       setSaved(true);setTimeout(()=>setSaved(false),2500);
       // "Notify parents" isn't auto-send (no SMS gateway yet) — route to the Absences tab where the class
@@ -7674,7 +7688,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
     await Promise.all(adms.map(async a=>{try{const snap=await window.__fbGetDoc(window.__fbDoc(window.__db,"studentPhotos",a));if(snap&&snap.exists&&snap.exists()){const d=snap.data();if(d&&d.img)pm[a]=d.img;}}catch(e){}}));
     return pm;};
   const printOne=async(ex,stu,opts)=>{const cr=classResults(ex);const r=cr.find(x=>x.student===stu);const pm=await fetchPhotos(ex.cls,[stu]);openPrint(cardHTML(ex,stu,r&&r.rank,cr.filter(x=>x.hasMarks).length,pm,opts));};
-  const printAll=async (ex,opts)=>{const cr=classResults(ex).filter(x=>x.hasMarks);if(!cr.length)return;const pm=await fetchPhotos(ex.cls,cr.map(x=>x.student));openPrint(cr.map(x=>cardHTML(ex,x.student,x.rank,cr.length,pm,opts)).join('<div class="pb"></div>'));};
+  const printAll=async (ex,opts,rows)=>{const cr=((rows&&rows.length)?rows:classResults(ex)).filter(x=>x.hasMarks);if(!cr.length)return;const pm=await fetchPhotos(ex.cls,cr.map(x=>x.student));openPrint(cr.map(x=>cardHTML(ex,x.student,x.rank,cr.length,pm,opts)).join('<div class="pb"></div>'));}; // rows = the on-screen (section-filtered) list, so "Print all" prints exactly what's shown, not the whole class
   const exportResults=ex=>{
     const cr=classResults(ex);
     const subjNames=[...new Set(cr.flatMap(x=>x.subjects.map(s=>s.name)))];
@@ -7682,7 +7696,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
     const rows=cr.map(x=>{
       const e=__rowValFor(ex.extra,admOfExam(ex.cls,x.student),x.student)||{};
       const result=e.result||(x.hasMarks?((!x.anyFail&&x.pct>=33)?"PROMOTED":"NEEDS IMPROVEMENT"):"—");
-      const byName={};x.subjects.forEach(s=>{byName[s.name]=(s.marks==null?"AB":s.marks);});
+      const byName={};x.subjects.forEach(s=>{byName[s.name]=s.graded?(s.grade||""):(s.marks==null?"AB":s.marks);}); // graded co-scholastic subjects carry a letter grade, not a mark — don't print them as "AB"
       return [x.rank||"",x.student,...subjNames.map(n=>byName[n]!==undefined?byName[n]:""),x.hasMarks?x.obt:"",x.max,x.hasMarks?x.pct+"%":"",x.grade||"",result];
     });
     const csv=[head,...rows].map(r=>r.map(c=>{c=String(c);return /[",\n]/.test(c)?'"'+c.replace(/"/g,'""')+'"':c;}).join(",")).join("\n");
@@ -7802,9 +7816,10 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
         if(!marks[subj]||marks[subj][rowKey]===undefined)return;
         const v=marks[subj][rowKey];
         mba[subj]=mba[subj]||{};
-        const already=(mba[subj][adm]!==undefined)?mba[subj][adm]:__rowValFor(marks[subj],adm,stu.name); /* their own exact-name row counts too — never silently replace it */
+        delete marks[subj][rowKey]; // remove the orphan row FIRST, so the "already has a mark?" check below
+                                     // can't match the orphan against itself and skip the move (dropping the mark).
+        const already=(mba[subj][adm]!==undefined)?mba[subj][adm]:__rowValFor(marks[subj],adm,stu.name);
         if(already===undefined&&v!==""){mba[subj][adm]=v;patch[subj]=v;moved++;}else kept++;
-        delete marks[subj][rowKey];
       });
       await examsDB.set(selId,{...fresh,marks,marksByAdm:mba,updatedAt:new Date().toISOString()});
       setMarkDraft(d=>{const nd=JSON.parse(JSON.stringify(d||{}));Object.keys(patch).forEach(subj=>{(nd[subj]=nd[subj]||{})[stu.name]=patch[subj];});return nd;});
@@ -8143,7 +8158,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
             {_secs.map(sc=><option key={sc} value={sc}>Section {sc}</option>)}
           </select>):null;})()}
           {exam&&marked.length>0&&<Btn onClick={()=>openMarksheet(exam,msSec)}><Icon name="print" size={16}/> Marksheet{msSec?" · Sec "+msSec:""} (PDF)</Btn>}
-          {exam&&marked.length>0&&<Btn v="ghost" onClick={()=>printAll(exam,{tpl:rcTpl,tog:rcTog})}><Icon name="print" size={16}/> Print all cards ({marked.length})</Btn>}{exam&&marked.length>0&&<Btn v="ghost" onClick={()=>exportResults(exam)}>⬇ Export results CSV</Btn>}</div>
+          {exam&&marked.length>0&&<Btn v="ghost" onClick={()=>printAll(exam,{tpl:rcTpl,tog:rcTog},cr)}><Icon name="print" size={16}/> Print all cards ({marked.length}{msSec?" · Sec "+msSec:""})</Btn>}{exam&&marked.length>0&&<Btn v="ghost" onClick={()=>exportResults(exam)}>⬇ Export results CSV</Btn>}</div>
         {!exam?<Empty icon="📋" title="No exam selected" sub="Pick an exam to see results and print report cards."/>:
         marked.length===0?<Empty icon="📋" title={msSec?"No marks in Section "+msSec:"No marks entered"} sub={msSec?"No marks entered for Section "+msSec+" yet — pick All sections above, or enter marks in the Enter Marks tab.":"Enter marks for "+exam.name+" to generate report cards."}/>:<>
           <div style={{display:"grid",gap:14,gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))",marginBottom:16}}>
@@ -9330,7 +9345,10 @@ function DirectoryProfile({stu, testsDB, examsDB, studentsDB, attendanceDB, wron
   const totalTests=useMemo(()=>sd.reduce((a,s)=>a+s.sc.length,0),[sd]);
   const examCls=(/^\d+$/.test(clsNum)?"Class "+clsNum:(stu.cls||clsNum)); // class label sans section, for exam match
   const examPerf=useMemo(()=>__examPerfFor(examsDB&&examsDB.data,examCls,adm,aName),[examsDB&&examsDB.data,examCls,adm,aName]);
-  const att=useMemo(()=>{let p=0,a=0,l=0;const recent=[];Object.values(attendanceDB.data||{}).forEach(r=>{if(!r||!r.status)return;var v=(adm&&r.status[adm]!==undefined)?r.status[adm]:r.status[aName];if(v===undefined||v==="U")return;if(v==="P")p++;else if(v==="A")a++;else if(v==="L")l++;recent.push({date:r.date||"",v});});recent.sort((x,y)=>String(y.date).localeCompare(String(x.date)));const total=p+a+l;return{p,a,l,total,pct:total?Math.round((p+l)/total*100):null,recent:recent.slice(0,28).reverse()};},[attendanceDB.data,aName,adm]);
+  const att=useMemo(()=>{let p=0,a=0,l=0;const recent=[];Object.values(attendanceDB.data||{}).forEach(r=>{if(!r||!r.status)return;
+    // admNo match is unique+safe across all classes; the NAME fallback is scoped to THIS student's class so a
+    // same-named student in another class (legacy name-keyed days) can't bleed into this 360 profile's %.
+    var v=(adm&&r.status[adm]!==undefined)?r.status[adm]:(String(__clsNum(r.cls||""))===String(__clsNum(clsNum))?r.status[aName]:undefined);if(v===undefined||v==="U")return;if(v==="P")p++;else if(v==="A")a++;else if(v==="L")l++;recent.push({date:r.date||"",v});});recent.sort((x,y)=>String(y.date).localeCompare(String(x.date)));const total=p+a+l;return{p,a,l,total,pct:total?Math.round((p+l)/total*100):null,recent:recent.slice(0,28).reverse()};},[attendanceDB.data,aName,adm]);
   const norm=s=>(s||"").toLowerCase().replace(/\(.*?\)/g,"").replace(/\s+/g," ").trim();
   const practice=useMemo(()=>{const me=norm(aName);if(!me)return{count:0,chapters:[]};const ents=Object.values(wrongDB.data||{}).filter(e=>__wrongEntFor(e,aName));const byCh={};ents.forEach(e=>{byCh[e.chapter]=(byCh[e.chapter]||0)+1;});return{count:ents.length,chapters:Object.entries(byCh).sort((a,b)=>b[1]-a[1]).slice(0,8)};},[wrongDB.data,aName]);
   // Fees for ANY class (1–12 + SIP), using the shared stream/admission-aware helper so the profile balance
@@ -10355,8 +10373,9 @@ service cloud.firestore {
       // EXCEPTION: the two SHARED config docs (__classTeachers map + __subjects list) are
       // org-wide config, not personal data — every staff member must read them (e.g. a teacher
       // needs the class-teacher map to know which sections they mark). They're read by a TARGETED
-      // single-doc get (the collection list stays denied, so profiles remain private).
-      allow read: if isAny(['admin','office'])
+      // single-doc get. The VP/Principal also lists the collection (the Timetable teacher picker + staff
+      // oversight need the full roster), so 'vp' is included; parents/students/teachers still can't list it.
+      allow read: if isAny(['admin','office','vp'])
         || ((id.matches('.*__classTeachers') || id.matches('.*__subjects')) && isAny(['admin','office','vp','teacher']))
         || (signedIn() && id != '' && id == myUserDocId());
 
@@ -12431,9 +12450,56 @@ function __ttHM(t){var x=String(t||"").split(":");if(x.length<2)return null;var 
 function __ttClsKey(c){return String((typeof __clsNum==="function")?__clsNum(c):c);}
 function __ttHasClass(assignedClasses,cls){var t=__ttClsKey(cls);return (assignedClasses||[]).some(function(x){return __ttClsKey(x)===t;});}
 function __ttSchedFor(schedules,clsNum){return (schedules||[]).find(function(s){return __ttHasClass(s.assignedClasses,clsNum);})||(schedules||[])[0]||null;}
+// The actual calendar dates (YYYY-MM-DD) of a given weekday within a leave range [from,to]. Used so a
+// substitute's own-leave overlap is tested against the DAY BEING COVERED, not the absent teacher's leave
+// start (a candidate on leave only on a later day of a multi-day leave must not be offered for that day).
+function __ttDatesForDay(from,to,dayName){var out=[];if(!from||!to||!dayName)return out;try{var d=new Date(from+"T00:00:00"),end=new Date(to+"T00:00:00"),g=0;while(d<=end&&g++<60){var wl=d.toLocaleDateString("en-US",{weekday:"long"}),ws=d.toLocaleDateString("en-US",{weekday:"short"});if(wl===dayName||ws===dayName)out.push(d.toLocaleDateString("en-CA"));d.setDate(d.getDate()+1);}}catch(e){}return out;}
+function __ttOnLeaveForCover(leaveData,teacherName,leaveFrom,leaveTo,dayName){var cds=__ttDatesForDay(leaveFrom,leaveTo,dayName);return Object.values(leaveData||{}).some(function(lv){if(!(lv&&lv.status==="approved"&&lv.teacherName===teacherName))return false;if(!cds.length)return lv.from<=leaveFrom&&lv.to>=leaveFrom;return cds.some(function(cd){return lv.from<=cd&&lv.to>=cd;});});}
 function __ttPeriodMap(sched){var m={};((sched&&sched.periods)||[]).forEach(function(p){if(p.isBreak)return;m[p.no]={s:__ttHM(p.start),e:__ttHM(p.end)};});return m;}
 function __ttOverlap(a,b){if(!a||!b||a.s==null||a.e==null||b.s==null||b.e==null||a.e<=a.s||b.e<=b.s)return false;return a.s<b.e&&b.s<a.e;}
 function __ttNorm(t){return String(t||"").toLowerCase().replace(/^(mr|ms|mrs|dr)\.?\s+/,"").trim();}
+// ── Multi-teacher / multi-subject period model ──────────────────────────────────────────────────────────────
+// A period cell may hold ONE subject+teacher (legacy: a bare string subject, or {subject,teacher}) OR SEVERAL
+// pairs for a combined class / lab / co-teaching, stored as {subject,teacher,extra:[{subject,teacher},…]}. The
+// FIRST pair stays at the top level so every legacy reader (cell.subject / cell.teacher) still sees it unchanged;
+// __ttPairs flattens the whole cell to the full list, dropping empty pairs.
+function __ttPairs(cell){
+  if(cell==null||cell==="")return [];
+  if(typeof cell==="string")return [{subject:cell,teacher:""}];
+  if(typeof cell!=="object")return [];
+  var out=[];
+  var has=function(p){return p&&((p.subject&&String(p.subject).trim())||(p.teacher&&String(p.teacher).trim()));};
+  if(has(cell))out.push({subject:cell.subject||"",teacher:cell.teacher||""});
+  if(Array.isArray(cell.extra))cell.extra.forEach(function(p){if(has(p))out.push({subject:p.subject||"",teacher:p.teacher||""});});
+  return out;
+}
+// Distinct teacher names engaged in a cell (order preserved, deduped by normalised name).
+function __ttCellTeachers(cell){var s={},o=[];__ttPairs(cell).forEach(function(p){var t=String(p.teacher||"").trim();var k=__ttNorm(t);if(t&&!s[k]){s[k]=1;o.push(t);}});return o;}
+// Does teacher `normName` (already __ttNorm'd) teach in this cell?
+function __ttCellHasTeacher(cell,normName){return __ttPairs(cell).some(function(p){return __ttNorm(p.teacher)===normName;});}
+// The subject teacher `normName` teaches in this cell (for combined-class clash checks + per-teacher displays).
+function __ttSubjectForTeacher(cell,normName){var f=__ttPairs(cell).find(function(p){return __ttNorm(p.teacher)===normName;});return f?(f.subject||""):"";}
+// Sanitise a whole grid before it is written to Firestore: normalise every cell to {subject,teacher[,extra]},
+// drop blank extra pairs (and the extra key when empty), and guarantee no `undefined` field (Firestore rejects it).
+function __ttSaveClean(tt){
+  var out={};
+  Object.keys(tt||{}).forEach(function(day){
+    var dd=tt[day];
+    if(String(day).charAt(0)==="_"||!dd||typeof dd!=="object"){out[day]=dd;return;}
+    var nd={};
+    Object.keys(dd).forEach(function(p){
+      var cell=dd[p];
+      if(cell==null){return;}
+      if(typeof cell!=="object"){nd[p]={subject:String(cell||""),teacher:""};return;}
+      var c={subject:cell.subject||"",teacher:cell.teacher||""};
+      var ex=(Array.isArray(cell.extra)?cell.extra:[]).map(function(pr){return {subject:(pr&&pr.subject)||"",teacher:(pr&&pr.teacher)||""};}).filter(function(pr){return pr.subject||pr.teacher;});
+      if(ex.length)c.extra=ex;
+      nd[p]=c;
+    });
+    out[day]=nd;
+  });
+  return out;
+}
 var __TT_DAYLONG={Mon:"Monday",Tue:"Tuesday",Wed:"Wednesday",Thu:"Thursday",Fri:"Friday",Sat:"Saturday"};
 // Period numbers a teacher actually teaches on a given weekday, across all class-section timetables.
 function __ttPeriodsForTeacherOnDay(timetables, teacherName, dateObj){
@@ -12449,9 +12515,8 @@ function __ttPeriodsForTeacherOnDay(timetables, teacherName, dateObj){
     Object.keys(dayTT).forEach(function(pNo){
       if(String(pNo).indexOf("_")===0)return;
       var cell=dayTT[pNo];if(!cell)return;
-      var teacher=typeof cell==="object"?(cell.teacher||""):"";
-      if(!teacher)return;
-      if(teacher===teacherName||(tN&&stripT(teacher)===tN))out.push(String(pNo));
+      // combined-class aware: the teacher may be any of the cell's pairs
+      if(__ttPairs(cell).some(function(pr){var t=pr.teacher||"";return t&&(t===teacherName||(tN&&stripT(t)===tN));}))out.push(String(pNo));
     });
   });
   return out;
@@ -12477,12 +12542,11 @@ function __ttTeacherTimeline(timetables, gs, teacherName, dateObj){
     Object.keys(dayTT).forEach(function(pNo){
       if(String(pNo).indexOf("_")===0)return;
       var cell=dayTT[pNo];if(!cell)return;
-      var teacher=typeof cell==="object"?(cell.teacher||""):"";
-      if(!teacher)return;
-      if(teacher===teacherName||(tN&&stripT(teacher)===tN)){
+      var mine=__ttPairs(cell).find(function(pr){var t=pr.teacher||"";return t&&(t===teacherName||(tN&&stripT(t)===tN));});
+      if(mine){
         var key=pNo+"|"+cls+"|"+sec;if(seen[key])return;seen[key]=1;
         var tm=pt[pNo]||{};
-        out.push({period:String(pNo),start:tm.start||"",end:tm.end||"",time:tm.time||"",subject:typeof cell==="object"?(cell.subject||""):String(cell),cls:cls,section:(typeof normSection==="function"?normSection(cls,sec):sec)});
+        out.push({period:String(pNo),start:tm.start||"",end:tm.end||"",time:tm.time||"",subject:mine.subject||"",cls:cls,section:(typeof normSection==="function"?normSection(cls,sec):sec)});
       }
     });
   });
@@ -12527,13 +12591,17 @@ function __ttClashList(timetables,schedules,myKey,myClass,day,period,teacher,sub
     var dd=tobj[dLong]||tobj[day]||{}; if(!dd||typeof dd!=="object")return;
     Object.keys(dd).forEach(function(per){
       if(String(per).charAt(0)==="_")return;
-      var cell=dd[per]; var ct=(cell&&typeof cell==="object")?cell.teacher:""; if(!ct||__ttNorm(ct)!==tn)return;
-      var cs=(cell&&typeof cell==="object")?(cell.subject||""):cell;
-      if(subjN&&String(cs||"").trim().toLowerCase()===subjN)return; // same subject, same time = combined class, not a clash
-      var oT=oMap[per]; var clash=false;
-      if(myT&&oT) clash=__ttOverlap(myT,oT);
-      else if(mySched&&oSched&&mySched.id===oSched.id&&String(per)===String(period)) clash=true; // fallback when a time is missing/corrupt
-      if(clash){var pp=String(k).split("_");hits.push(pp[0]+(pp[1]?" "+pp[1]:"")+(cs?" ("+cs+")":""));}
+      var cell=dd[per]; var oT=oMap[per];
+      // a cell can hold several teachers (combined class / co-teaching) — check each pair for THIS teacher
+      __ttPairs(cell).forEach(function(pr){
+        if(__ttNorm(pr.teacher)!==tn)return;
+        var cs=pr.subject||"";
+        if(subjN&&String(cs).trim().toLowerCase()===subjN)return; // same subject, same time = combined class, not a clash
+        var clash=false;
+        if(myT&&oT) clash=__ttOverlap(myT,oT);
+        else if(mySched&&oSched&&mySched.id===oSched.id&&String(per)===String(period)) clash=true; // fallback when a time is missing/corrupt
+        if(clash){var pp=String(k).split("_");hits.push(pp[0]+(pp[1]?" "+pp[1]:"")+(cs?" ("+cs+")":""));}
+      });
     });
   });
   return hits.filter(function(v,i,a){return a.indexOf(v)===i;});
@@ -12592,10 +12660,12 @@ function TimetablePanel({user}){
         setCustomSubjects((((snap&&snap.data&&snap.data())||{}).list)||[]);
       }); }catch(e){}
       // Live staff list so the teacher picker reflects teachers/VP added in the Assign panel (not just the seed list).
+      // onError degrades gracefully (keeps the seed list) if the users-collection read isn't permitted yet — a raw
+      // "Missing or insufficient permissions" must never surface just because a rules publish is pending.
       try{ unsub4=window.__fbOnSnapshot(window.__fbCollection(window.__db,"users"),snap=>{
         const arr=[];const br=window.__currentBranch||"greencity";snap.forEach(d=>{if(d.id.indexOf("__")===0)return;const v=d.data()||{};v.username=v.username||d.id;var ubr=(Array.isArray(v.branches)&&v.branches.length)?v.branches:["greencity"];if(ubr.indexOf(br)>=0||ubr.indexOf("all")>=0)arr.push(v);});
         setLiveUsers(arr); // only THIS campus's live staff (users is a global collection)
-      }); }catch(e){}
+      },err=>{/* permission or transient error — keep the seed teacher list, don't throw */}); }catch(e){}
       // Approved leaves → the "Substitutions today" cover view (admin/VP only; teachers can't read the leaves collection).
       if(canManage){ try{ unsub5=window.__fbOnSnapshot(window.__fbCollection(window.__db,"leaves"),snap=>{
         const lv={};snap.forEach(d=>{lv[d.id]=d.data();});setLeaves(lv);
@@ -12674,7 +12744,7 @@ function TimetablePanel({user}){
     if(!window.__db)return;setSaving(true);setMsg("");
     try{
       await window.__fbSetDoc(window.__fbDoc(window.__db,"timetables",ttKey),{
-        ...tt,_class:selClass,_section:selSection,_scheduleId:sched.id||"",
+        ...__ttSaveClean(tt),_class:selClass,_section:selSection,_scheduleId:sched.id||"",
         _updatedBy:user.name,_updatedAt:new Date().toISOString()
       });
       setMsg("✓ Timetable saved!");setView("view");
@@ -12703,6 +12773,8 @@ function TimetablePanel({user}){
     const keys=Object.keys(timetables||{}).filter(k=>k.indexOf("_")>0&&k[0]!=="_");
     const load={}; // teacherNorm -> {name, sessions:{slotKey:true}}
     const seedT=(nm,role)=>{if(nm&&(role==="teacher"||role==="vp")){const nk=__ttNorm(nm);if(!load[nk])load[nk]={name:nm,sessions:{}};}};
+    // Seed the built-in roster (some current teachers have no live account) then overlay live users; a live doc marked
+    // left/removed drops that teacher (matched by title-stripped name, which absorbs stray-space differences).
     if((window.__currentBranch||"greencity")==="greencity")Object.values(DEFAULT_USERS).forEach(v=>seedT(v.name,v.role));
     (liveUsers||[]).forEach(v=>{if(v&&(v.left===true||v.removed===true)){const nk=__ttNorm(v.name||"");delete load[nk];return;}seedT(v.name,v.role);});
     let totalSlots=0,filledSlots=0;const gaps=[];
@@ -12717,18 +12789,19 @@ function TimetablePanel({user}){
       (sc.days||[]).forEach(day=>{(sc.periods||[]).forEach(p=>{
         if(p.isBreak)return; t++; totalSlots++;
         const cell=doc[day]&&doc[day][p.no];
-        const subj=cell&&typeof cell==="object"?cell.subject:cell;
-        const teacher=cell&&typeof cell==="object"?cell.teacher:"";
-        if(subj){f++;filledSlots++;}
-        if(teacher){
+        const pairs=__ttPairs(cell);
+        if(pairs.some(pr=>pr.subject)){f++;filledSlots++;}
+        // one cell can hold several teacher+subject pairs (combined class / lab / co-teaching) — count each teacher
+        pairs.forEach(pr=>{
+          const teacher=pr.teacher||"";if(!teacher)return;
           const nk=__ttNorm(teacher);
           // workload session = a wall-clock slot the teacher is engaged; combined sections share the same start → 1 session
           if(!load[nk])load[nk]={name:teacher,sessions:{}};
           load[nk].sessions[nk+"|"+day+"|"+(p.start||("P"+p.no))]=true;
           // real clash = SAME detector as the per-cell view (combined-aware via subject, time-overlap) → never disagrees
-          const hits=__ttClashList(timetables,scheds,k,cls,day,p.no,teacher,subj);
-          if(hits&&hits.length){const ck=k+"|"+day+"|"+p.no; if(!clashSeen[ck]){clashSeen[ck]=true;clashList.push({teacher,day,label:p.label,start:p.start||"",cls,sec,subject:subj||"",conflicts:hits});}}
-        }
+          const hits=__ttClashList(timetables,scheds,k,cls,day,p.no,teacher,pr.subject||"");
+          if(hits&&hits.length){const ck=k+"|"+day+"|"+p.no+"|"+nk; if(!clashSeen[ck]){clashSeen[ck]=true;clashList.push({teacher,day,label:p.label,start:p.start||"",cls,sec,subject:pr.subject||"",conflicts:hits});}}
+        });
       });});
       if(f<t||unassigned)gaps.push({key:k,cls,sec,free:t-f,total:t,unassigned});
     });
@@ -12747,8 +12820,8 @@ function TimetablePanel({user}){
     periods.forEach(p=>{
       if(p.isBreak){rows+="<tr style='background:#f4ecd6'><td style='font-weight:700;color:#8a6d1f'>"+esc(p.label)+"</td>"+days.map(()=>"<td style='text-align:center;color:#8a6d1f;font-weight:700'>"+esc(p.label.toUpperCase())+"</td>").join("")+"</tr>";return;}
       rows+="<tr><td><b>"+esc(p.label)+"</b><br><span style='font-size:10px;color:#666'>"+esc(p.start)+"–"+esc(p.end)+"</span></td>"+days.map(d=>{
-        const cell=currentTT[d]&&currentTT[d][p.no];const subj=cell&&typeof cell==="object"?cell.subject:cell;const teacher=cell&&typeof cell==="object"?cell.teacher:"";
-        return "<td style='text-align:center'>"+(subj?("<b>"+esc(subj)+"</b>"+(teacher?"<br><span style='font-size:10px;color:#555'>"+esc(honorific(teacher))+"</span>":"")):"<span style='color:#bbb'>—</span>")+"</td>";
+        const cell=currentTT[d]&&currentTT[d][p.no];const prs=__ttPairs(cell);
+        return "<td style='text-align:center'>"+(prs.length?prs.map(function(pr){return "<b>"+esc(pr.subject||"—")+"</b>"+(pr.teacher?"<br><span style='font-size:10px;color:#555'>"+esc(honorific(pr.teacher))+"</span>":"");}).join("<hr style='border:none;border-top:1px dashed #ccc;margin:4px 0'>"):"<span style='color:#bbb'>—</span>")+"</td>";
       }).join("")+"</tr>";
     });
     const h="<html><head><title>Timetable — Class "+esc(selClass)+" "+esc(selSection)+"</title><style>@page{size:landscape}body{font-family:Arial,sans-serif;padding:22px;color:#111}h2{margin:0 0 2px}p{margin:0 0 14px;color:#555;font-size:13px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #ccc;padding:7px 9px}th{background:#0d1b2a;color:#fff;font-size:11px}td:first-child,th:first-child{text-align:left;white-space:nowrap}</style></head><body><h2>"+esc(SCHOOL_NAME)+"</h2><p>Class "+esc(selClass)+" — Section "+esc(selSection)+" · "+esc(sched.name||"Timetable")+" · Generated "+new Date().toLocaleDateString("en-IN",{day:"numeric",month:"long",year:"numeric"})+"</p><table><thead><tr><th>Period / Time</th>"+days.map(d=>"<th>"+esc(d)+"</th>").join("")+"</tr></thead><tbody>"+rows+"</tbody></table><p style='margin-top:14px;font-size:11px;color:#888'>"+ttStats.pct+"% of periods filled school-wide · printed from the Academic Portal.</p></body></html>";
@@ -12881,10 +12954,11 @@ function TimetableCoverage({stats,card,onJump,onShowClashes}){
 function TeacherTimetable({timetables,scheds,liveUsers,selTeacher,setSelTeacher,card,hdr,onJumpClass}){
   const isMob=useIsMobile();
   const DAYS=["Mon","Tue","Wed","Thu","Fri","Sat"];
-  // teacher list: live teachers/VP (branch-filtered) + Greencity seed, minus left/removed — deduped by norm name
+  // teacher list: built-in seed (some current teachers have no live account) + live roster, minus left/removed —
+  // deduped by title-stripped name (which absorbs stray-space name differences so departed teachers actually drop).
   const teachers=useMemo(()=>{
     const m={};
-    const add=(nm,role,left)=>{if(!nm||!(role==="teacher"||role==="vp"))return;const nk=__ttNorm(nm);if(left){delete m[nk];return;}if(!m[nk])m[nk]=nm;};
+    const add=(nm,role,left)=>{if(!nm||!(role==="teacher"||role==="vp"))return;const nk=__ttNorm(nm);if(left){delete m[nk];return;}if(!m[nk])m[nk]=String(nm).trim();};
     if((window.__currentBranch||"greencity")==="greencity")Object.values(DEFAULT_USERS).forEach(v=>add(v.name,v.role,false));
     (liveUsers||[]).forEach(v=>add(v.name,v.role,v.left===true||v.removed===true));
     return Object.values(m).sort((a,b)=>String(a).localeCompare(String(b)));
@@ -12905,12 +12979,12 @@ function TeacherTimetable({timetables,scheds,liveUsers,selTeacher,setSelTeacher,
       DAYS.forEach(dShort=>{
         const dLong=__TT_DAYLONG[dShort]||dShort;const day=doc[dLong]||doc[dShort]||{};
         Object.keys(day).forEach(pNo=>{
-          if(String(pNo).indexOf("_")===0)return;const cell=day[pNo];if(!cell||typeof cell!=="object")return;
-          const teacher=cell.teacher||"";if(!teacher||__ttNorm(teacher)!==tN)return;
+          if(String(pNo).indexOf("_")===0)return;const cell=day[pNo];if(!__ttCellHasTeacher(cell,tN))return;
+          const subjHere=__ttSubjectForTeacher(cell,tN);
           const tm=pt[String(pNo)];if(!tm)return; // break/unknown slot
           const sk=tm.start+"|"+tm.end;slots[sk]={start:tm.start,end:tm.end,label:tm.label};
           cells[dShort]=cells[dShort]||{};
-          if(!cells[dShort][sk]){cells[dShort][sk]={cls,sec,subject:cell.subject||"",period:String(pNo)};perDay[dShort]++;total++;if(cell.subject)subjSet[cell.subject]=1;clsSet["Class "+cls+(sec?" "+sec:"")]=1;}
+          if(!cells[dShort][sk]){cells[dShort][sk]={cls,sec,subject:subjHere,period:String(pNo)};perDay[dShort]++;total++;if(subjHere)subjSet[subjHere]=1;clsSet["Class "+cls+(sec?" "+sec:"")]=1;}
         });
       });
     });
@@ -13027,10 +13101,9 @@ function TimetableView({sched,colors,tt,tt2,cls,sec,card,hdr,clashFor}){
     (sched.days||[]).forEach(d=>{(sched.periods||[]).forEach(p=>{
       if(p.isBreak)return;
       const cell=tt[d]&&tt[d][p.no];
-      const subj=cell&&typeof cell==="object"?cell.subject:cell;
-      const teacher=cell&&typeof cell==="object"?cell.teacher:"";
-      if(!subj)gaps++;
-      if(teacher&&clashFor){const h=clashFor(d,p.no,teacher,subj);if(h&&h.length)clashes.push({day:d,period:p.label,teacher,where:h.join(", ")});}
+      const prs=__ttPairs(cell);
+      if(!prs.some(pr=>pr.subject))gaps++;
+      prs.forEach(pr=>{if(pr.teacher&&clashFor){const h=clashFor(d,p.no,pr.teacher,pr.subject);if(h&&h.length)clashes.push({day:d,period:p.label,teacher:pr.teacher,where:h.join(", ")});}});
     });});
     return {gaps,clashes};
   },[sched,tt,clashFor]);
@@ -13072,30 +13145,32 @@ function TimetableView({sched,colors,tt,tt2,cls,sec,card,hdr,clashFor}){
                   const isToday=d===todayName;
                   if(p.isBreak)return<td key={d} style={{textAlign:"center",background:"var(--bg-amb)",borderBottom:"1px solid var(--ap-line)"}}><span style={{fontSize:10,color:"var(--tx-org2)",fontWeight:700}}>{p.label.toUpperCase()}</span></td>;
                   const cell=(tt[d]&&tt[d][p.no])||"";
-                  const subj=typeof cell==="object"?cell.subject||"":cell;
-                  const teacher=typeof cell==="object"?cell.teacher||"":"";
+                  const prs=__ttPairs(cell); // one or several subject+teacher pairs (combined class / lab / co-teaching)
                   // Combined 11/12 A+B view: when a second grid (tt2 = Section B) is supplied, compare cells —
                   // identical periods show once, differing periods (the Maths/Biology split) show A & B stacked.
                   if(tt2){
                     const cellB=(tt2[d]&&tt2[d][p.no])||"";
-                    const subjB=typeof cellB==="object"?cellB.subject||"":cellB;
-                    const teacherB=typeof cellB==="object"?cellB.teacher||"":"";
-                    const same=(subj||"")===(subjB||"")&&(teacher||"")===(teacherB||"");
-                    if(same){const ch0=__ttChip(colors[subj]);return(
+                    const prsB=__ttPairs(cellB);
+                    const ser=xs=>xs.map(pr=>(pr.subject||"")+"~"+(pr.teacher||"")).join("||");
+                    const same=ser(prs)===ser(prsB);
+                    const stack=xs=>xs.map((pr,pi)=>{const c0=__ttChip(colors[pr.subject]);return <div key={pi} style={{background:c0.bg,border:"1.5px solid "+c0.bd,borderRadius:8,padding:"5px 7px",color:c0.fg,fontWeight:700,fontSize:isMob?10:11,lineHeight:1.4}}><div>{pr.subject||"—"}</div>{pr.teacher&&<div style={{fontSize:isMob?9.5:10,fontWeight:500,color:c0.fg,marginTop:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:isMob?60:100}}>{pr.teacher}</div>}</div>;});
+                    if(same){return(
                       <td key={d} style={{padding:"4px 6px",borderBottom:"1px solid var(--ap-line)",textAlign:"center",background:isToday?"var(--ap-accent-soft)":"transparent"}}>
-                        {subj?<div style={{background:ch0.bg,border:"1.5px solid "+ch0.bd,borderRadius:8,padding:"5px 7px",color:ch0.fg,fontWeight:700,fontSize:isMob?10:11,lineHeight:1.4}}><div>{subj}</div>{teacher&&<div style={{fontSize:isMob?9.5:10,fontWeight:500,color:ch0.fg,marginTop:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:isMob?60:100}}>{teacher}</div>}</div>:<span style={{background:"var(--bg-amb)",color:"var(--tx-org2)",borderRadius:6,padding:"2px 8px",fontSize:9,fontWeight:700,opacity:.7}}>Free</span>}
+                        {prs.length?<div style={{display:"flex",flexDirection:"column",gap:3}}>{stack(prs)}</div>:<span style={{background:"var(--bg-amb)",color:"var(--tx-org2)",borderRadius:6,padding:"2px 8px",fontSize:9,fontWeight:700,opacity:.7}}>Free</span>}
                       </td>);}
-                    const mini=(lab,sj,tch)=>{const c=__ttChip(colors[sj]);return <div style={{background:sj?c.bg:"var(--bg-amb)",border:"1px solid "+(sj?c.bd:"var(--bd-amb)"),borderRadius:7,padding:"3px 6px",color:sj?c.fg:"var(--tx-org2)",fontWeight:700,fontSize:isMob?10:10.5,lineHeight:1.3,display:"flex",alignItems:"center",gap:5,textAlign:"left"}}><span style={{flex:"none",width:14,height:14,borderRadius:4,background:sj?c.fg:"var(--tx-org2)",color:"#fff",fontSize:8,display:"grid",placeItems:"center",fontWeight:800}}>{lab}</span><span style={{minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sj||"Free"}{tch?<span style={{fontWeight:500,opacity:.8}}> · {tch}</span>:null}</span></div>;};
-                    return(<td key={d} style={{padding:"4px 6px",borderBottom:"1px solid var(--ap-line)",background:isToday?"var(--ap-accent-soft)":"transparent"}}><div style={{display:"flex",flexDirection:"column",gap:3}}>{mini("A",subj,teacher)}{mini("B",subjB,teacherB)}</div></td>);
+                    const mini=(lab,xs)=>{const sj=xs.length?xs.map(pr=>pr.subject||"—").join(" + "):"";const tch=xs.map(pr=>pr.teacher).filter(Boolean).join(", ");const c=__ttChip(colors[xs[0]&&xs[0].subject]);return <div style={{background:sj?c.bg:"var(--bg-amb)",border:"1px solid "+(sj?c.bd:"var(--bd-amb)"),borderRadius:7,padding:"3px 6px",color:sj?c.fg:"var(--tx-org2)",fontWeight:700,fontSize:isMob?10:10.5,lineHeight:1.3,display:"flex",alignItems:"center",gap:5,textAlign:"left"}}><span style={{flex:"none",width:14,height:14,borderRadius:4,background:sj?c.fg:"var(--tx-org2)",color:"#fff",fontSize:8,display:"grid",placeItems:"center",fontWeight:800}}>{lab}</span><span style={{minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sj||"Free"}{tch?<span style={{fontWeight:500,opacity:.8}}> · {tch}</span>:null}</span></div>;};
+                    return(<td key={d} style={{padding:"4px 6px",borderBottom:"1px solid var(--ap-line)",background:isToday?"var(--ap-accent-soft)":"transparent"}}><div style={{display:"flex",flexDirection:"column",gap:3}}>{mini("A",prs)}{mini("B",prsB)}</div></td>);
                   }
-                  const ch=__ttChip(colors[subj]);
-                  const clashed=teacher&&clashFor&&(clashFor(d,p.no,teacher,subj)||[]).length>0;
                   return(
                     <td key={d} style={{padding:"4px 6px",borderBottom:"1px solid var(--ap-line)",textAlign:"center",background:isToday?"var(--ap-accent-soft)":"transparent"}}>
-                      {subj?<div style={{background:ch.bg,border:"1.5px solid "+(clashed?"var(--tx-red)":ch.bd),borderRadius:8,padding:"5px 7px",color:ch.fg,fontWeight:700,fontSize:isMob?10:11,lineHeight:1.4}}>
-                        <div>{clashed&&<span title="Teacher double-booked" style={{color:"var(--tx-red)"}}></span>}{subj}</div>
-                        {teacher&&<div style={{fontSize:isMob?9.5:10,fontWeight:500,color:ch.fg,marginTop:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:isMob?60:100}}>{teacher}</div>}
-                      </div>:<span style={{background:"var(--bg-amb)",color:"var(--tx-org2)",borderRadius:6,padding:"2px 8px",fontSize:9,fontWeight:700,opacity:.7}}>Free</span>}
+                      {prs.length?<div style={{display:"flex",flexDirection:"column",gap:3}}>{prs.map((pr,pi)=>{
+                        const ch=__ttChip(colors[pr.subject]);
+                        const clashed=pr.teacher&&clashFor&&(clashFor(d,p.no,pr.teacher,pr.subject)||[]).length>0;
+                        return(<div key={pi} style={{background:ch.bg,border:"1.5px solid "+(clashed?"var(--tx-red)":ch.bd),borderRadius:8,padding:"5px 7px",color:ch.fg,fontWeight:700,fontSize:isMob?10:11,lineHeight:1.4}}>
+                          <div>{clashed&&<span title="Teacher double-booked" style={{color:"var(--tx-red)"}}></span>}{pr.subject||"—"}</div>
+                          {pr.teacher&&<div style={{fontSize:isMob?9.5:10,fontWeight:500,color:ch.fg,marginTop:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:isMob?60:100}}>{pr.teacher}</div>}
+                        </div>);
+                      })}</div>:<span style={{background:"var(--bg-amb)",color:"var(--tx-org2)",borderRadius:6,padding:"2px 8px",fontSize:9,fontWeight:700,opacity:.7}}>Free</span>}
                     </td>
                   );
                 })}
@@ -13118,12 +13193,18 @@ function TimetableEditor({sched,colors,customSubjects,users,tt,cls,sec,onSave,sa
         const existing=tt[day]&&tt[day][p.no];
         var normS={"English Language":"English","English Literature":"English","Computer Science":"Computer","Information Technology":"Computer","Social Studies":"Social Science","Accounts":"Accountancy"};
         var rawObj=typeof existing==="object"?existing:(existing?{subject:existing,teacher:""}:{subject:"",teacher:""});
-        d[day][p.no]={...rawObj,subject:normS[rawObj.subject]||rawObj.subject||""};
+        // preserve additional subject+teacher pairs (combined class / lab / co-teaching), normalising their subject names too
+        var ex=Array.isArray(rawObj.extra)?rawObj.extra.map(function(pr){return {subject:normS[pr&&pr.subject]||(pr&&pr.subject)||"",teacher:(pr&&pr.teacher)||""};}):[];
+        d[day][p.no]={subject:normS[rawObj.subject]||rawObj.subject||"",teacher:rawObj.teacher||"",extra:ex};
       }
     });});
     return d;
   });
   const setCell=(day,pNo,field,val)=>setDraft(d=>({...d,[day]:{...d[day],[pNo]:{...(d[day][pNo]||{}),[field]:val}}}));
+  // Additional subject+teacher pairs in ONE period (combined class / lab / co-teaching) live in cell.extra[].
+  const addPair=(day,pNo)=>setDraft(d=>{const cur=d[day][pNo]||{subject:"",teacher:""};const ex=(Array.isArray(cur.extra)?cur.extra.slice():[]);ex.push({subject:"",teacher:""});return {...d,[day]:{...d[day],[pNo]:{...cur,extra:ex}}};});
+  const setExtra=(day,pNo,idx,field,val)=>setDraft(d=>{const cur=d[day][pNo]||{subject:"",teacher:""};const ex=(Array.isArray(cur.extra)?cur.extra.slice():[]);ex[idx]={...(ex[idx]||{subject:"",teacher:""}),[field]:val};return {...d,[day]:{...d[day],[pNo]:{...cur,extra:ex}}};});
+  const removePair=(day,pNo,idx)=>setDraft(d=>{const cur=d[day][pNo]||{subject:"",teacher:""};const ex=(Array.isArray(cur.extra)?cur.extra.slice():[]);ex.splice(idx,1);return {...d,[day]:{...d[day],[pNo]:{...cur,extra:ex}}};});
   const allSubjects=(function(){
     var norm={"English Language":"English","English Literature":"English",
       "Computer Science":"Computer","Information Technology":"Computer",
@@ -13134,16 +13215,22 @@ function TimetableEditor({sched,colors,customSubjects,users,tt,cls,sec,onSave,sa
     (customSubjects||[]).forEach(push);         // custom subjects added in Assign (Music, Painting…)
     Object.keys(colors||{}).forEach(push);      // any extra subject that only has a colour configured
     // keep anything already placed in THIS timetable so an existing entry never vanishes from the picker
-    Object.keys(tt||{}).forEach(function(day){var dd=tt&&tt[day];if(dd&&typeof dd==="object")Object.keys(dd).forEach(function(p){var cell=dd[p];push((cell&&typeof cell==="object")?cell.subject:cell);});});
+    Object.keys(tt||{}).forEach(function(day){var dd=tt&&tt[day];if(dd&&typeof dd==="object")Object.keys(dd).forEach(function(p){__ttPairs(dd[p]).forEach(function(pr){push(pr.subject);});});});
     return result;
   })();
   const colorFor=(s)=>colors[s]||"#94a3b8"; // fallback colour for subjects without one set yet
-  // Build teacher list from LIVE users (Firebase) merged with the seed list, so teachers/VP added
-  // in the Assign panel show up here too. Falls back to DEFAULT_USERS if live users haven't loaded.
+  // Teacher list = built-in seed (some current teachers exist only there, with no separate login) overlaid with the
+  // LIVE roster. Reconcile by CANONICAL USERNAME (safeId), not raw name: a departed teacher's live record often has a
+  // slightly different name (stray spaces / fuller name) than the seed, so name-matching failed to drop them and they
+  // ghosted in the dropdown. Username-matching removes anyone marked left/removed and dedupes renamed teachers, while
+  // keeping seed-only teachers who have no live account.
   const allTeachers=(function(){
-    const map={};
-    if((window.__currentBranch||"greencity")==="greencity")Object.entries(DEFAULT_USERS).forEach(([k,v])=>{if(v&&(v.role==="teacher"||v.role==="vp"))map[(v.name||k)]={key:k,name:v.name,subjects:v.subjects||[],classes:v.classes||[]};});
-    (users||[]).forEach(u=>{if(!u||!u.name)return;if(u.left===true||u.removed===true){delete map[u.name];return;}if(u.role==="teacher"||u.role==="vp")map[u.name]={key:u.username||u.name,name:u.name,subjects:u.subjects||[],classes:u.classes||[]};});
+    const map={}; // canonical username -> teacher
+    const canon=(u,k)=>safeId(String((u&&u.username)||k||"").toLowerCase());
+    if((window.__currentBranch||"greencity")==="greencity")Object.entries(DEFAULT_USERS).forEach(([k,v])=>{if(v&&(v.role==="teacher"||v.role==="vp"))map[canon(v,k)]={key:k,name:String(v.name||k).trim(),subjects:v.subjects||[],classes:v.classes||[]};});
+    (users||[]).forEach(u=>{if(!u)return;const key=canon(u,u.name);
+      if(u.left===true||u.removed===true){delete map[key];return;}
+      if(u.name&&(u.role==="teacher"||u.role==="vp"))map[key]={key:u.username||u.name,name:String(u.name).trim(),subjects:u.subjects||[],classes:u.classes||[]};});
     return Object.values(map).sort((a,b)=>a.name.localeCompare(b.name));
   })();
   // Normalise a teacher's class entry ("Class 10-A" / "10-A" / "X-A") down to the bare class number "10".
@@ -13166,11 +13253,11 @@ function TimetableEditor({sched,colors,customSubjects,users,tt,cls,sec,onSave,sa
     (sched.days||[]).forEach(day=>{(sched.periods||[]).forEach(p=>{
       if(p.isBreak)return;
       const cell=draft[day]&&draft[day][p.no];
-      const teacher=(cell&&typeof cell==="object")?cell.teacher:"";
-      const subj=(cell&&typeof cell==="object")?cell.subject:"";
-      if(!teacher)return;
-      const hit=clashFor(day,p.no,teacher,subj,overlay);
-      if(hit&&hit.length)out.push({day,period:p.label,teacher,where:hit.join(", ")});
+      __ttPairs(cell).forEach(pr=>{
+        if(!pr.teacher)return;
+        const hit=clashFor(day,p.no,pr.teacher,pr.subject,overlay);
+        if(hit&&hit.length)out.push({day,period:p.label,teacher:pr.teacher,where:hit.join(", ")});
+      });
     });});
     return out;
   },[draft,sched,clashFor,timetables,ttKey]);
@@ -13237,22 +13324,37 @@ function TimetableEditor({sched,colors,customSubjects,users,tt,cls,sec,onSave,sa
                   const cellObj=(draft[d]&&draft[d][p.no])||{subject:"",teacher:""};
                   const val=typeof cellObj==="object"?cellObj.subject||"":cellObj;
                   const tval=typeof cellObj==="object"?cellObj.teacher||"":"";
+                  const extra=(cellObj&&Array.isArray(cellObj.extra))?cellObj.extra:[];
                   const ch=val?__ttChip(colors[val]):null;
-                  const suggestedTeachers=teachersForSubject(val,cls);
+                  // reusable subject / teacher pickers (teacher list = subject-matched first, then everyone)
+                  const subjSel=(value,onChange,chip)=>(
+                    <select value={value} onChange={onChange} style={{width:"100%",border:"1.5px solid "+(chip?chip.bd:"var(--c-d2)"),borderRadius:8,padding:"6px 5px",fontSize:10,fontWeight:chip?700:400,color:chip?chip.fg:"var(--c-94)",background:chip?chip.bg:"var(--c-fff)",fontFamily:"var(--ss-font)",outline:"none",marginBottom:3,cursor:"pointer"}}>
+                      <option value="">— Free —</option>
+                      {allSubjects.map(s=><option key={s} value={s}>{s}</option>)}
+                    </select>);
+                  const teachSel=(value,onChange,subjVal)=>{
+                    const sug=teachersForSubject(subjVal,cls);
+                    const opts=(function(){var seen={},out=[];sug.forEach(function(t){if(t&&!seen[t.name]){seen[t.name]=1;out.push(t);}});allTeachers.forEach(function(t){if(t&&!seen[t.name]){seen[t.name]=1;out.push(t);}});return out;})();
+                    return(<select value={value} onChange={onChange} style={{width:"100%",border:"1px solid var(--c-d2)",borderRadius:8,padding:"5px 5px",fontSize:9,color:"var(--c-47)",background:"var(--c-fff)",fontFamily:"var(--ss-font)",outline:"none",cursor:"pointer"}}>
+                      <option value="">— Teacher —</option>
+                      {opts.map(t=><option key={t.key} value={t.name}>{t.name}</option>)}
+                    </select>);
+                  };
                   return(
-                    <td key={d} style={{padding:"4px 5px",borderBottom:"1px solid var(--ap-line)",minWidth:isMob?90:130}}>
-                      <select value={val} onChange={e=>{setCell(d,p.no,"subject",e.target.value);setCell(d,p.no,"teacher","");}}
-                        style={{width:"100%",border:"1.5px solid "+(ch?ch.bd:"var(--c-d2)"),borderRadius:8,padding:"6px 5px",fontSize:10,fontWeight:ch?700:400,color:ch?ch.fg:"var(--c-94)",background:ch?ch.bg:"var(--c-fff)",fontFamily:"var(--ss-font)",outline:"none",marginBottom:3,cursor:"pointer"}}>
-                        <option value="">— Free —</option>
-                        {allSubjects.map(s=><option key={s} value={s}>{s}</option>)}
-                      </select>
-                      <select value={tval} onChange={e=>setCell(d,p.no,"teacher",e.target.value)}
-                        style={{width:"100%",border:"1px solid var(--c-d2)",borderRadius:8,padding:"5px 5px",fontSize:9,color:"var(--c-47)",background:"var(--c-fff)",fontFamily:"var(--ss-font)",outline:"none",cursor:"pointer"}}>
-                        <option value="">— Teacher —</option>
-                        {/* ALWAYS list every teacher (subject-matched ones first) so a newly-added teacher can be
-                            allotted even before they're assigned this subject in the Assign panel. */}
-                        {(function(){var seen={},out=[];suggestedTeachers.forEach(function(t){if(t&&!seen[t.name]){seen[t.name]=1;out.push(t);}});allTeachers.forEach(function(t){if(t&&!seen[t.name]){seen[t.name]=1;out.push(t);}});return out;})().map(t=><option key={t.key} value={t.name}>{t.name}</option>)}
-                      </select>
+                    <td key={d} style={{padding:"4px 5px",borderBottom:"1px solid var(--ap-line)",minWidth:isMob?90:130,verticalAlign:"top"}}>
+                      {subjSel(val,e=>{setCell(d,p.no,"subject",e.target.value);setCell(d,p.no,"teacher","");},ch)}
+                      {teachSel(tval,e=>setCell(d,p.no,"teacher",e.target.value),val)}
+                      {/* additional subject+teacher pairs for a combined class / lab / co-teaching */}
+                      {extra.map((pr,ei)=>{const ech=(pr&&pr.subject)?__ttChip(colors[pr.subject]):null;return(
+                        <div key={ei} style={{marginTop:5,paddingTop:4,borderTop:"1px dashed var(--c-d2)"}}>
+                          <div style={{display:"flex",alignItems:"center",gap:4,marginBottom:2}}>
+                            <span style={{fontSize:8,fontWeight:800,color:"var(--ap-accent)",letterSpacing:.3,textTransform:"uppercase"}}>+ also</span>
+                            <button onClick={()=>removePair(d,p.no,ei)} title="Remove this subject" style={{marginLeft:"auto",border:"none",background:"var(--bg-red)",color:"var(--tx-red)",borderRadius:5,width:16,height:16,fontSize:12,fontWeight:800,cursor:"pointer",lineHeight:1,display:"grid",placeItems:"center",fontFamily:"var(--ss-font)"}}>×</button>
+                          </div>
+                          {subjSel(pr.subject||"",e=>setExtra(d,p.no,ei,"subject",e.target.value),ech)}
+                          {teachSel(pr.teacher||"",e=>setExtra(d,p.no,ei,"teacher",e.target.value),pr.subject||"")}
+                        </div>);})}
+                      {val?<button onClick={()=>addPair(d,p.no)} title="Add another subject + teacher to this same period (combined class / lab / co-teaching)" style={{marginTop:5,width:"100%",border:"1px dashed var(--ap-accent)",background:"transparent",color:"var(--ap-accent)",borderRadius:7,padding:"3px 4px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>+ another subject</button>:null}
                     </td>
                   );
                 })}
@@ -14964,7 +15066,7 @@ function StaffAttendanceRegister({user,isDirector,setTab:goTab}){
   function statusFor(u){
     var rec=attDB.data&&attDB.data[_attId(u.username,date)];
     if(rec)return{key:rec.status||"present",rec:rec};
-    var onLeave=Object.values(leaveDB.data||{}).some(function(l){return l&&l.status==="approved"&&l.teacherName===u.name&&l.from<=date&&l.to>=date;});
+    var onLeave=Object.values(leaveDB.data||{}).some(function(l){return l&&l.status==="approved"&&__ttNorm(l.teacherName)===__ttNorm(u.name)&&l.from<=date&&l.to>=date;});
     if(onLeave)return{key:"leave",rec:null};
     return{key:"none",rec:null};
   }
@@ -15448,7 +15550,7 @@ function App(){
   const usersDB=useFirestore("users");
   const wrongDB=useFirestore("wrongAnswers", !!user&&user.role!=="parent"); // students practice + staff review — parents never read it
   const feesDBraw=useFirestore("fees", !!user&&((user.role==="admin"&&user.fees!==false)||user.role==="office"));
-  const examsDBraw=useFirestore("exams", !!user&&["admin","teacher","office"].includes(user.role));
+  const examsDBraw=useFirestore("exams", !!user&&["admin","teacher","office","vp"].includes(user.role));
   const noticesDB=useFirestore("notices");
   const calendarDB=useFirestore("calendar"); // academic calendar — holidays + events (Director/Principal/VP edit, all read)
   const leaveDB=useFirestore("leaves", !!user&&(user.role==="admin"||user.role==="vp")); // director/VP: substitute-needed prompt + Principal Control Room approvals
@@ -15767,7 +15869,7 @@ function App(){
         {tab==="directory"&&(isAdmin||isOffice||user.role==="vp")&&<StudentDirectory user={user} dirDB={dirDB} testsDB={testsDB} examsDB={examsDB} studentsDB={studentsDB} attendanceDB={attendanceDB} wrongDB={wrongDB} feesDB={feesDB} canFees={canFees} academicRosterDB={academicRosterDB} studentLinksDB={studentLinksDB} jumpAdm={jumpAdm} onJumpDone={()=>setJumpAdm("")}/>}
         {tab==="registration"&&(isDirector||isOffice)&&<Registration user={user} registrationsDB={registrationsDB} setTab={setTab}/>}
         {tab==="admitcard"&&(isAdmin||isOffice)&&<AdmitCard user={user} dirDB={dirDB} setTab={setTab}/>}
-        {tab==="exams"&&(isAdmin||isTeacher||isOffice)&&<Exams user={user} studentsDB={studentsDB} examsDB={examsDB} attendanceDB={attendanceDB} dirDB={dirDB} academicRosterDB={academicRosterDB} examClasses={(isOffice||isAdmin)?SCHOOL.classes:getTeacherClasses(user)} reportsOnly={false}/>}
+        {tab==="exams"&&(isAdmin||isTeacher||isOffice||user.role==="vp")&&<Exams user={user} studentsDB={studentsDB} examsDB={examsDB} attendanceDB={attendanceDB} dirDB={dirDB} academicRosterDB={academicRosterDB} examClasses={(isOffice||isAdmin||user.role==="vp")?SCHOOL.classes:getTeacherClasses(user)} reportsOnly={false}/>}
         {tab==="ai"&&isDirector&&<AIPanel testsDB={testsDB} studentsDB={studentsDB} topicsDB={topicsDB} dirDB={dirDB} feesDB={feesDB} attendanceDB={attendanceDB} usersDB={usersDB} academicRosterDB={academicRosterDB} examsDB={examsDB} canFees={canFees}/>}
         {tab==="admin"&&isAdmin&&<AdminPanel testsDB={testsDB} studentsDB={studentsDB} usersDB={usersDB} wrongDB={wrongDB}/>}
         {tab==="parent"&&isParent&&<ParentView user={user} testsDB={testsDB} studentsDB={studentsDB} attendanceDB={attendanceDB} noticesDB={noticesDB}/>}
@@ -17259,16 +17361,17 @@ function MyTimetablePanel(props) {
           if (String(pno).indexOf("_") === 0) return; // skip metadata
           var cell = dayTT[pno];
           if (!cell) return;
-          var subj = typeof cell === "object" ? (cell.subject || "") : (typeof cell==="string" ? cell : "");
-          var teacherName = typeof cell === "object" ? (cell.teacher || "") : "";
-          if (!subj || !teacherName) return;
           var uname=user.name.toLowerCase().split(".").join("").split("mr ").join("").split("ms ").join("").split("mrs ").join("").trim();
-          var cname=teacherName.toLowerCase().split(".").join("").split("mr ").join("").split("ms ").join("").split("mrs ").join("").trim();
-          // Exact (normalised) match only — substring matching wrongly matched e.g. "Ankit" to "Ankita"
-          var nameMatch=(teacherName===user.name)||(!!uname&&uname===cname);
-          if (nameMatch) {
+          // a period can hold several teacher+subject pairs — find the one this teacher is on
+          var mine=__ttPairs(cell).find(function(pr){
+            if(!pr.subject||!pr.teacher)return false;
+            var cname=String(pr.teacher).toLowerCase().split(".").join("").split("mr ").join("").split("ms ").join("").split("mrs ").join("").trim();
+            // Exact (normalised) match only — substring matching wrongly matched e.g. "Ankit" to "Ankita"
+            return (pr.teacher===user.name)||(!!uname&&uname===cname);
+          });
+          if (mine) {
             // Normalize subject name for display
-            var dispSubj = subj;
+            var dispSubj = mine.subject;
             if (dispSubj.toLowerCase().indexOf("english") >= 0) dispSubj = "English";
             // Normalize day name to 3-letter for grouping
             var dayMap={"Monday":"Mon","Tuesday":"Tue","Wednesday":"Wed","Thursday":"Thu","Friday":"Fri","Saturday":"Sat","Sunday":"Sun"};
@@ -17320,12 +17423,15 @@ function MyTimetablePanel(props) {
               var dayData = tt[day] || {};
               var cell = dayData[periodNo];
               if (!cell) return;
-              var teacherInCell = typeof cell === "object" ? (cell.teacher||"") : "";
-              var subjInCell = typeof cell === "object" ? (cell.subject||"") : (typeof cell==="string"?cell:"");
-        var tc1=teacherInCell.toLowerCase().split(".").join("").split("mr ").join("").split("ms ").join("").split("mrs ").join("").trim();
               var tc2=absentTeacher.toLowerCase().split(".").join("").split("mr ").join("").split("ms ").join("").split("mrs ").join("").trim();
-              if (teacherInCell && absentTeacher && (teacherInCell===absentTeacher||tc1===tc2||(tc1.length>2&&tc1.indexOf(tc2)>=0)||(tc2.length>2&&tc2.indexOf(tc1)>=0)) && subjInCell) {
-                subjectFound = subjInCell;
+              // find which pair the ABSENT teacher was on, to name their class + subject for the cover slip
+              var hit=__ttPairs(cell).find(function(pr){
+                var teacherInCell=pr.teacher||"";if(!teacherInCell||!absentTeacher||!pr.subject)return false;
+                var tc1=teacherInCell.toLowerCase().split(".").join("").split("mr ").join("").split("ms ").join("").split("mrs ").join("").trim();
+                return teacherInCell===absentTeacher||tc1===tc2||(tc1.length>2&&tc1.indexOf(tc2)>=0)||(tc2.length>2&&tc2.indexOf(tc1)>=0);
+              });
+              if (hit) {
+                subjectFound = hit.subject;
                 var parts = ttKey.replace("Class_","").split("_");
                 classFound = "Class " + parts[0];
                 sectionFound = parts[1] || "";
@@ -18078,7 +18184,7 @@ function AllLeaves(props){
     function norm(n){return String(n||"").toLowerCase().replace(/\b(mr|mrs|ms|dr|miss)\.?\s*/g,"").replace(/[^a-z0-9]/g,"");}
     function sim(a,b){if(!a||!b)return 0;if(a===b)return 1;var m=a.length,n=b.length,d=[];for(var j=0;j<=n;j++)d[j]=j;for(var i=1;i<=m;i++){var prev=d[0];d[0]=i;for(var j2=1;j2<=n;j2++){var t=d[j2];d[j2]=Math.min(d[j2]+1,d[j2-1]+1,prev+(a.charCodeAt(i-1)===b.charCodeAt(j2-1)?0:1));prev=t;}}return 1-d[n]/Math.max(m,n);}
     var target=norm(teacherName), names={};
-    Object.keys(timetables||{}).forEach(function(k){var tt=timetables[k];Object.keys(tt||{}).forEach(function(day){if(typeof tt[day]!=="object")return;Object.keys(tt[day]).forEach(function(p){var cell=tt[day][p];var nm=cell&&typeof cell==="object"?cell.teacher:"";if(nm)names[nm]=1;});});});
+    Object.keys(timetables||{}).forEach(function(k){var tt=timetables[k];Object.keys(tt||{}).forEach(function(day){if(typeof tt[day]!=="object")return;Object.keys(tt[day]).forEach(function(p){__ttCellTeachers(tt[day][p]).forEach(function(nm){names[nm]=1;});});});});
     return Object.keys(names).map(function(nm){return {name:nm,s:sim(target,norm(nm))};}).filter(function(x){return x.s>=0.62&&x.name!==teacherName;}).sort(function(a,b){return b.s-a.s;}).slice(0,3).map(function(x){return x.name;});
   }
   function getAbsentPeriods(teacherName, leaveFrom, leaveTo){
@@ -18108,17 +18214,16 @@ function AllLeaves(props){
             if(String(pNo).indexOf("_")===0)return;
             var cell=dayTT[pNo];
             if(!cell)return;
-            var teacher=typeof cell==="object"?(cell.teacher||""):"";
-            if(!teacher)return;
-            var t1=stripT(teacher); var t2=stripT(teacherName);
-            var match=teacher===teacherName||(!!t1&&t1===t2); // exact (normalised) match — no substring
-            if(match){
+            var t2=stripT(teacherName);
+            // the absent teacher may be any pair in the cell — use the subject THEY were taking
+            var mine=__ttPairs(cell).find(function(pr){var teacher=pr.teacher||"";if(!teacher)return false;var t1=stripT(teacher);return teacher===teacherName||(!!t1&&t1===t2);});
+            if(mine){
               if(!result[dayShort])result[dayShort]=[];
               // avoid duplicates across timetable keys
               var already=result[dayShort].some(function(x){return x.period===pNo&&x.cls===cls&&x.section===sec;});
               if(!already)result[dayShort].push({
                 period:pNo, time:periodTimes[pNo]||"",
-                subject:typeof cell==="object"?(cell.subject||""):cell,
+                subject:mine.subject||"",
                 cls:cls, section:sec
               });
             }
@@ -18167,9 +18272,7 @@ function AllLeaves(props){
         if(next[day]&&next[day][p.period]){already++;return;} // keep what's there
         var free=teachers.filter(function(e){
           if(e[0]===l.teacherId||e[1].name===l.teacherName)return false;
-          var onLeave=Object.values(leaveDB.data||{}).some(function(lv){
-            return lv.status==="approved"&&lv.teacherName===e[1].name&&lv.from<=l.from&&lv.to>=l.from;});
-          if(onLeave)return false;
+          if(__ttOnLeaveForCover(leaveDB.data,e[1].name,l.from,l.to,day))return false; // on leave the day being covered
           return !hasConflict(e[1].name,day,p.period,p.cls);
         });
         if(!free.length){noFree++;return;}
@@ -18258,7 +18361,7 @@ function AllLeaves(props){
   var teachers=Object.entries(_branchUsers((usersDB&&usersDB.data)||{},window.__currentBranch)).filter(function(e){return e[1]&&e[1].role==="teacher"&&e[1].left!==true;});
   var counts={pending:0,approved:0,rejected:0};
   Object.values(leaveDB.data||{}).forEach(function(l){if(counts[l.status]!==undefined)counts[l.status]++;});
-  var all=Object.values(leaveDB.data||{}).filter(function(l){return filter==="all"||l.status===filter;}).sort(function(a,b){var pa=a.status==="pending"?0:1,pb=b.status==="pending"?0:1;return pa-pb||b.appliedAt.localeCompare(a.appliedAt);});
+  var all=Object.values(leaveDB.data||{}).filter(function(l){return filter==="all"||l.status===filter;}).sort(function(a,b){var pa=a.status==="pending"?0:1,pb=b.status==="pending"?0:1;return pa-pb||String(b.appliedAt||"").localeCompare(String(a.appliedAt||""));});
 
   if(leaveDB.loading)return <Spinner/>;
 
@@ -18368,10 +18471,7 @@ function AllLeaves(props){
                                       // Only teachers who are FREE this period (not teaching it, not on leave, not the absentee)
                                       var free=teachers.filter(function(e){
                                         if(e[0]===l.teacherId||e[1].name===l.teacherName)return false;
-                                        var onLeave=Object.values(leaveDB.data||{}).some(function(lv){
-                                          return lv.status==="approved"&&lv.teacherName===e[1].name&&lv.from<=l.from&&lv.to>=l.from;
-                                        });
-                                        if(onLeave)return false;
+                                        if(__ttOnLeaveForCover(leaveDB.data,e[1].name,l.from,l.to,day))return false; // on leave the day being covered
                                         return !hasConflict(e[1].name,day,p.period,p.cls);
                                       });
                                       var opts=free.map(function(e){return <option key={e[0]} value={e[1].name}>{e[1].name}</option>;});
