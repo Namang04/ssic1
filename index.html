@@ -4709,7 +4709,7 @@ function ManageStudents({user,usersDB,studentsDB,testsDB,academicRosterDB,studen
   const[bulkMsg,setBulkMsg]=useState("");
   const[secFilter,setSecFilter]=useState("all");
   const[needFirst,setNeedFirst]=useState(true);
-  const canEdit=user.role==="admin"||user.role==="office"||user.role==="vp";  // only office/director/VP add/remove/organise students; teachers view only
+  const canEdit=user.role==="admin"||user.role==="office";  // only office/director add/remove/organise students; VP & teachers view only
   const students=data[safeId(cls)]?.list||[];
   const sections=data[safeId(cls)]?.sections||{};
   // Prefer the students-cache admNo map, but backfill from the admission-keyed roster / directory —
@@ -9275,6 +9275,7 @@ function DirectoryProfile({stu, testsDB, examsDB, studentsDB, attendanceDB, wron
   const canEditDir=!!user&&(user.role==="admin"||user.role==="office");
   const isDir=!!user&&user.role==="admin"&&user.fees!==false; // only the director may edit a student's record
   const[editing,setEditing]=useState(false);const[eform,setEform]=useState({});const[emsg,setEmsg]=useState("");
+  const[secOpen,setSecOpen]=useState(false);const[secDraft,setSecDraft]=useState("");const[secNew,setSecNew]=useState("");const[secBusy,setSecBusy]=useState(false);const[secMsg,setSecMsg]=useState("");
   const _canPII=!!user&&(user.role==="admin"||user.role==="vp"||user.role==="office"); // Director, VP/Principal & Office see full student records — only fees are hidden from the VP
   // Every displayed head is editable here except: Admission no. (immutable key), Student ID (system id) and Age (derived from DOB).
   const EDITF=[["Name","name"],["Father","father"],["Mother","mother"],["Contact","contact"],["Alt phone","phone"],["Emergency","emergency"],["Email","email"],["Address","address"],["Gender","gender"],["Date of birth","dob"],["Nationality","nationality"],["Religion","religion"],["Category","category"],["Blood group","blood"],...(_canPII?[["Aadhaar","aadhar"]]:[]),["Class","cls"],["Section","section"],["Subjects","subjects"],["Previous school","prevSchool"],["Previous class","prevClass"],["Board roll","boardRoll"],["Scholar no.","scholarNo"],["Admission date","admDate"],["Type (Old/New)","oldNew"],["House","house"],["Concession","concession"],["Status (Studying/Left)","status"],["APAAR ID","apaarId"],["PEN no.","penNo"]];
@@ -9443,6 +9444,33 @@ function DirectoryProfile({stu, testsDB, examsDB, studentsDB, attendanceDB, wron
       (function(){try{var _b={},_a={},_ch=0;Object.keys(safeForm).forEach(function(k){var ov=stu[k],nv=safeForm[k];if(String(ov==null?"":ov)!==String(nv==null?"":nv)){_ch++;var _m=(k==="aadhar"||k==="aadhaar");_b[k]=_m?"•••":ov;_a[k]=_m?"•••":nv;}});if(_ch)logAudit(moved?"edit-profile+move":"edit-profile","studentDirectory",String(stu.admNo||stu.name),_b,_a);}catch(e){}})();
       setEmsg(admChanged?("✓ Admission no. changed to "+newAdm+(_mig.length?" · moved "+_mig.join(", "):"")+". Now run “Repair fee links for existing parents” (Accounts) so the parent login follows."):"✓ Saved — marks, attendance and the portal now follow the record automatically.");setEditing(false);onClose&&onClose();}
     catch(e){setEmsg(""+((e&&e.message)||"Could not save — check rules/connection."));}
+  }
+  // Sections currently in use for this class (letters like A/B or streams like BIO/COMM) — the picker options.
+  const clsSections=useMemo(function(){
+    var dk="dir_"+String(clsNum).replace(/[^a-zA-Z0-9]/g,"_");var doc=dirDB&&dirDB.data&&dirDB.data[dk];
+    var set={};((doc&&doc.students)||[]).forEach(function(s){if(s&&String(s.status||"").toLowerCase()!=="left"&&s.section)set[String(s.section).trim()]=1;});
+    return Object.keys(set).sort();
+  },[dirDB&&dirDB.data,clsNum]);
+  // Move ONE student to another section — a focused, typo-proof alternative to the free-text Section field in
+  // "Edit details". Section is a display/grouping attribute (marks, fees and attendance are keyed by admission
+  // no.), so this only rewrites the record's section + rebuilds the caches; nothing else needs to migrate.
+  async function changeSection(){
+    var newSec=String((secNew.trim()||secDraft)||"").trim();
+    var cur=String(stu.section||"").trim();
+    if(!newSec){setSecMsg("Pick a section, or type a new one.");return;}
+    if(newSec.toUpperCase()===cur.toUpperCase()){setSecMsg(stu.name.split(" ")[0]+" is already in Section "+cur+".");return;}
+    setSecBusy(true);setSecMsg("");
+    try{
+      var dk="dir_"+String(clsNum).replace(/[^a-zA-Z0-9]/g,"_");var doc=dirDB&&dirDB.data&&dirDB.data[dk];
+      if(!doc){setSecMsg("Record not found.");setSecBusy(false);return;}
+      var students=(doc.students||[]).map(function(s){return (String(s.admNo)===String(stu.admNo)&&s.name===stu.name)?Object.assign({},s,{section:newSec,updatedBy:user.name,updatedAt:new Date().toISOString()}):s;});
+      await dirDB.set(dk,{cls:doc.cls,clsNum:doc.clsNum||clsNum,students:students,updatedAt:new Date().toISOString()});
+      var clsLabel=/sip/i.test(String(clsNum))?"Class SIP":("Class "+clsNum);
+      await syncCachesForClass(studentsDB,academicRosterDB,clsLabel,students);
+      try{logAudit("change-section","studentDirectory",String(stu.admNo||stu.name),{section:cur||"—"},{section:newSec});}catch(e){}
+      if(window.__toast)window.__toast(stu.name+" moved to Section "+newSec+(cur?" (from "+cur+")":""),"ok");
+      setSecOpen(false);setSecBusy(false);onClose&&onClose(); // close so the profile reopens on fresh data
+    }catch(e){setSecMsg(""+((e&&e.message)||"Could not move — check connection/permissions."));setSecBusy(false);}
   }
   // ── Transfer Certificate (printable, CBSE-style) — pulls from the directory record + fees/attendance ──
   const esc=(s)=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
@@ -9802,6 +9830,7 @@ function DirectoryProfile({stu, testsDB, examsDB, studentsDB, attendanceDB, wron
               </div>
               {canEditDir&&<div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginTop:14}}>
                 {canEditDir&&<button onClick={startEdit} style={{background:"var(--btn-pri-bg)",color:"#fff",border:"none",borderRadius:10,padding:"9px 16px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}><Icon name="edit" size={16}/> Edit details</button>}
+                {canEditDir&&!isLeft&&<button onClick={()=>{setSecDraft("");setSecNew("");setSecMsg("");setSecOpen(true);}} style={{background:"var(--c-fff)",color:"var(--ap-ink)",border:"1px solid var(--c-d2)",borderRadius:10,padding:"9px 16px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>⇄ Change section</button>}
                 <button onClick={printTC} style={{background:"var(--c-fff)",color:"var(--brand-2)",border:"1px solid #0b3a82",borderRadius:10,padding:"9px 16px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}><Icon name="print" size={16}/> Transfer Certificate</button>
                 {isLeft?<button onClick={()=>setLeft(false)} style={{background:"var(--bg-grn)",color:"var(--tx-grn2)",border:"1px solid var(--tx-grn2)",borderRadius:10,padding:"9px 16px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>↩ Restore to active</button>:<button onClick={()=>{var due=(fees&&fees.bal>0)?fees.bal:0;var msg="Mark "+stu.name+" as LEFT?\n\nArchived — kept in records, removed from active class lists (attendance, tests, fees). Reversible.";if(due>0)msg="OUTSTANDING DUES: ₹"+Number(due).toLocaleString("en-IN")+"\n\nThis student still owes fees.\n\n"+msg+"\n\nMark as left anyway?";if(window.confirm(msg))setLeft(true);}} style={{background:"var(--bg-red)",color:"var(--tx-red)",border:"1px solid var(--bd-red)",borderRadius:10,padding:"9px 16px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>⊘ Mark as left</button>}
               </div>}
@@ -9814,6 +9843,25 @@ function DirectoryProfile({stu, testsDB, examsDB, studentsDB, attendanceDB, wron
           </div>
         </div>
       </div>
+      {secOpen&&<div onClick={()=>setSecOpen(false)} style={{position:"fixed",inset:0,background:"rgba(15,23,42,.55)",zIndex:1100,display:"grid",placeItems:"center",padding:"24px 14px"}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:"var(--c-fff)",borderRadius:18,maxWidth:420,width:"100%",padding:"22px 24px",boxShadow:"0 30px 80px rgba(0,0,0,.4)",fontFamily:"var(--ss-font)"}}>
+          <div style={{fontSize:17,fontWeight:800,color:"var(--ap-ink)"}}>Change section</div>
+          <div style={{fontSize:12.5,color:"var(--c-64)",marginTop:3,marginBottom:14}}>{stu.name} · Class {clsNum} · currently in <b style={{color:"var(--ap-ink)"}}>Section {stu.section||"—"}</b></div>
+          <div style={{fontSize:11,fontWeight:700,color:"var(--ap-muted)",textTransform:"uppercase",letterSpacing:.5,marginBottom:8}}>Move to</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:12}}>
+            {clsSections.filter(function(s){return String(s).toUpperCase()!==String(stu.section||"").toUpperCase();}).map(function(s){var on=(secNew.trim()===""&&secDraft===s);return(
+              <button key={s} onClick={()=>{setSecDraft(s);setSecNew("");setSecMsg("");}} style={{padding:"9px 16px",borderRadius:10,fontSize:13.5,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)",border:"1.5px solid "+(on?"var(--tx-grn2)":"var(--c-d2)"),background:on?"var(--bg-grn)":"var(--c-fff)",color:on?"var(--tx-grn2)":"var(--ap-ink)"}}>Section {s}</button>);})}
+          </div>
+          <div style={{fontSize:11,fontWeight:600,color:"var(--c-94)",marginBottom:6}}>…or create a new section</div>
+          <input value={secNew} onChange={e=>{setSecNew(e.target.value);if(e.target.value.trim())setSecDraft("");setSecMsg("");}} placeholder="e.g. C or a stream like COMM" className="ss-input" style={{width:"100%",padding:"9px 11px",borderRadius:9,border:"1px solid var(--c-d2)",fontSize:13,boxSizing:"border-box",background:"var(--c-fff)",color:"var(--ap-ink)"}}/>
+          {secMsg&&<div style={{marginTop:9,background:__isErrMsg(secMsg)?"var(--bg-red)":"var(--bg-grn)",color:__isErrMsg(secMsg)?"var(--tx-red)":"var(--tx-grn2)",borderRadius:9,padding:"8px 11px",fontSize:12.5}}>{secMsg}</div>}
+          <div style={{fontSize:11.5,color:"var(--c-94)",marginTop:12,lineHeight:1.5}}>Marks, attendance and fees stay with the student (they're kept by admission number) — only the section on their record and class lists changes.</div>
+          <div style={{display:"flex",gap:10,marginTop:16,alignItems:"center"}}>
+            <button onClick={changeSection} disabled={secBusy||(!secDraft&&!secNew.trim())} style={{background:(secBusy||(!secDraft&&!secNew.trim()))?"var(--c-94)":"#16a34a",color:"#fff",border:"none",borderRadius:9,padding:"10px 20px",fontSize:13,fontWeight:700,cursor:(secBusy||(!secDraft&&!secNew.trim()))?"default":"pointer",fontFamily:"var(--ss-font)"}}>{secBusy?"Moving…":"Move student"}</button>
+            <button onClick={()=>setSecOpen(false)} style={{background:"var(--c-f5)",border:"1px solid var(--c-d2)",borderRadius:9,padding:"10px 18px",fontSize:13,fontWeight:600,cursor:"pointer",color:"var(--ap-ink)",fontFamily:"var(--ss-font)"}}>Cancel</button>
+          </div>
+        </div>
+      </div>}
       {editing&&<div onClick={()=>{var dirty=String(eform.admNo||"")!==String(stu.admNo||"")||EDITF.some(function(x){return String(eform[x[1]]||"")!==String(stu[x[1]]||"");});if(dirty&&!window.confirm("Discard your unsaved edits?"))return;setEditing(false);}} style={{position:"fixed",inset:0,background:"rgba(15,23,42,.55)",zIndex:1100,overflowY:"auto",padding:"24px 14px"}}>
         <div onClick={e=>e.stopPropagation()} style={{background:"var(--c-fff)",borderRadius:18,maxWidth:580,width:"100%",margin:"0 auto",padding:"22px 24px",boxShadow:"0 30px 80px rgba(0,0,0,.4)"}}>
           <div style={{fontSize:17,fontWeight:800,color:"var(--ap-ink)"}}>Edit {stu.name}</div>
@@ -10893,7 +10941,7 @@ function BranchSetup({user}){
   const classList=SCHOOL.classes;
   const[cls,setCls]=useState(classList[0]||"Class 6");
   const[adding,setAdding]=useState("");const[msg,setMsg]=useState("");const[busy,setBusy]=useState(false);
-  const canEdit=user&&(user.role==="admin"||user.role==="vp");
+  const canEdit=user&&user.role==="admin"&&user.fees!==false; // Branch config is Director-only (VP excluded)
   const curSubjects=(cfg.subjects&&cfg.subjects[cls])||__defaultSubjectsFor(cls);
   const isOverridden=!!(cfg.subjects&&cfg.subjects[cls]);
   const saveSubjects=async(list)=>{setBusy(true);setMsg("");try{var sub=Object.assign({},cfg.subjects||{});sub[cls]=list;await save({subjects:sub});setMsg("✓ Saved "+cls+" subjects.");}catch(e){setMsg("Could not save — "+((e&&e.message)||"try again"));}setBusy(false);};
@@ -10908,7 +10956,7 @@ function BranchSetup({user}){
         <div className="ap-hi">Branch Setup</div>
         <div className="ap-hisub">Customize subjects &amp; exam structure for <b>{__branchById(branch).label}</b> ({__branchById(branch).board}). Each campus keeps its own.</div>
       </div>
-      {!canEdit&&<div style={{background:"var(--bg-amb)",color:"var(--tx-org2)",borderRadius:12,padding:"10px 14px",fontSize:13}}>Only the Director and VP can change these settings.</div>}
+      {!canEdit&&<div style={{background:"var(--bg-amb)",color:"var(--tx-org2)",borderRadius:12,padding:"10px 14px",fontSize:13}}>Only the Director can change these settings.</div>}
       <div className="ap-subnav" style={{width:"fit-content"}}>
         {[["subjects","Subjects"],["exam","Exam structure"]].map(t=>{var on=stab===t[0];return <button key={t[0]} onClick={()=>setStab(t[0])} className={"ap-pill"+(on?" on":"")}>{t[1]}</button>;})}
       </div>
@@ -12376,7 +12424,13 @@ function defaultSchedules(){
 // (e.g. Senior P1 07:35–08:20 vs Junior P1 07:35–08:10), so period-number matching
 // produced false clashes. Two cells clash only if same teacher + same day + overlapping clock time.
 function __ttHM(t){var x=String(t||"").split(":");if(x.length<2)return null;var h=+x[0],m=+x[1];if(isNaN(h)||isNaN(m))return null;return h*60+m;}
-function __ttSchedFor(schedules,clsNum){var c=String(clsNum);return (schedules||[]).find(function(s){return s.assignedClasses&&s.assignedClasses.indexOf(c)>=0;})||(schedules||[])[0]||null;}
+// Canonical class token for schedule matching. assignedClasses in older data were stored as ROMAN
+// numerals (I–VIII) while the code looks classes up by ARABIC ("6"), so "6" matched nothing and the
+// class fell back to the first schedule (the senior 6-period bell). Normalise BOTH sides via __clsNum
+// (VI→6, IX→9, "Class VI"→6, Nursery→Nursery) so Roman/Arabic/prefixed tokens all compare equal.
+function __ttClsKey(c){return String((typeof __clsNum==="function")?__clsNum(c):c);}
+function __ttHasClass(assignedClasses,cls){var t=__ttClsKey(cls);return (assignedClasses||[]).some(function(x){return __ttClsKey(x)===t;});}
+function __ttSchedFor(schedules,clsNum){return (schedules||[]).find(function(s){return __ttHasClass(s.assignedClasses,clsNum);})||(schedules||[])[0]||null;}
 function __ttPeriodMap(sched){var m={};((sched&&sched.periods)||[]).forEach(function(p){if(p.isBreak)return;m[p.no]={s:__ttHM(p.start),e:__ttHM(p.end)};});return m;}
 function __ttOverlap(a,b){if(!a||!b||a.s==null||a.e==null||b.s==null||b.e==null||a.e<=a.s||b.e<=b.s)return false;return a.s<b.e&&b.s<a.e;}
 function __ttNorm(t){return String(t||"").toLowerCase().replace(/^(mr|ms|mrs|dr)\.?\s+/,"").trim();}
@@ -12417,7 +12471,7 @@ function __ttTeacherTimeline(timetables, gs, teacherName, dateObj){
     var dayTT=tt[dLong]||tt[dShort]||{};
     var pt={};
     if(gs&&gs.schedules){
-      var sched=gs.schedules.find(function(s){return s.assignedClasses&&s.assignedClasses.indexOf(parts[0])>=0;})||gs.schedules[0];
+      var sched=gs.schedules.find(function(s){return __ttHasClass(s.assignedClasses,parts[0]);})||gs.schedules[0];
       if(sched&&sched.periods)sched.periods.forEach(function(p){pt[p.no]={start:p.start||"",end:p.end||"",time:(p.start&&p.end)?(p.start+"–"+p.end):(p.time||"")};});
     }
     Object.keys(dayTT).forEach(function(pNo){
@@ -12570,11 +12624,19 @@ function TimetablePanel({user}){
 
   const gs = globalSettings||defaultSchedules();
 
-  // Find which schedule applies to the selected class
+  // Find which schedule applies to the selected class.
   function scheduleForClass(cls){
     const sc = gs.schedules||[];
-    return sc.find(s=>s.assignedClasses&&s.assignedClasses.includes(cls)) || sc[0] || {days:DAYS_ALL,periods:[],assignedClasses:[]};
+    const hit = sc.find(s=>__ttHasClass(s.assignedClasses,cls)); // Roman/Arabic-agnostic match
+    if(hit) return hit;
+    // Not explicitly assigned to any bell schedule → fall back to the MOST-INCLUSIVE schedule (the one
+    // covering the most classes = the school default), NOT sc[0]. Otherwise an unassigned junior class
+    // (e.g. 6–8) silently inherits whichever schedule happens to be first — often the senior 6-period bell.
+    const byCount = sc.slice().sort((a,b)=>((b.assignedClasses||[]).length)-((a.assignedClasses||[]).length));
+    return byCount[0] || sc[0] || {days:DAYS_ALL,periods:[],assignedClasses:[]};
   }
+  // True when the selected class isn't listed in ANY schedule's assignedClasses — it's showing a default.
+  const selClassUnassigned = !(gs.schedules||[]).some(s=>__ttHasClass(s.assignedClasses,selClass));
 
   function buildEmptyTT(sched){
     const tt={};
@@ -12623,7 +12685,10 @@ function TimetablePanel({user}){
   async function saveGlobalSettings(s){
     if(!window.__db)return;setSaving(true);
     try{
-      await window.__fbSetDoc(window.__fbDoc(window.__db,"timetableSettings","global"),s);
+      // Canonicalise every schedule's assignedClasses to Arabic tokens (VI→6) + dedupe, so legacy Roman
+      // entries are migrated once and class→schedule matching stays unambiguous from here on.
+      const clean=Object.assign({},s,{schedules:(s.schedules||[]).map(function(sc){return Object.assign({},sc,{assignedClasses:[...new Set((sc.assignedClasses||[]).map(function(c){return String(__clsNum(c));}))]});})});
+      await window.__fbSetDoc(window.__fbDoc(window.__db,"timetableSettings","global"),clean);
       setMsg("✓ Settings saved!");setView("view");
     }catch(e){setMsg(""+e.message);}
     setSaving(false);
@@ -12646,7 +12711,7 @@ function TimetablePanel({user}){
       const doc=timetables[k]||{};
       const cls=doc._class||k.split("_")[0], sec=doc._section||(k.split("_")[1]||"");
       const sc=__ttSchedFor(scheds,cls);
-      const unassigned=!scheds.some(s=>s.assignedClasses&&s.assignedClasses.indexOf(String(cls))>=0);
+      const unassigned=!scheds.some(s=>__ttHasClass(s.assignedClasses,cls));
       if(!sc)return;
       let t=0,f=0;
       (sc.days||[]).forEach(day=>{(sc.periods||[]).forEach(p=>{
@@ -12756,7 +12821,12 @@ function TimetablePanel({user}){
       ):view==="conflicts"&&canManage?(
         <TimetableConflicts stats={ttStats} card={card} hdr={hdr} onFix={(cls,sec)=>{setSelClass(cls);setSelSection(sec);setView("edit");}}/>
       ):view==="edit"&&canManage?(
-        <TimetableEditor sched={sched} colors={gs.subjectColors||{}} customSubjects={customSubjects} users={liveUsers} tt={currentTT} cls={selClass} sec={selSection} onSave={saveTimetable} saving={saving} onCancel={()=>setView("view")} card={card} hdr={hdr} btn={btn} btnG={btnG} buildEmptyTT={buildEmptyTT} clashFor={clashFor} timetables={timetables} ttKey={ttKey}/>
+        <>
+          {selClassUnassigned&&<div style={{background:"var(--bg-amb)",border:"1px solid var(--bd-amb)",borderRadius:12,padding:"12px 16px",marginBottom:14,fontSize:13,color:"var(--tx-org2)"}}>
+            <b>Class {selClass} isn't assigned to any bell schedule.</b> It's showing “{sched.name||"the default schedule"}” ({(sched.periods||[]).filter(function(p){return !p.isBreak;}).length} periods) as a fallback. To give it the correct bells &amp; period count, open <b>Schedules &amp; Settings</b>, pick the right schedule (e.g. the junior one), and click Class {selClass} under <b>Assigned Classes</b>, then Save.
+          </div>}
+          <TimetableEditor sched={sched} colors={gs.subjectColors||{}} customSubjects={customSubjects} users={liveUsers} tt={currentTT} cls={selClass} sec={selSection} onSave={saveTimetable} saving={saving} onCancel={()=>setView("view")} card={card} hdr={hdr} btn={btn} btnG={btnG} buildEmptyTT={buildEmptyTT} clashFor={clashFor} timetables={timetables} ttKey={ttKey}/>
+        </>
       ):(
         <>
           {canManage&&<TimetableCoverage stats={ttStats} card={card} onJump={(cls,sec)=>{setSelClass(cls);setSelSection(sec);setView("view");}} onShowClashes={()=>setView("conflicts")}/>}
@@ -13179,7 +13249,9 @@ function TimetableEditor({sched,colors,customSubjects,users,tt,cls,sec,onSave,sa
                       <select value={tval} onChange={e=>setCell(d,p.no,"teacher",e.target.value)}
                         style={{width:"100%",border:"1px solid var(--c-d2)",borderRadius:8,padding:"5px 5px",fontSize:9,color:"var(--c-47)",background:"var(--c-fff)",fontFamily:"var(--ss-font)",outline:"none",cursor:"pointer"}}>
                         <option value="">— Teacher —</option>
-                        {(suggestedTeachers.length>0?suggestedTeachers:allTeachers).map(t=><option key={t.key} value={t.name}>{t.name}</option>)}
+                        {/* ALWAYS list every teacher (subject-matched ones first) so a newly-added teacher can be
+                            allotted even before they're assigned this subject in the Assign panel. */}
+                        {(function(){var seen={},out=[];suggestedTeachers.forEach(function(t){if(t&&!seen[t.name]){seen[t.name]=1;out.push(t);}});allTeachers.forEach(function(t){if(t&&!seen[t.name]){seen[t.name]=1;out.push(t);}});return out;})().map(t=><option key={t.key} value={t.name}>{t.name}</option>)}
                       </select>
                     </td>
                   );
@@ -13221,13 +13293,13 @@ function SettingsEditor({gs,onSave,saving,onCancel,card,hdr,btn,btnG,btnGh}){
 
   // ── Class assignment — a class can only belong to one schedule ──
   const toggleClassAssign=(cls)=>{
+    const key=__ttClsKey(cls); // match Roman or Arabic variants of the same class
     setDraft(d=>{
-      const sc=d.schedules.map((s,i)=>({
-        ...s,
-        assignedClasses: i===activeSchedIdx
-          ? s.assignedClasses.includes(cls) ? s.assignedClasses.filter(c=>c!==cls) : [...s.assignedClasses,cls]
-          : s.assignedClasses.filter(c=>c!==cls)  // remove from other schedules
-      }));
+      const sc=d.schedules.map((s,i)=>{
+        const has=(s.assignedClasses||[]).some(c=>__ttClsKey(c)===key);
+        const without=(s.assignedClasses||[]).filter(c=>__ttClsKey(c)!==key); // drop any variant from every schedule
+        return {...s, assignedClasses: i===activeSchedIdx ? (has?without:[...without,cls]) : without};
+      });
       return{...d,schedules:sc};
     });
   };
@@ -13275,7 +13347,7 @@ function SettingsEditor({gs,onSave,saving,onCancel,card,hdr,btn,btnG,btnGh}){
           <label style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:"var(--c-64)",display:"block",marginBottom:8}}>Assigned Classes — click to assign/unassign</label>
           <div style={{display:"flex",flexWrap:"wrap",gap:isMob?4:6}}>
             {TT_CLASSES.map(cls=>{
-              const thisSchedule = draft.schedules.findIndex(s=>(s.assignedClasses||[]).includes(cls));
+              const thisSchedule = draft.schedules.findIndex(s=>__ttHasClass(s.assignedClasses,cls)); // Roman/Arabic-agnostic
               const isHere = thisSchedule===activeSchedIdx;
               const isElsewhere = thisSchedule!==-1&&!isHere;
               return(
@@ -15517,7 +15589,7 @@ function App(){
       {id:"profile",       label:"Profile 360°"},
       {id:"topics",        label:"Topics"},
       ...(isAdmin?[{id:"tracker", label:"Monthly Tracker"}]:[]),
-      ...((isAdmin||user.role==="vp")?[{id:"branchsetup", label:"Branch Setup"}]:[]),
+      ...(isDirector?[{id:"branchsetup", label:"Branch Setup"}]:[]),
       {id:"teacherlog",    label:"Teacher Log"},
     ]},
     {id:"exams-grp", label:"Examination", sec:"MAIN", single:"exams"},
@@ -15705,7 +15777,7 @@ function App(){
         {tab==="staffatt"&&isAdmin&&<StaffAttendanceRegister user={user} isDirector={isDirector} setTab={setTab}/>}
         {tab==="assign"&&isAdmin&&<AssignPanel usersDB={usersDB} dirDB={dirDB} studentsDB={studentsDB}/>}
         {tab==="security"&&isDirector&&<SecurityPanel user={user} usersDB={usersDB}/>}
-        {tab==="branchsetup"&&(isAdmin||user.role==="vp")&&<BranchSetup user={user}/>}
+        {tab==="branchsetup"&&isDirector&&<BranchSetup user={user}/>}
         {tab==="trash"&&isDirector&&<RecentlyDeleted feesDB={feesDB} examsDB={examsDB} testsDB={testsDB} noticesDB={noticesDB}/>}
         {tab==="accounts"&&isDirector&&<AccountsPanel user={user} usersDB={usersDB} studentsDB={studentsDB} dirDB={dirDB} academicRosterDB={academicRosterDB}/>}
         {tab==="cnotes"&&(isAdmin||isTeacher)&&<ContentGate label="Loading concept notes…"><ConceptNotesPanel user={user}/></ContentGate>}
@@ -17168,7 +17240,7 @@ function MyTimetablePanel(props) {
       var periodTimeMap={}, periodNumMap={};
       if (globalSettings && globalSettings.schedules) {
         var sched = globalSettings.schedules.find(function(s) {
-          return s.assignedClasses && s.assignedClasses.indexOf(parts[0]) >= 0;
+          return __ttHasClass(s.assignedClasses, parts[0]);
         }) || globalSettings.schedules[0];
         if (sched && sched.periods) {
           var __tn=0;
@@ -18029,7 +18101,7 @@ function AllLeaves(props){
           var dayTT=tt[dayLong]||tt[dayShort]||{};
           var periodTimes={};
           if(gs&&gs.schedules){
-            var sched=gs.schedules.find(function(s){return s.assignedClasses&&s.assignedClasses.indexOf(parts[0])>=0;})||gs.schedules[0];
+            var sched=gs.schedules.find(function(s){return __ttHasClass(s.assignedClasses,parts[0]);})||gs.schedules[0];
             if(sched&&sched.periods){sched.periods.forEach(function(p){periodTimes[p.no]=(p.start&&p.end)?(p.start+"–"+p.end):(p.time||"");});}
           }
           Object.keys(dayTT).forEach(function(pNo){
