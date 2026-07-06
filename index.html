@@ -4260,13 +4260,15 @@ function ImportMarks({testsDB, studentsDB, academicRosterDB, curSession, card, b
   function template(){__xlsxSave("marks_template.xlsx",[{"Class":"10","Subject":"Mathematics","Test":"week1","Total":"20","Student Name":"Ravi Kumar","Marks":"17"},{"Class":"10","Subject":"Mathematics","Test":"week1","Total":"20","Student Name":"Sita Sharma","Marks":"15"}]);}
   async function pick(file){setBusy(true);setMsg("Reading "+file.name+"…");setPreview(null);
     let rows;try{rows=await __xlsxRows(file);}catch(e){setMsg("Couldn't read that file. Use the template (.xlsx).");setBusy(false);return;}
-    var tests={},marks=0,unmatched=0,skipped=0,over=0;
+    var tests={},marks=0,unmatched=0,skipped=0,over=0,invalid=0;
     rows.forEach(function(r){var name=__col(r,["Student Name","Name"]);var cn=__clsNum(__col(r,["Class"]));var subj=__col(r,["Subject"]);var test=__col(r,["Test","Week"])||"week1";var tot=__col(r,["Total","Max"])||"";var mk=__col(r,["Marks","Score"]);
-      if(!name&&!subj&&(mk===""||mk==null))return;        // truly-blank row — skip silently
+      var mkStr=String(mk==null?"":mk).trim();            // normalise the cell so a stray non-numeric value can't be stored
+      if(!name&&!subj&&mkStr==="")return;                 // truly-blank row — skip silently
       if(!name||!subj){skipped++;return;}                 // has data but missing the required Name/Subject — count it
+      if(mkStr!==""&&isNaN(Number(mkStr))){invalid++;return;} // non-numeric mark (e.g. "absent", stray text) → skip, never store NaN
       var cls="Class "+cn; var id=("Class_"+cn+"__"+subj+"__"+test).replace(/[^a-zA-Z0-9_]/g,"_");
       // Bounds: a mark above its Total is almost always a typo (e.g. 200/20) — flag it (still imported so the teacher can fix it).
-      if(mk!==""&&mk!=null&&!isNaN(Number(mk))&&tot!==""&&!isNaN(Number(tot))&&Number(mk)>Number(tot))over++;
+      if(mkStr!==""&&tot!==""&&!isNaN(Number(tot))&&Number(mkStr)>Number(tot))over++;
       // match name to roster for correct spelling — exact name, then explicit "(admNo)" tag, then a
       // loose match ONLY when it's unique: with two same-name students, last-match-wins used to re-key
       // BOTH sheet rows onto ONE roster name (the second row silently overwrote the first student's mark)
@@ -4275,9 +4277,9 @@ function ImportMarks({testsDB, studentsDB, academicRosterDB, curSession, card, b
       if(!hit){var ib=__admInBrack(name);if(ib)roster.forEach(function(s){if(String(s.admNo)===ib)hit=s;});}
       if(!hit&&!/\(/.test(String(name||""))){var cands=roster.filter(function(s){return s.name&&!/\(/.test(s.name)&&nmKey(s.name)===nmKey(name);});if(cands.length===1)hit=cands[0];}
       var finalName=hit?hit.name:name; if(!hit)unmatched++;
-      tests[id]=tests[id]||{cls:cls,subj:subj,week:test,name:test,total:Number(tot)||undefined,rows:{}}; if(tests[id].rows[finalName]!==undefined&&tests[id].rows[finalName]!==mk){var _sx=2;while(tests[id].rows[finalName+" (dup "+_sx+")"]!==undefined)_sx++;finalName=finalName+" (dup "+_sx+")";} tests[id].rows[finalName]=mk; marks++;});
-    setPreview({tests:tests,marks:marks,unmatched:unmatched,skipped:skipped,over:over,n:Object.keys(tests).length});
-    setMsg(marks+" marks across "+Object.keys(tests).length+" tests"+(unmatched?" · "+unmatched+" names not on roster (kept as typed)":"")+(skipped?" · "+skipped+" row"+(skipped>1?"s":"")+" skipped (need Name + Subject)":"")+(over?" · "+over+" mark"+(over>1?"s":"")+" exceed the Total — check for typos":"")+".");setBusy(false);
+      tests[id]=tests[id]||{cls:cls,subj:subj,week:test,name:test,total:Number(tot)||undefined,rows:{}}; if(tests[id].rows[finalName]!==undefined&&tests[id].rows[finalName]!==mkStr){var _sx=2;while(tests[id].rows[finalName+" (dup "+_sx+")"]!==undefined)_sx++;finalName=finalName+" (dup "+_sx+")";} tests[id].rows[finalName]=mkStr; marks++;});
+    setPreview({tests:tests,marks:marks,unmatched:unmatched,skipped:skipped,over:over,invalid:invalid,n:Object.keys(tests).length});
+    setMsg(marks+" marks across "+Object.keys(tests).length+" tests"+(unmatched?" · "+unmatched+" names not on roster (kept as typed)":"")+(skipped?" · "+skipped+" row"+(skipped>1?"s":"")+" skipped (need Name + Subject)":"")+(invalid?" · "+invalid+" non-numeric mark"+(invalid>1?"s":"")+" skipped":"")+(over?" · "+over+" mark"+(over>1?"s":"")+" exceed the Total — check for typos":"")+".");setBusy(false);
   }
   async function doImport(){if(!preview||!preview.n)return;if(!window.confirm("Import "+preview.marks+" marks across "+preview.n+" tests? Existing tests with the same class/subject/test are merged (marks updated). Safe to re-run."))return;
     setBusy(true);var n=0;var ids=Object.keys(preview.tests);
@@ -4288,7 +4290,7 @@ function ImportMarks({testsDB, studentsDB, academicRosterDB, curSession, card, b
     catch(e){setMsg(""+((e&&e.message)||"write failed")+".");}
     setBusy(false);
   }
-  return <ImportShell title="Test Marks" hint="Bulk upload marks. One row per student per test (Class, Subject, Test, Total, Student Name, Marks). Names are matched to the roster spelling; same class+subject+test merges." template={template} pick={pick} doImport={doImport} preview={preview&&(preview.marks+" marks · "+preview.n+" tests"+(preview.skipped?" · "+preview.skipped+" skipped":"")+(preview.over?" · "+preview.over+" over Total":""))} busy={busy} msg={msg} card={card} btn={btn}/>;
+  return <ImportShell title="Test Marks" hint="Bulk upload marks. One row per student per test (Class, Subject, Test, Total, Student Name, Marks). Names are matched to the roster spelling; same class+subject+test merges." template={template} pick={pick} doImport={doImport} preview={preview&&(preview.marks+" marks · "+preview.n+" tests"+(preview.skipped?" · "+preview.skipped+" skipped":"")+(preview.invalid?" · "+preview.invalid+" non-numeric":"")+(preview.over?" · "+preview.over+" over Total":""))} busy={busy} msg={msg} card={card} btn={btn}/>;
 }
 
 // Shared shell for an importer: template download + file picker + preview + import button.
@@ -5785,6 +5787,8 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB}){
   const[testDate,setTestDate]=useState(today());
   const[selTopics,setSelTopics]=useState([]);
   const[rows,setRows]=useState({});
+  const dirtyRef=useRef({});       // student name -> true: cells THIS session changed since last load/save (for concurrent-safe merge)
+  const lastTestSelRef=useRef(null); // detect a real test switch vs the same test re-syncing from a co-teacher's save
   const[saved,setSaved]=useState(false);
   const[testSel,setTestSel]=useState("new"); // "new" or an existing test's stored key
   useEffect(()=>{setSubj(aS[0]||"");setEmFilterSec(defSec(cls));},[cls]);
@@ -5795,14 +5799,18 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB}){
   const testKey=`${cls}__${subj}__week${week}`;
   const existing=editing;
   useEffect(()=>{
+    const testChanged=lastTestSelRef.current!==testSel;lastTestSelRef.current=testSel;
     if(editing){setTotal(editing.total);setSelTopics(editing.topics||[]);
       // Load saved marks, but also pull each current roster student's score by admission no. (rowsByAdm) so a
       // student renamed in the record keeps their mark instead of showing blank and being re-zeroed on save.
       const _r=Object.assign({},editing.rows||{});
       (emRoster||[]).forEach(s=>{if(s.name&&_r[s.name]===undefined){var v=_markOf(editing,s.admNo,s.name);if(v!==undefined&&v!=="")_r[s.name]=v;}});
-      setRows(_r);setTestDate(editing.testDate||today());}
-    else if(testSel==="new"){setRows({});setSelTopics([]);setTestDate(today());setTotal(20);}
-    // testSel points at a just-saved test still syncing: keep the form as-is
+      if(testChanged){dirtyRef.current={};setRows(_r);}
+      // SAME test re-syncing (e.g. a co-teacher just saved another section) — keep THIS teacher's unsaved edits on
+      // top of the fresh server data so a background sync never wipes marks that haven't been saved yet.
+      else setRows(prev=>{const m=Object.assign({},_r);Object.keys(dirtyRef.current).forEach(nm=>{m[nm]=prev[nm];});return m;});
+      setTestDate(editing.testDate||today());}
+    else if(testSel==="new"){dirtyRef.current={};setRows({});setSelTopics([]);setTestDate(today());setTotal(20);}
   },[testSel,editing&&editing.at]);
   // Roster + sections + admission-no. map all come from the student record (directory), legacy fallback.
   const emRoster=rosterForCls(dirDB,studentsDB,cls);
@@ -5828,7 +5836,7 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB}){
     return [];
   })();
   const toggleTopic=t=>setSelTopics(p=>p.includes(t)?p.filter(x=>x!==t):[...p,t]);
-  const setMark=(s,v)=>setRows(p=>({...p,[s]:v}));
+  const setMark=(s,v)=>{dirtyRef.current[s]=true;setRows(p=>({...p,[s]:v}));};
   const[saveErr,setSaveErr]=useState("");
   const handleSave=async()=>{
     setSaveErr("");
@@ -5836,8 +5844,19 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB}){
     if(over.length){setSaveErr("Marks above the total ("+total+") for: "+over.slice(0,3).join(", ")+(over.length>3?" …":"")+". Please correct before saving.");return;}
     try{
       const _admMap=emAdmOf;
-      const rowsByAdm={};Object.keys(rows||{}).forEach(nm=>{const a=String(_admMap[nm]||"");if(a&&rows[nm]!==undefined&&rows[nm]!=="")rowsByAdm[a]=rows[nm];});
-      await testsDB.set(testKey,{cls,subj,week,total,testDate,topics:selTopics,name:(selTopics[0]||"Test"),by:user.name,at:new Date().toISOString(),rows,rowsByAdm});
+      // Concurrent-safe merge: start from the LATEST saved doc and apply ONLY the cells this teacher actually
+      // changed, so a co-teacher marking a different section at the same time isn't overwritten. (Same pattern
+      // as the exam grid.) A cleared cell (blank) deletes that student's mark; everything else is preserved.
+      const live=testsDB.data[safeId(testKey)]||{};
+      const mergedRows=Object.assign({},live.rows||{});
+      const mergedByAdm=Object.assign({},live.rowsByAdm||{});
+      Object.keys(dirtyRef.current).forEach(nm=>{
+        const v=rows[nm];const a=String(_admMap[nm]||"");
+        if(v===undefined||v===""){delete mergedRows[nm];if(a)delete mergedByAdm[a];}
+        else{mergedRows[nm]=v;if(a)mergedByAdm[a]=v;}
+      });
+      await testsDB.set(testKey,{cls,subj,week,total,testDate,topics:selTopics,name:(selTopics[0]||"Test"),by:user.name,at:new Date().toISOString(),rows:mergedRows,rowsByAdm:mergedByAdm});
+      dirtyRef.current={};
       if(testSel==="new")setTestSel(safeId(testKey)); // keep editing the test we just created
       setSaved(true);setTimeout(()=>setSaved(false),2500);
     }catch(e){setSaveErr("Could not save — "+(e&&e.message?e.message:"please check your connection and try again."));}
@@ -6738,7 +6757,9 @@ th{background:#0d1b2a;color:#fff;font-weight:600}td.l{text-align:left;font-weigh
         <div style={{minWidth:150}}><Lbl c="Class"/><Sel value={cls} onChange={setCls} options={aC}/></div>
         <div style={{flex:1,minWidth:240}}>
           <Lbl c="Find student"/>
-          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Type a name to search…" className="ss-input" style={{width:"100%",padding:"10px 14px",borderRadius:10,fontSize:13.5}}/>
+          {/* Typing here should OPEN the matching student's profile, not just narrow the dropdown — auto-select the
+              top match (unless the current student already matches, so refining the search doesn't jump away). */}
+          <input value={q} onChange={e=>{const val=e.target.value;setQ(val);const k=val.trim().toLowerCase();if(k){const hits=students.filter(s=>s.toLowerCase().includes(k));if(hits.length&&hits.indexOf(student)<0)setStudent(hits[0]);}}} placeholder="Type a name to search…" className="ss-input" style={{width:"100%",padding:"10px 14px",borderRadius:10,fontSize:13.5}}/>
         </div>
         <div style={{flex:1,minWidth:240}}>
           <Lbl c="Student"/>
@@ -7544,7 +7565,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
   const examResult=(ex,stu)=>{
     let obt=0,max=0,anyFail=false,hasMarks=false;const subjects=[];const adm=admOfExam(ex.cls,stu);
     (ex.subjects||[]).forEach(s=>{const v=_examMark(ex,s.name,stu,adm);const has=v!==undefined&&v!=="";
-      if(s.graded){if(has)subjects.push({name:s.name,graded:true,grade:String(v),marks:null,max:0,pct:null});return;} // graded co-scholastic: shown only when a grade was entered
+      if(s.graded){if(has){hasMarks=true;subjects.push({name:s.name,graded:true,grade:String(v),marks:null,max:0,pct:null});}return;} // graded co-scholastic: a grade counts as "has marks" so a co-scholastic-only report isn't dropped
       const mx=Number(s.max)||100;
       const absent=has&&/^a/i.test(String(v).trim()); // "AB" = enrolled in the subject but absent for the paper → counts as 0
       if(absent){max+=mx;hasMarks=true;anyFail=true;subjects.push({name:s.name,max:mx,marks:null,pct:0,grade:"—"});return;}
@@ -7552,7 +7573,9 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
       // no mark entered (blank) → the student does not study this subject → omit it from the marksheet & totals
       });
     const pct=max?Math.round(obt/max*100):0;
-    return{subjects,obt,max,pct,grade:cbseGrade(hasMarks?pct:null),anyFail,hasMarks};
+    // overall letter grade only when there are NUMERIC subjects — a co-scholastic-only report shows grades per
+    // subject but no bogus 0%/F overall.
+    return{subjects,obt,max,pct,grade:cbseGrade(max?pct:null),anyFail,hasMarks};
   };
   const classResults=ex=>{
     const all=rosterOf(ex.cls).map(s=>({student:s,...examResult(ex,s)}));
@@ -11075,7 +11098,7 @@ function BranchExamSetup({cfg,save,branch,canEdit,classList}){
 function __salaryStats(byDate, ym, leavePaid){
   var p=String(ym||"").split("-"),y=Number(p[0]),mo=Number(p[1]); // mo is 1-based
   function pad(n){return n<10?"0"+n:""+n;}
-  if(!y||!mo)return {dim:30,present:0,absent:0,late:0,leave:0,sandwich:0,lateDeduct:0,unpaidLeave:0,deductDays:0,sundays:0,marked:0};
+  if(!y||!mo)return {dim:30,present:0,absent:0,late:0,leave:0,sandwich:0,lateDeduct:0,unpaidLeave:0,deductDays:0,sundays:0,marked:0,workingDays:30};
   var dim=new Date(y,mo,0).getDate();
   var present=0,absent=0,late=0,leave=0,sandwich=0,sundays=0;
   for(var d=1;d<=dim;d++){
@@ -11091,7 +11114,7 @@ function __salaryStats(byDate, ym, leavePaid){
   var lateDeduct=Math.floor(late/3);
   var unpaidLeave=leavePaid?0:leave;
   var deductDays=absent+sandwich+lateDeduct+unpaidLeave;
-  return {dim,present,absent,late,leave,sandwich,lateDeduct,unpaidLeave,deductDays,sundays,marked:present+absent+late+leave};
+  return {dim,present,absent,late,leave,sandwich,lateDeduct,unpaidLeave,deductDays,sundays,marked:present+absent+late+leave,workingDays:dim-sundays};
 }
 function __perDaySalary(base,stats,basis){
   base=Number(base)||0;
@@ -11129,12 +11152,19 @@ function SalaryPanel({user}){
     return {s,base,stats,perDay,deduction,net,hasBase:!!srec};
   }),[staff,salDB.data,byStaff,month,basis,leavePaid]);
   const totals=useMemo(()=>rows.reduce((a,r)=>({base:a.base+r.base,deduction:a.deduction+r.deduction,net:a.net+r.net}),{base:0,deduction:0,net:0}),[rows]);
+  // Coverage guard — unmarked days count as NEITHER present nor absent, so a partly-marked month silently
+  // UNDER-deducts (an unrecorded absence costs nothing). Calibrate "expected" days off the best-covered person
+  // this month (absorbs real holidays), then flag anyone on payroll marked fewer days than their peers.
+  const expectedMarked=useMemo(()=>rows.reduce((m,r)=>Math.max(m,r.stats.marked),0),[rows]);
+  // Flag only MATERIAL gaps (2+ days behind the best-covered peer) so a single missing record isn't noise.
+  const covShort=r=>r.base>0&&(expectedMarked-r.stats.marked)>=2;
+  const underMarked=useMemo(()=>rows.filter(covShort).map(r=>({name:r.s.name,marked:r.stats.marked})),[rows,expectedMarked]);
   const saveBase=async(s,val)=>{var n=Math.max(0,Math.round(Number(val)||0));try{await salDB.set(safeId(s.username),{username:s.username,name:s.name,role:s.role,base:n,updatedAt:new Date().toISOString()});setMsg("✓ Saved "+s.name+"'s monthly salary.");}catch(e){setMsg("Couldn't save — publish the Salary rule from Roles & Security. ("+((e&&e.code)||(e&&e.message)||"denied")+")");}};
   const saveCfg=async(patch)=>{try{await salDB.set("__config",Object.assign({},cfg,patch,{updatedAt:new Date().toISOString()}));}catch(e){setMsg("Couldn't save the setting — publish the Salary rule from Roles & Security.");}};
   const basisLabel=basis==="working"?"working days (excl. Sundays)":basis==="fixed26"?"fixed 26 days":"calendar days in month";
   function printPayslip(r){
     var w=window.open("","_blank");if(!w)return;var st=r.stats;
-    var rowsHtml=[["Monthly salary",inr(r.base)],["Per-day ("+basisLabel+")",inr1(r.perDay)],["Days present",st.present],["Days absent",st.absent],["Sandwiched holidays",st.sandwich],["Late marks",st.late+" (− "+st.lateDeduct+" day"+(st.lateDeduct===1?"":"s")+")"],(leavePaid?null:["Unpaid leave",st.unpaidLeave]),["Total days deducted",st.deductDays],["Deduction",("− "+inr(r.deduction))]].filter(Boolean).map(function(x){return "<tr><td style='padding:6px 10px;border:1px solid #ddd'>"+x[0]+"</td><td style='padding:6px 10px;border:1px solid #ddd;text-align:right'>"+x[1]+"</td></tr>";}).join("");
+    var rowsHtml=[["Monthly salary",inr(r.base)],["Per-day ("+basisLabel+")",inr1(r.perDay)],["Attendance marked",st.marked+" of "+st.workingDays+" working days"],["Days present",st.present],["Days absent",st.absent],["Sandwiched holidays",st.sandwich],["Late marks",st.late+" (− "+st.lateDeduct+" day"+(st.lateDeduct===1?"":"s")+")"],(leavePaid?null:["Unpaid leave",st.unpaidLeave]),["Total days deducted",st.deductDays],["Deduction",("− "+inr(r.deduction))]].filter(Boolean).map(function(x){return "<tr><td style='padding:6px 10px;border:1px solid #ddd'>"+x[0]+"</td><td style='padding:6px 10px;border:1px solid #ddd;text-align:right'>"+x[1]+"</td></tr>";}).join("");
     w.document.write("<html><head><title>Payslip "+r.s.name+"</title></head><body style='font-family:Georgia,serif;max-width:620px;margin:24px auto;color:#1a1a1a'>"+
       "<div style='text-align:center;border-bottom:2px solid #0d1b2a;padding-bottom:10px'><div style='font-size:20px;font-weight:800;color:#0d1b2a'>"+(typeof BRANCH_LABEL!=="undefined"?BRANCH_LABEL:"School")+"</div><div style='font-size:12px;color:#555'>Salary Slip · "+monthLabel+"</div></div>"+
       "<div style='margin:14px 0;font-size:14px'><b>"+r.s.name+"</b> · "+(r.s.role||"")+"</div>"+
@@ -11168,6 +11198,9 @@ function SalaryPanel({user}){
       <label style={{display:"inline-flex",alignItems:"center",gap:8,fontSize:12.5,color:"var(--ap-ink2)",cursor:canEdit?"pointer":"default"}}>
         <input type="checkbox" checked={leavePaid} disabled={!canEdit} onChange={e=>saveCfg({leavePaid:e.target.checked})}/> Approved <b>leave</b> is paid (only <b>absent</b> days are deducted)
       </label>
+      {underMarked.length>0&&<div style={{background:"var(--bg-amb)",border:"1px solid var(--bd-amb)",borderRadius:12,padding:"12px 15px",fontSize:12.5,color:"var(--tx-org2)",lineHeight:1.55}}>
+        <b>⚠ Attendance looks incomplete for {underMarked.length} staff this month.</b> An unmarked day counts as neither present nor absent, so any unrecorded absence <b>isn&apos;t deducted</b> — net pay below may be overstated. Complete the <b>Staff register</b> before finalising pay. Marked far fewer days than peers ({expectedMarked} days): {underMarked.slice(0,8).map(u=>u.name+" ("+u.marked+")").join(", ")}{underMarked.length>8?" +"+(underMarked.length-8)+" more":""}.
+      </div>}
       <div className="ap-panel" style={{padding:0,overflow:"hidden"}}>
         <div style={{padding:"12px 16px",borderBottom:"1px solid var(--ap-line)",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
           <div style={{fontWeight:650,fontSize:15,color:"var(--ap-ink)"}}>Payroll sheet — {monthLabel}</div>
@@ -11186,7 +11219,7 @@ function SalaryPanel({user}){
               {rows.length===0?<tr><td colSpan={11} style={{padding:26,textAlign:"center",color:"var(--c-94)"}}>No staff on this branch yet.</td></tr>:
               rows.map(r=>(
                 <tr key={r.s.username} style={{borderTop:"1px solid var(--c-f0)"}}>
-                  <td style={{padding:"8px 10px",fontSize:13}}><div style={{fontWeight:600,color:"var(--ap-ink)"}}>{r.s.name}</div><div style={{fontSize:10.5,color:"var(--ap-muted)",textTransform:"capitalize"}}>{r.s.role==="vp"?"Vice Principal":r.s.role}</div></td>
+                  <td style={{padding:"8px 10px",fontSize:13}}><div style={{fontWeight:600,color:"var(--ap-ink)"}}>{r.s.name}</div><div style={{fontSize:10.5,color:"var(--ap-muted)",textTransform:"capitalize"}}>{r.s.role==="vp"?"Vice Principal":r.s.role}{r.base>0&&<span style={{textTransform:"none",marginLeft:6,color:covShort(r)?"var(--tx-org2)":"var(--ap-faint)",fontWeight:covShort(r)?700:400}} title="Attendance days recorded this month">· {r.stats.marked}/{r.stats.workingDays} marked{covShort(r)?" ⚠":""}</span>}</div></td>
                   <td style={td}>
                     <input type="number" disabled={!canEdit} value={draft[r.s.username]!==undefined?draft[r.s.username]:(r.base||"")} placeholder="0"
                       onChange={e=>setDraft(d=>Object.assign({},d,{[r.s.username]:e.target.value}))}
