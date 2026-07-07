@@ -16935,7 +16935,7 @@ function PracticeTest({user,onBack,onFinish,saved,saveDone,wrongDB}){
   const _norm=s=>(s||"").toLowerCase().replace(/\(.*?\)/g,"").replace(/\s+/g," ").trim();
   const weakChapters=useMemo(()=>{
     const me=_norm(user.name);const subjChs=new Set((QB_DATA[lvl]||[]).map(q=>q.c));const m={};
-    Object.values((wrongDB&&wrongDB.data)||{}).forEach(e=>{if(__wrongEntFor(e,student)&&e.chapter&&subjChs.has(e.chapter))m[e.chapter]=(m[e.chapter]||0)+1;});
+    Object.values((wrongDB&&wrongDB.data)||{}).forEach(e=>{if(__wrongEntFor(e,user.name)&&e.chapter&&subjChs.has(e.chapter))m[e.chapter]=(m[e.chapter]||0)+1;});
     return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(x=>x[0]);
   },[wrongDB&&wrongDB.data,lvl,user.name]);
 
@@ -16957,7 +16957,7 @@ function PracticeTest({user,onBack,onFinish,saved,saveDone,wrongDB}){
   // Re-attempt: match the student's logged mistakes back to the full QB questions (across all subjects)
   const mistakeQs=useMemo(()=>{
     const me=_norm(user.name);const out=[];const seen=new Set();
-    Object.values((wrongDB&&wrongDB.data)||{}).filter(e=>__wrongEntFor(e,student)).forEach(e=>{
+    Object.values((wrongDB&&wrongDB.data)||{}).filter(e=>__wrongEntFor(e,user.name)).forEach(e=>{
       const pool=QB_DATA[e.subject]||[];const snip=(e.question||"").trim();if(!snip)return;
       const q=pool.find(x=>x&&x.c===e.chapter&&x.o&&x.o.length>0&&x.r&&(x.q||"").replace(/<[^>]+>/g,"").substring(0,120).trim()===snip);
       if(q&&!seen.has(q.q)){seen.add(q.q);out.push(q);}
