@@ -778,6 +778,59 @@ const SCHOOL={
 // panel (stored in users/__subjects) are merged on top of this wherever subjects are offered.
 const MASTER_SUBJECTS=["Mathematics","Science","English","Hindi","Social Science","History","Geography","Political Science","Economics","Accountancy","Business Studies","Computer Science","Computer","Physical Education","Sanskrit","Psychology","Sociology","Social Studies","General Knowledge","Moral Science","Art & Craft"];
 
+// ── Weekly Test Schedule (fortnightly rotation, from the school's "Weekly Test Schedule") ──
+// Per class token → { Mon:[oddWeekSubject, evenWeekSubject], Tue:[…], … }. "" = no test that day.
+// "odd"  column = the school's "Weeks 1 & 3"  (odd  week-of-month: 1,3,5)
+// "even" column = the school's "Weeks 2 & 4"  (even week-of-month: 2,4)
+// Subject names are canonical (match the marks subject list) so Enter Marks can pre-fill from here.
+const TEST_SCHEDULE={
+  "6":{Mon:["Mathematics","Science"],Tue:["English","Social Science"],Wed:["Hindi","Sanskrit"],Thu:["Computer",""],Fri:["",""],Sat:["",""]},
+  "7":{Mon:["Science","Mathematics"],Tue:["Social Science","English"],Wed:["Sanskrit","Hindi"],Thu:["","Computer"],Fri:["",""],Sat:["",""]},
+  "8":{Mon:["Mathematics","Science"],Tue:["English","Social Science"],Wed:["Hindi","Sanskrit"],Thu:["Computer",""],Fri:["",""],Sat:["",""]},
+  "9":{Mon:["Mathematics","English"],Tue:["Physics","Hindi"],Wed:["Chemistry","Social Science"],Thu:["Biology","Computer"],Fri:["",""],Sat:["",""]},
+  "10":{Mon:["English","Mathematics"],Tue:["Hindi","Physics"],Wed:["Social Science","Chemistry"],Thu:["Computer","Biology"],Fri:["",""],Sat:["",""]},
+  // 11 & 12 are Science; the Wed cell is Mathematics (Sec A) / Biology (Sec B). "5th Optional" = Hindi/CS/PE choice.
+  "11":{Mon:["Physics",""],Tue:["","Chemistry"],Wed:["Mathematics / Biology",""],Thu:["","English"],Fri:["5th Optional (Hindi/CS/PE)",""],Sat:["",""]},
+  "12":{Mon:["","Physics"],Tue:["Chemistry",""],Wed:["","Mathematics / Biology"],Thu:["English",""],Fri:["","5th Optional (Hindi/CS/PE)"],Sat:["",""]},
+};
+const __TEST_DAYS=["Mon","Tue","Wed","Thu","Fri","Sat"];
+// Week-of-month (1..5) → the school's fortnight columns alternate on ODD/EVEN week-of-month.
+function __testWeekOfMonth(d){return Math.ceil(d.getDate()/7);}
+function __testCol(d){return (__testWeekOfMonth(d)%2===1)?0:1;} // 0 = Weeks 1&3, 1 = Weeks 2&4
+function __testColLabel(d){return (__testCol(d)===0)?"Weeks 1 & 3":"Weeks 2 & 4";}
+function __testDayShort(d){return ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][d.getDay()];}
+// A cell is "" / "No Test", a bare subject string (hardcoded default), or {subject,teacher,period} (editable config).
+function __testCellNorm(v){if(!v||v==="No Test")return null;if(typeof v==="string")return {subject:v,teacher:"",period:""};if(!v.subject&&!v.teacher)return null;return {subject:v.subject||"",teacher:v.teacher||"",period:v.period||""};}
+// Effective row for a class: the LIVE editable config (cfg.classes[clsTok], from timetableSettings/testSchedule)
+// takes over the hardcoded default when present. cfg = ttSetDB.data.testSchedule (or null before it loads).
+function __testRow(cfg,clsTok){var live=cfg&&cfg.classes&&cfg.classes[String(clsTok)];return live||TEST_SCHEDULE[String(clsTok)]||null;}
+function __testAllClasses(cfg){var s={};Object.keys(TEST_SCHEDULE).forEach(function(k){s[k]=1;});if(cfg&&cfg.classes)Object.keys(cfg.classes).forEach(function(k){s[k]=1;});return Object.keys(s).sort(function(a,b){return Number(a)-Number(b);});}
+// Normalised cell {subject,teacher,period} for a class token on Date d (null = no test).
+function __testCell(cfg,clsTok,d){var row=__testRow(cfg,clsTok);if(!row)return null;var cell=row[__testDayShort(d)];if(!cell)return null;return __testCellNorm(cell[__testCol(d)]);}
+function __testFor(cfg,clsTok,d){var c=__testCell(cfg,clsTok,d);return c?c.subject:"";}
+// This week's tests for a class → [{day,subject,teacher,period}] for the fortnight-half of d.
+function __testsThisWeek(cfg,clsTok,d){var row=__testRow(cfg,clsTok);if(!row)return [];var col=__testCol(d);var out=[];__TEST_DAYS.forEach(function(day){var c=__testCellNorm((row[day]||[])[col]);if(c&&c.subject)out.push({day:day,subject:c.subject,teacher:c.teacher,period:c.period});});return out;}
+// Every class with a test on Date d → [{cls,subject,teacher,period}] (the Command Center board).
+function __testsToday(cfg,d){var out=[];__testAllClasses(cfg).forEach(function(ct){var c=__testCell(cfg,ct,d);if(c&&c.subject)out.push({cls:ct,subject:c.subject,teacher:c.teacher,period:c.period});});return out;}
+// Tests on Date d for a specific TEACHER → [{cls,subject,period,assigned}]. Matches the assigned-teacher name;
+// if a slot has no teacher assigned yet, falls back to a class+subject this teacher actually teaches, so it's
+// useful even before the director assigns teachers to test slots.
+function __testsForTeacher(cfg,user,d){
+  if(!user)return [];
+  var me=__ttNorm(user.name||"");var out=[];var myCls=[];var mySubj={};
+  // fallback only for a PROPERLY-configured teacher (explicit classes AND subjects) — otherwise getTeacherClasses
+  // returns every class and the fallback would wrongly claim every test.
+  var canFallback=Array.isArray(user.classes)&&user.classes.length>0&&Array.isArray(user.subjects)&&user.subjects.length>0;
+  (getTeacherClasses(user)||[]).forEach(function(c){var t=String(__clsNum(c));if(myCls.indexOf(t)<0)myCls.push(t);mySubj[t]=(getTeacherSubjects(user,c)||[]).map(function(s){return String(s).toLowerCase();});});
+  __testAllClasses(cfg).forEach(function(ct){
+    var cell=__testCell(cfg,ct,d);if(!cell||!cell.subject)return;
+    var assigned=!!(cell.teacher&&__ttNorm(cell.teacher)===me);
+    var byTeaching=canFallback&&(!cell.teacher)&&myCls.indexOf(ct)>=0&&(mySubj[ct]||[]).indexOf(String(cell.subject).toLowerCase())>=0;
+    if(assigned||byTeaching)out.push({cls:ct,subject:cell.subject,period:cell.period,assigned:assigned});
+  });
+  return out;
+}
+
 // Seed fee structure (Session 2026-27, returning-student / recurring installments — official Fee List, all classes).
 // This is only a starting default: the Director can edit & save any class under Fees → Fee Structure, and their saved version takes over.
 // NOTE: Class 11/12 fees vary slightly by stream (COMP variants +₹2000; XII Comm/Hum ₹68k vs Science ₹69.5k) — these defaults use the base stream.
@@ -2509,6 +2562,8 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
   const dayShort=new Date(today+"T12:00").toLocaleDateString("en-US",{weekday:"short"});
   const dayLong=__TT_DAYLONG[dayShort]||dayShort;
   const isSchoolDay=["Mon","Tue","Wed","Thu","Fri","Sat"].indexOf(dayShort)>=0;
+  // ── TESTS TODAY — every class with a scheduled class-test today (subject · teacher · period), from the Test Schedule ──
+  const testsToday=useMemo(()=>{if(!isSchoolDay)return {list:[],col:""};const dObj=new Date(today+"T12:00");return {list:__testsToday((ttSetDB&&ttSetDB.data&&ttSetDB.data.testSchedule)||null,dObj),col:__testColLabel(dObj)};},[ttSetDB&&ttSetDB.data,today,isSchoolDay]);
   const nowPeriod=useMemo(()=>{
     const gs=ttSetDB&&ttSetDB.data&&ttSetDB.data.global;if(!gs||!gs.schedules||!gs.schedules.length)return null;
     const mkPeriods=(sc)=>{
@@ -3020,6 +3075,29 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
         </div>
       </div>}
       {dashRemind&&<ReminderRun title="Fee reminder run" rows={dashRemind} onClose={()=>setDashRemind(null)}/>}
+
+      {/* ═══ TESTS TODAY — every class with a class-test today (subject · teacher · period) ═══ */}
+      <StripPanel title="Tests today" sub={testsToday.list.length?(testsToday.list.length+" class"+(testsToday.list.length>1?"es have":" has")+" a test today · "+testsToday.col):(isSchoolDay?"no class tests scheduled today":"no classes today")} right={<Lnk onClick={()=>setTab&&setTab("testschedule")}>Full schedule</Lnk>}>
+        {testsToday.list.length===0?<div style={{fontSize:12.5,color:"var(--ap-faint)"}}>{isSchoolDay?"No class tests scheduled for today.":"No classes today."}</div>:
+        <div style={{overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12.5}}>
+            <thead><tr style={{color:"var(--ap-muted)"}}>
+              <th style={{textAlign:"left",padding:"4px 10px 6px",fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:.4}}>Class</th>
+              <th style={{textAlign:"left",padding:"4px 10px 6px",fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:.4}}>Test</th>
+              <th style={{textAlign:"left",padding:"4px 10px 6px",fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:.4}}>Teacher</th>
+              <th style={{textAlign:"left",padding:"4px 10px 6px",fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:.4}}>Period</th>
+            </tr></thead>
+            <tbody>{testsToday.list.map(t=>(
+              <tr key={t.cls} style={{borderTop:"1px solid var(--ap-line)"}}>
+                <td style={{padding:"7px 10px",fontWeight:700,color:"var(--ap-ink)",whiteSpace:"nowrap"}}>Class {t.cls}</td>
+                <td style={{padding:"7px 10px",color:"var(--ap-ink2)"}}>{t.subject}</td>
+                <td style={{padding:"7px 10px",color:t.teacher?"var(--ap-ink2)":"var(--ap-faint)"}}>{t.teacher?honorific(t.teacher):"— not assigned"}</td>
+                <td style={{padding:"7px 10px",color:t.period?"var(--ap-ink2)":"var(--ap-faint)",whiteSpace:"nowrap"}}>{t.period?("Period "+t.period):"—"}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>}
+      </StripPanel>
 
       {/* ═══ 8 · TEACHING PULSE ═══ */}
       <StripPanel title="Teaching pulse" sub={teachPulse&&teachPulse.pct!=null?(teachPulse.logged+" of "+teachPulse.scheduled+" scheduled periods logged "+teachPulse.ydLabel+" ("+teachPulse.pct+"%)"):"period-log coverage from teacher diaries"} right={<Lnk onClick={()=>setTab&&setTab("teacherlog")}>All logs</Lnk>}>
@@ -3601,6 +3679,7 @@ function Dashboard({user,testsDB,studentsDB,attendanceDB,academicRosterDB,dirDB,
   if(testsDB.loading||studentsDB.loading)return <Spinner/>;
 
   // ═══ TEACHER WORKBENCH — mobile-first home (teachers live on their phones) ═══
+  const myTestsToday=isTeacher?__testsForTeacher((ttSetDB&&ttSetDB.data&&ttSetDB.data.testSchedule)||null,user,new Date()):[];
   if(isTeacher) return(
     <div className="fi" style={{display:"flex",flexDirection:"column",gap:14,maxWidth:560,margin:"0 auto",width:"100%"}}>
       <div style={{display:"flex",alignItems:"center",gap:12}}>
@@ -3612,6 +3691,11 @@ function Dashboard({user,testsDB,studentsDB,attendanceDB,academicRosterDB,dirDB,
       </div>
 
       <StaffCheckIn user={user}/>
+
+      {myTestsToday.length>0&&<div onClick={()=>setTab("testschedule")} style={{background:"var(--bg-grn)",border:"1px solid var(--bd-grn)",borderRadius:14,padding:"13px 16px",color:"var(--tx-grn2)",cursor:"pointer"}}>
+        <div style={{fontWeight:800,fontSize:11,letterSpacing:".05em",textTransform:"uppercase",opacity:.85}}>📝 Test to conduct today</div>
+        <div style={{marginTop:3,fontWeight:700,fontSize:14}}>{myTestsToday.map(t=>t.subject+" · Class "+t.cls+(t.period?" · Period "+t.period:"")).join("   ·   ")}</div>
+      </div>}
 
       {isClassTeacher?(
         <div style={{background:"linear-gradient(120deg,#0d1726,#16294a 70%,#1f3a63)",borderRadius:18,padding:"17px 18px",color:"#fff",position:"relative",overflow:"hidden"}}>
@@ -5776,7 +5860,126 @@ function TestParticipation({user,testsDB,studentsDB,dirDB}){
 }
 
 // ── ENTER MARKS ──
-function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB}){
+// ── Weekly Test Schedule — viewer + editor (config-backed at timetableSettings/testSchedule, teacher+period assignable) ──
+function TestSchedulePanel({user,ttSetDB,usersDB}){
+  const isMob=useIsMobile();
+  const role=(user&&user.role)||"";
+  const isMgr=role==="admin"||role==="office"||role==="vp";
+  const canEdit=role==="admin"||role==="vp"; // matches the timetableSettings write rule
+  const cfg=(ttSetDB&&ttSetDB.data&&ttSetDB.data.testSchedule)||null;
+  const allClasses=__testAllClasses(cfg);
+  const mine=[...new Set((getTeacherClasses(user)||[]).map(c=>String(__clsNum(c))))].filter(c=>allClasses.indexOf(c)>=0);
+  const avail=(isMgr||!mine.length)?allClasses:mine;
+  const[cls,setCls]=useState(avail[0]||"10");
+  const[editing,setEditing]=useState(false);
+  const[draft,setDraft]=useState(null);
+  const[saving,setSaving]=useState(false);
+  const now=new Date();
+  const todayShort=__testDayShort(now);
+  const curCol=__testCol(now);
+  const colLabel=__testColLabel(now);
+  const wom=__testWeekOfMonth(now);
+  const monthName=now.toLocaleDateString("en-IN",{month:"long"});
+  const isSchoolDay=__TEST_DAYS.indexOf(todayShort)>=0;
+  const row=__testRow(cfg,cls)||{};
+  const thisWeek=__testsThisWeek(cfg,cls,now);
+  const todayCell=__testCell(cfg,cls,now);
+  const isSenior=(cls==="11"||cls==="12");
+  const myTestsToday=(!isMgr&&isSchoolDay)?__testsForTeacher(cfg,user,now):[]; // teacher: your own test(s) today
+  // clean teacher roster (canonical by username, no left/removed) for assignment
+  const teachers=useMemo(()=>{var m={};var bu=_branchUsers((usersDB&&usersDB.data)||{},(window.__currentBranch||"greencity"));Object.values(bu||{}).forEach(function(u){if(u&&(u.role==="teacher"||u.role==="vp")&&!(u.left===true||u.removed===true)&&u.name)m[__ttNorm(u.name)]=String(u.name).trim();});return Object.values(m).sort(function(a,b){return String(a).localeCompare(String(b));});},[usersDB&&usersDB.data]);
+  const card={background:"var(--c-fff)",borderRadius:16,boxShadow:"0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.06)",border:"1px solid var(--ap-line)",overflow:"hidden",marginBottom:16};
+  const th={padding:"10px 14px",textAlign:"center",fontSize:11,fontWeight:700,color:"var(--c-64)",textTransform:"uppercase",letterSpacing:.6,borderBottom:"2px solid var(--c-d2)"};
+  const inp={width:"100%",border:"1px solid var(--c-d2)",borderRadius:7,padding:"6px 8px",fontSize:12,fontFamily:"var(--ss-font)",outline:"none",background:"var(--c-fff)",color:"var(--ap-ink)"};
+  const startEdit=()=>{const r=__testRow(cfg,cls)||{};const d={};__TEST_DAYS.forEach(function(day){const cell=r[day]||["",""];d[day]=[__testCellNorm(cell[0])||{subject:"",teacher:"",period:""},__testCellNorm(cell[1])||{subject:"",teacher:"",period:""}];});setDraft(d);setEditing(true);};
+  const setDraftCell=(day,i,field,val)=>setDraft(d=>{const nd=Object.assign({},d);const pair=(nd[day]||[{},{}]).slice();pair[i]=Object.assign({subject:"",teacher:"",period:""},pair[i],{[field]:val});nd[day]=pair;return nd;});
+  const save=async()=>{if(!ttSetDB||!ttSetDB.set)return;setSaving(true);try{
+    const clean={};__TEST_DAYS.forEach(function(day){clean[day]=[0,1].map(function(i){const c=(draft[day]||[])[i]||{};const s=String(c.subject||"").trim(),t=String(c.teacher||"").trim(),p=String(c.period||"").trim();return (s||t||p)?{subject:s,teacher:t,period:p}:"";});});
+    const cur=(cfg&&cfg.classes)||{};const next={classes:Object.assign({},cur,{[cls]:clean}),updatedAt:new Date().toISOString(),updatedBy:user.name};
+    await ttSetDB.set("testSchedule",next);setEditing(false);if(window.__toast)window.__toast("✓ Test schedule saved.","ok");
+  }catch(e){if(window.__toast)window.__toast("Couldn't save — need the timetableSettings rule. ("+((e&&e.code)||(e&&e.message)||"denied")+")","err");}setSaving(false);};
+  // one cell as a chip (subject + teacher + period). c = {subject,teacher,period} or null.
+  const cellView=(c,on)=>{if(!c||!c.subject)return <span style={{color:"var(--c-94)",fontSize:12.5}}>—</span>;
+    return(<div style={{display:"inline-block",background:on?"var(--ap-accent)":"var(--bg-blu)",color:on?"#fff":"var(--tx-blu)",borderRadius:8,padding:"5px 10px",textAlign:"left",maxWidth:220}}>
+      <div style={{fontSize:12.5,fontWeight:700}}>{c.subject}</div>
+      {(c.teacher||c.period)&&<div style={{fontSize:10.5,fontWeight:500,opacity:.9,marginTop:1}}>{c.teacher?honorific(c.teacher):""}{c.teacher&&c.period?" · ":""}{c.period?("Period "+c.period):""}</div>}
+    </div>);};
+  return(
+    <div className="fi" style={{display:"flex",flexDirection:"column",gap:16,maxWidth:1100,margin:"0 auto"}}>
+      <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:16,flexWrap:"wrap"}}>
+        <div><div className="ap-hi">Weekly Test Schedule</div><div className="ap-hisub">The fortnightly class-test rotation. Odd weeks of the month follow “Weeks 1 &amp; 3”; even weeks follow “Weeks 2 &amp; 4”.{canEdit?" Assign the subject, teacher &amp; period per test.":""}</div></div>
+        <div style={{display:"flex",gap:10,alignItems:"flex-end"}}>
+          <div><div style={{fontSize:10,fontWeight:700,color:"var(--ap-muted)",textTransform:"uppercase",letterSpacing:".05em",marginBottom:5}}>Class</div>
+            <Sel value={cls} onChange={v=>{setCls(v);setEditing(false);}} options={avail.map(c=>({v:c,l:"Class "+c}))}/></div>
+          {canEdit&&!editing&&<button onClick={startEdit} style={{background:"var(--tt-hdr)",color:"var(--tt-hdr-tx)",border:"none",borderRadius:10,padding:"10px 18px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"var(--ss-font)"}}><Icon name="edit" size={15}/> Edit</button>}
+        </div>
+      </div>
+      {/* Teacher: your own test(s) today */}
+      {!isMgr&&isSchoolDay&&<div style={{background:myTestsToday.length?"var(--bg-grn)":"var(--c-f7)",border:"1px solid "+(myTestsToday.length?"var(--bd-grn)":"var(--ap-line)"),borderRadius:12,padding:"12px 16px",fontSize:13,color:myTestsToday.length?"var(--tx-grn2)":"var(--ap-muted)"}}>
+        {myTestsToday.length?<span><b>📝 Your test{myTestsToday.length>1?"s":""} today:</b> {myTestsToday.map(t=>t.subject+" (Class "+t.cls+")"+(t.period?" · Period "+t.period:"")).join("   ·   ")}</span>:<span>You have no test to conduct today.</span>}
+      </div>}
+      {/* This week + today (hidden while editing to keep focus) */}
+      {!editing&&<div style={{background:"linear-gradient(110deg,#0d1726,#16294a)",borderRadius:16,padding:"16px 22px",color:"#fff",boxShadow:"0 10px 30px rgba(13,23,38,.18)"}}>
+        <div style={{fontSize:12,fontWeight:700,color:"#e8cf86"}}>This week · {colLabel} · Week {wom} of {monthName}</div>
+        <div style={{fontSize:18,fontWeight:750,margin:"4px 0 2px"}}>{isSchoolDay?(todayCell?("Today’s test — "+todayCell.subject+(todayCell.teacher?(" · "+honorific(todayCell.teacher)):"")+(todayCell.period?(" · Period "+todayCell.period):"")):"No test scheduled today"):"No test today (weekend)"}</div>
+        <div style={{fontSize:12.5,color:"#c4cee0"}}>Class {cls}{isSenior?" · Sec A = Maths, Sec B = Biology on the Maths / Biology day":""}</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:12}}>
+          {thisWeek.length?thisWeek.map(t=>(
+            <div key={t.day} style={{background:t.day===todayShort?"rgba(232,207,134,.22)":"rgba(255,255,255,.08)",border:"1px solid "+(t.day===todayShort?"rgba(232,207,134,.5)":"rgba(255,255,255,.14)"),borderRadius:10,padding:"7px 12px",minWidth:96}}>
+              <div style={{fontSize:10,fontWeight:700,color:t.day===todayShort?"#e8cf86":"#9fb0c9"}}>{t.day.toUpperCase()}{t.day===todayShort?" · TODAY":""}</div>
+              <div style={{fontSize:13,fontWeight:700,marginTop:1}}>{t.subject}</div>
+              {(t.teacher||t.period)&&<div style={{fontSize:10,color:"#c4cee0",marginTop:1}}>{t.teacher?honorific(t.teacher):""}{t.teacher&&t.period?" · ":""}{t.period?("P"+t.period):""}</div>}
+            </div>
+          )):<div style={{fontSize:12.5,color:"#9fb0c9"}}>No tests scheduled this week.</div>}
+        </div>
+      </div>}
+      {/* Grid — view OR editor */}
+      <div style={card}>
+        <div style={{padding:"12px 16px",borderBottom:"1px solid var(--ap-line)",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+          <div style={{fontWeight:650,fontSize:15,color:"var(--ap-ink)"}}>Class {cls} — {editing?"edit rotation":"full rotation"}</div>
+          {editing&&<div style={{display:"flex",gap:8}}>
+            <button onClick={()=>setEditing(false)} style={{background:"transparent",color:"var(--ap-ink)",border:"1px solid var(--c-d2)",borderRadius:9,padding:"7px 14px",fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Cancel</button>
+            <button onClick={save} disabled={saving} style={{background:"var(--ap-accent)",color:"#fff",border:"none",borderRadius:9,padding:"7px 16px",fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)",opacity:saving?.6:1}}>{saving?"Saving…":"Save"}</button>
+          </div>}
+        </div>
+        <div style={{overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",minWidth:editing?(isMob?520:640):(isMob?420:560)}}>
+            <thead><tr style={{background:"var(--c-f7)"}}>
+              <th style={{...th,textAlign:"left"}}>Day</th>
+              <th style={{...th,...(!editing&&curCol===0?{color:"var(--ap-accent)"}:{})}}>Weeks 1 &amp; 3{!editing&&curCol===0?" · this week":""}</th>
+              <th style={{...th,...(!editing&&curCol===1?{color:"var(--ap-accent)"}:{})}}>Weeks 2 &amp; 4{!editing&&curCol===1?" · this week":""}</th>
+            </tr></thead>
+            <tbody>
+              {__TEST_DAYS.map(day=>{const isToday=!editing&&day===todayShort&&isSchoolDay;return(
+                <tr key={day} style={{borderTop:"1px solid var(--c-f0)",background:isToday?"var(--ap-accent-soft)":"transparent",verticalAlign:"top"}}>
+                  <td style={{padding:"9px 14px",fontWeight:700,fontSize:13,color:isToday?"var(--ap-accent)":"var(--ap-ink)"}}>{day}{isToday?" · Today":""}</td>
+                  {[0,1].map(i=>{
+                    if(editing){const c=(draft[day]||[])[i]||{};return(
+                      <td key={i} style={{padding:"7px 9px",borderLeft:"1px solid var(--c-f0)"}}>
+                        <input value={c.subject||""} onChange={e=>setDraftCell(day,i,"subject",e.target.value)} placeholder="Subject (blank = no test)" list="ts-subjects" style={inp}/>
+                        <select value={c.teacher||""} onChange={e=>setDraftCell(day,i,"teacher",e.target.value)} style={{...inp,marginTop:5,cursor:"pointer"}}>
+                          <option value="">— Teacher —</option>
+                          {c.teacher&&teachers.indexOf(c.teacher)<0&&<option value={c.teacher}>{c.teacher}</option>}
+                          {teachers.map(t=><option key={t} value={t}>{t}</option>)}
+                        </select>
+                        <input value={c.period||""} onChange={e=>setDraftCell(day,i,"period",e.target.value)} placeholder="Period (e.g. 1)" style={{...inp,marginTop:5}}/>
+                      </td>);}
+                    const cn=__testCellNorm((row[day]||["",""])[i]);
+                    return <td key={i} style={{padding:"9px 14px",textAlign:"center",background:!editing&&curCol===i?"var(--c-f7)":"transparent"}}>{cellView(cn,isToday&&curCol===i)}</td>;
+                  })}
+                </tr>
+              );})}
+            </tbody>
+          </table>
+          <datalist id="ts-subjects">{[...new Set(MASTER_SUBJECTS.concat(["Physics","Chemistry","Biology","Mathematics / Biology","5th Optional (Hindi/CS/PE)"]))].map(s=><option key={s} value={s}/>)}</datalist>
+        </div>
+        <div style={{padding:"10px 16px",borderTop:"1px solid var(--ap-line)",fontSize:11.5,color:"var(--ap-muted)",lineHeight:1.6}}>Weeks are counted within the month (days 1–7 = week 1, 8–14 = week 2, …).{isSenior?" For 11 & 12, the Maths / Biology slot is Mathematics for Section A and Biology for Section B.":""}{cfg&&cfg.updatedBy?(" · Last edited by "+cfg.updatedBy):""}</div>
+      </div>
+    </div>
+  );
+}
+
+function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB}){
   const aC=getTeacherClasses(user);
   const canViewAllSec=user.role==="admin"||user.role==="vp";
   const defSec=(c)=>canViewAllSec?"":(getTeacherSections(user,c)[0]||"");
@@ -5901,6 +6104,18 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB}){
           </div>
         </div>
       </div>
+
+      {/* Today's scheduled test (from the Weekly Test Schedule) — a nudge, one tap to switch to the right subject */}
+      {(function(){
+        var schedSubj=__testFor((ttSetDB&&ttSetDB.data&&ttSetDB.data.testSchedule)||null,String(__clsNum(cls)),new Date());
+        if(!schedSubj)return null;
+        var match=aS.find(function(s){return String(s).toLowerCase()===String(schedSubj).toLowerCase();});
+        var isCur=subj&&String(subj).toLowerCase()===String(schedSubj).toLowerCase();
+        return(<div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",background:isCur?"var(--bg-grn)":"var(--bg-blu)",border:"1px solid "+(isCur?"var(--bd-grn)":"var(--ap-line)"),borderRadius:12,padding:"11px 15px",fontSize:13,color:isCur?"var(--tx-grn2)":"var(--tx-blu)"}}>
+          <span style={{fontWeight:700}}>📅 {isCur?("This is today’s scheduled test for "+cls):("Today’s scheduled test for "+cls+": "+schedSubj)}.</span>
+          {!isCur&&match&&<button onClick={function(){setSubj(match);}} style={{marginLeft:"auto",background:"var(--btn-pri-bg)",color:"#fff",border:"none",borderRadius:8,padding:"6px 13px",fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Enter this test</button>}
+        </div>);
+      })()}
 
       {/* Topics */}
       <div className="ap-panel" style={{padding:18}}>
@@ -15693,6 +15908,7 @@ function App(){
       {id:"student",       label:"Report"},
       {id:"profile",       label:"Profile 360°"},
       {id:"students",      label:"Class Roster"},
+      {id:"testschedule",  label:"Test Schedule"},
     ]},
     {id:"cnotes-grp",      label:"Concept Notes", sec:"MAIN", single:"cnotes"},
     ...(user.qbank===true?[{id:"qbank-grp", label:"Question Bank", sec:"MAIN", single:"qbank"}]:[]),
@@ -15723,6 +15939,7 @@ function App(){
       {id:"student",       label:"Report"},
       {id:"profile",       label:"Profile 360°"},
       {id:"topics",        label:"Topics"},
+      {id:"testschedule",  label:"Test Schedule"},
       ...(isAdmin?[{id:"tracker", label:"Monthly Tracker"}]:[]),
       ...(isDirector?[{id:"branchsetup", label:"Branch Setup"}]:[]),
       {id:"teacherlog",    label:"Teacher Log"},
@@ -15890,11 +16107,12 @@ function App(){
         {tab==="topics"&&!isParent&&<ManageTopics user={user} usersDB={usersDB} topicsDB={topicsDB}/>}
         {tab==="tracker"&&!isParent&&<TestTracker user={user} testsDB={testsDB} studentsDB={studentsDB} usersDB={usersDB} dirDB={dirDB}/>}
         {tab==="participation"&&!isParent&&<TestParticipation user={user} testsDB={testsDB} studentsDB={studentsDB} dirDB={dirDB}/>}
-        {tab==="enter"&&!isParent&&<EnterMarks user={user} testsDB={testsDB} topicsDB={topicsDB} studentsDB={studentsDB} dirDB={dirDB}/>}
+        {tab==="enter"&&!isParent&&<EnterMarks user={user} testsDB={testsDB} topicsDB={topicsDB} studentsDB={studentsDB} dirDB={dirDB} ttSetDB={ttSetDB}/>}
         {tab==="overview"&&!isParent&&<ClassOverview user={user} testsDB={testsDB} studentsDB={studentsDB} dirDB={dirDB} jumpStudent={jumpStudent}/>}
       {tab==="class"&&!isParent&&<ClassProgress user={user} testsDB={testsDB} studentsDB={studentsDB} dirDB={dirDB} academicRosterDB={academicRosterDB} jumpStudent={jumpStudent}/>}
         {tab==="student"&&!isParent&&<StudentReport user={user} testsDB={testsDB} studentsDB={studentsDB} dirDB={dirDB} academicRosterDB={academicRosterDB} jumpStudent={jumpStudent}/>}
         {tab==="profile"&&!isParent&&<StudentProfile user={user} testsDB={testsDB} examsDB={examsDB} studentsDB={studentsDB} attendanceDB={attendanceDB} wrongDB={wrongDB} feesDB={feesDB} canFees={canFees} dirDB={dirDB} academicRosterDB={academicRosterDB}/>}
+        {tab==="testschedule"&&!isParent&&<TestSchedulePanel user={user} ttSetDB={ttSetDB} usersDB={usersDB}/>}
         {tab==="insights"&&isAdmin&&<Insights testsDB={testsDB} studentsDB={studentsDB} attendanceDB={attendanceDB} wrongDB={wrongDB} usersDB={usersDB} dirDB={dirDB} academicRosterDB={academicRosterDB}/>}
         {tab==="fees"&&canFees&&<Fees user={user} feesDB={feesDB} studentsDB={studentsDB} academicRosterDB={academicRosterDB} dirDB={dirDB} metaDB={metaDB}/>}
         {tab==="salary"&&canFees&&<SalaryPanel user={user}/>}
