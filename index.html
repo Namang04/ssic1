@@ -2367,16 +2367,16 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
       g.mk+=(typeof r.markedCount==="number"?r.markedCount:_n);g.rc+=(typeof r.rosterCount==="number"?r.rosterCount:_n); // save-time coverage — old docs count as fully marked
       Object.values(r.status).forEach(v=>{if(v===undefined||v==="U")return;total++;g.t++;if(v==="P"||v==="L"){present++;g.p++;}});});
     // Expected class-sections from the directory (6–12), so not-yet-marked sections still show
-    const expected={};
+    const expected={};const rosterCnt={}; // total enrolled (active) students per class-section, from the directory
     SCHOOL.classes.forEach(cls=>{const cn=String(cls).replace("Class ","").trim();const doc=dirDB&&dirDB.data&&dirDB.data["dir_"+cn];
-      const secs=new Set();((doc&&doc.students)||[]).forEach(s=>{if(s&&String(s.status||"").toLowerCase()!=="left"&&s.section)secs.add(normSection(cls,s.section));});
+      const secs=new Set();((doc&&doc.students)||[]).forEach(s=>{if(!s||String(s.status||"").toLowerCase()==="left"||!s.section)return;const sec=normSection(cls,s.section);secs.add(sec);rosterCnt[cls+"|"+sec]=(rosterCnt[cls+"|"+sec]||0)+1;});
       secs.forEach(sec=>{expected[cls+"|"+sec]={cls,section:sec};});});
     const markedKeys=new Set(Object.keys(byCS).filter(k=>byCS[k].t>0));
     const markedClasses=new Set(Object.values(byCS).filter(g=>g.t>0).map(g=>g.cls));
     const lab=(cls,sec)=>cls.replace("Class ","Cl ")+(sec?"-"+sec:"");
     const perClass=[];
-    Object.values(byCS).forEach(g=>{if(g.t>0)perClass.push({id:g.cls+"|"+g.section,cls:g.cls,section:g.section,label:lab(g.cls,g.section),marked:true,pct:Math.round(g.p/g.t*100),p:g.p,t:g.t,mk:g.mk||0,rc:g.rc||0});});
-    Object.values(expected).forEach(m=>{const k=m.cls+"|"+m.section;if(markedKeys.has(k)||holidayKeys.has(k))return;if(!m.section&&markedClasses.has(m.cls))return;perClass.push({id:m.cls+"|"+m.section,cls:m.cls,section:m.section,label:lab(m.cls,m.section),marked:false,pct:null,p:0,t:0});});
+    Object.values(byCS).forEach(g=>{if(g.t>0){const _k=g.cls+"|"+g.section;const _tot=rosterCnt[_k]||g.rc||g.t;perClass.push({id:g.cls+"|"+g.section,cls:g.cls,section:g.section,label:lab(g.cls,g.section),marked:true,pct:Math.round(g.p/g.t*100),p:g.p,t:g.t,mk:g.mk||0,rc:g.rc||0,total:_tot});}});
+    Object.values(expected).forEach(m=>{const k=m.cls+"|"+m.section;if(markedKeys.has(k)||holidayKeys.has(k))return;if(!m.section&&markedClasses.has(m.cls))return;perClass.push({id:m.cls+"|"+m.section,cls:m.cls,section:m.section,label:lab(m.cls,m.section),marked:false,pct:null,p:0,t:0,total:rosterCnt[k]||0});});
     perClass.sort((a,b)=>{if(a.marked&&b.marked)return a.pct-b.pct;if(a.marked!==b.marked)return a.marked?-1:1;return a.label.localeCompare(b.label,undefined,{numeric:true});});
     return {present,total,sections:Object.values(byCS).filter(g=>g.t>0).length,pct:total?Math.round(present/total*100):0,perClass,unmarked:perClass.filter(x=>!x.marked).length};
   },[attendanceDB.data,dirDB&&dirDB.data,today]);
@@ -2783,7 +2783,7 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
   const Act=({href,onClick,children,tone})=>{const st={fontSize:11.5,fontWeight:700,padding:"5px 11px",borderRadius:8,border:"1px solid "+(tone==="pri"?"var(--btn-pri-bg)":"var(--c-d2)"),background:tone==="pri"?"var(--btn-pri-bg)":"var(--c-fff)",color:tone==="pri"?"#fff":"var(--ap-ink)",cursor:"pointer",fontFamily:"var(--ss-font)",textDecoration:"none",display:"inline-flex",alignItems:"center",gap:5,whiteSpace:"nowrap"};
     return href?<a href={href} target={href.indexOf("http")===0?"_blank":undefined} rel="noreferrer" style={st}>{children}</a>:<button onClick={onClick} style={st}>{children}</button>;};
   const NameLink=({children,onClick})=>(<button onClick={onClick} style={{background:"none",border:"none",padding:0,cursor:"pointer",color:"var(--ap-ink)",fontWeight:700,fontSize:"inherit",fontFamily:"var(--ss-font)",textDecoration:"underline",textDecorationColor:"var(--c-d2)",textUnderlineOffset:3}}>{children}</button>);
-  const SecChip=({x})=>(<button onClick={()=>go("attendance","__attJump",{cls:x.cls,sec:x.section,date:today,atab:"mark"})} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 11px",borderRadius:9,border:"1px solid "+(x.marked?(x.pct<80?"var(--bd-red)":"var(--ap-line)"):"var(--bd-amb)"),background:x.marked?(x.pct<80?"var(--bg-red)":"var(--c-fff)"):"var(--bg-amb)",fontSize:12,fontWeight:700,color:"var(--ap-ink)",cursor:"pointer",fontFamily:"var(--ss-font)"}}>{x.label}{x.marked?<span style={{color:x.pct<80?"var(--tx-red)":"var(--tx-grn2)"}}>{x.pct}%</span>:<span style={{color:"var(--tx-org2)"}}>unmarked</span>}</button>);
+  const SecChip=({x})=>{const tot=x.total||x.rc||x.t||0;const pctTot=tot?Math.round(x.p/tot*100):0;return(<button onClick={()=>go("attendance","__attJump",{cls:x.cls,sec:x.section,date:today,atab:"mark"})} title={x.marked?(x.p+" present of "+tot+" students"+((tot>x.t)?(" · "+(tot-x.t)+" not yet marked"):"")):"not marked yet"} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 11px",borderRadius:9,border:"1px solid "+(x.marked?(x.pct<80?"var(--bd-red)":"var(--ap-line)"):"var(--bd-amb)"),background:x.marked?(x.pct<80?"var(--bg-red)":"var(--c-fff)"):"var(--bg-amb)",fontSize:12,fontWeight:700,color:"var(--ap-ink)",cursor:"pointer",fontFamily:"var(--ss-font)"}}>{x.label}{x.marked?<span style={{whiteSpace:"nowrap",color:x.pct<80?"var(--tx-red)":"var(--tx-grn2)"}}>{x.p}/{tot} present<span style={{color:"var(--ap-muted)",fontWeight:600,marginLeft:4}}>{pctTot}%</span></span>:<span style={{color:"var(--tx-org2)"}}>unmarked</span>}</button>);};
   const StripPanel=({title,sub,right,children})=>(<div className="dcc-panel"><div className="dcc-ph"><div className="tt">{title}{sub?<span className="s">{sub}</span>:null}</div>{right}</div><div style={{padding:"0 16px 14px"}}>{children}</div></div>);
   const Lnk=({onClick,children})=>(<button className="lnk" onClick={onClick} style={{fontSize:12.5,fontWeight:600,color:"var(--ap-accent)",display:"inline-flex",alignItems:"center",gap:3,background:"none",border:"none",cursor:"pointer",fontFamily:"var(--ss-font)"}}>{children}<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>);
   const arrowSvg=<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>;
@@ -9409,13 +9409,14 @@ td.r,th.r{text-align:right}
           </InsPanel>}
         </div>);})()}
       {sub==="defaulters"&&(()=>{
-        const FILT=[["overdue","Overdue now"],["unpaid","Not paid"],["balance","Has balance"],["all","All"]];
+        const FILT=[["overdue","Overdue now"],["unpaid","Not paid"],["partpaid","Part-paid"],["balance","Has balance"],["all","All"]];
         const amtOf=(r)=>dueFilter==="overdue"?r.overdue:r.bal;
-        const groups=agg.perClass.map(pc=>({cls:pc.cls,rows:pc.rows.filter(r=>dueFilter==="overdue"?r.overdue>0:dueFilter==="unpaid"?r.status==="unpaid":dueFilter==="balance"?r.bal>0:true),due:0})).filter(g=>g.rows.length>0);
+        // "partpaid" = actually paid some CASH but not the full year yet (paid>0 AND balance>0)
+        const groups=agg.perClass.map(pc=>({cls:pc.cls,rows:pc.rows.filter(r=>dueFilter==="overdue"?r.overdue>0:dueFilter==="unpaid"?r.status==="unpaid":dueFilter==="partpaid"?(r.cash>0&&r.bal>0):dueFilter==="balance"?r.bal>0:true),due:0})).filter(g=>g.rows.length>0);
         groups.forEach(g=>{g.due=g.rows.reduce((a,r)=>a+amtOf(r),0);g.rows.sort((a,b)=>amtOf(b)-amtOf(a)||a.student.localeCompare(b.student));});
         groups.sort((a,b)=>b.due-a.due); // biggest dues first — chase the largest amounts
         const total=groups.reduce((a,g)=>a+g.rows.length,0),totalDue=groups.reduce((a,g)=>a+g.due,0);
-        return <InsPanel title="Pending fees" sub={total+" student"+(total===1?"":"s")+(dueFilter==="unpaid"?" haven't paid anything yet":dueFilter==="overdue"?" past an installment due date · "+inr(totalDue)+" overdue":" · "+inr(totalDue)+" outstanding")} pad={0}
+        return <InsPanel title="Pending fees" sub={total+" student"+(total===1?"":"s")+(dueFilter==="unpaid"?" haven't paid anything yet":dueFilter==="overdue"?" past an installment due date · "+inr(totalDue)+" overdue":dueFilter==="partpaid"?" have part-paid · "+inr(totalDue)+" still owed":" · "+inr(totalDue)+" outstanding")} pad={0}
           right={<div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
             <div className="ap-subnav">{FILT.map(f=><button key={f[0]} className={"ap-pill"+(dueFilter===f[0]?" on":"")} onClick={()=>setDueFilter(f[0])} style={{fontSize:11.5,padding:"5px 11px"}}>{f[1]}</button>)}</div>
             {total>0&&<button onClick={()=>{
@@ -9424,7 +9425,7 @@ td.r,th.r{text-align:right}
             }} style={{display:"inline-flex",alignItems:"center",gap:5,background:"#25D366",color:"#fff",border:"none",borderRadius:9,padding:"7px 13px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Remind all · {total}</button>}
             {total>0&&<Btn v="ghost" style={{padding:"7px 12px",fontSize:12}} onClick={exportDefaulters}>⬇ CSV</Btn>}
           </div>}>
-          {total===0?<div style={{padding:24,textAlign:"center",color:"var(--c-94)",fontSize:13}}>{dueFilter==="unpaid"?"Every student has paid something.":dueFilter==="overdue"?"No overdue installments — everyone is on time.":"No outstanding balances."}</div>:
+          {total===0?<div style={{padding:24,textAlign:"center",color:"var(--c-94)",fontSize:13}}>{dueFilter==="unpaid"?"Every student has paid something.":dueFilter==="overdue"?"No overdue installments — everyone is on time.":dueFilter==="partpaid"?"No part-payments — students have either cleared or paid nothing.":"No outstanding balances."}</div>:
           <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:640}}>
             <thead><tr><th style={{...th,paddingLeft:18}}>Student</th><th style={{...th,textAlign:"right"}}>Annual</th><th style={{...th,textAlign:"right"}}>Paid</th><th style={{...th,textAlign:"right"}}>{dueFilter==="overdue"?"Overdue":"Balance"}</th><th style={{...th,textAlign:"right",paddingRight:18}}>Chase the parent</th></tr></thead>
             <tbody>{groups.map(g=>[
