@@ -246,6 +246,15 @@ body,.ap-panel,.ap-content,.ap-nav,.ap-topbar{transition:background-color .25s e
 .ap-menu-btn{display:none;width:38px;height:38px;border-radius:50%;place-items:center;color:var(--ap-ink2);background:none;border:none;cursor:pointer}
 .ap-scrim{display:none;position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:110}
 .ap-scrim.open{display:block}
+/* Mobile quick-bar — fixed bottom nav to the 4 most-used screens; only on phone widths (sidebar is off-canvas there) */
+.ap-qbar{display:none}
+@media (max-width:768px){
+  .ap-qbar{position:fixed;left:0;right:0;bottom:0;z-index:105;display:flex;background:var(--c-fff);border-top:1px solid var(--ap-line);box-shadow:0 -4px 16px rgba(16,24,40,.08);padding:5px max(8px,env(safe-area-inset-left)) calc(5px + env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-right))}
+  .ap-qbar button{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;background:none;border:none;padding:6px 2px 4px;border-radius:10px;color:var(--ap-muted);font-family:var(--ss-font);font-size:10px;font-weight:600;cursor:pointer}
+  .ap-qbar button svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .ap-qbar button.on{color:var(--ap-accent);font-weight:800}
+  .ap-main{padding-bottom:72px}
+}
 /* ── Dashboard components (prototype-grade) ── */
 .ap-hi{font-size:25px;font-weight:700;letter-spacing:-0.028em;color:var(--ap-ink)}
 .ap-hisub{font-size:14.5px;color:var(--ap-muted);margin-top:4px}
@@ -906,6 +915,20 @@ function feeDueNow(heads,paid,today,covered){
   var cum=0,dueAmt=0,fineAmt=0,p=(Number(paid)||0)+(Number(covered)||0);
   arr.forEach(function(h){var amt=Number(h.amount||0);var isDue=!h.due||String(h.due)<=String(today);if(!isDue)return;cum+=amt;dueAmt+=amt;if(p<cum)fineAmt+=Number(h.fine||0);});
   return{dueAmt:dueAmt,fineAmt:fineAmt,hasDates:true};
+}
+// How many days the student's OLDEST unmet, past-due installment has been outstanding (0 = nothing aged).
+// `covered` = everything that offsets the bill (cash + concession + waiver). Same walk as the cockpit's
+// aging panel so the fee page's buckets can never disagree with the dashboard.
+function __feeAgeDays(heads,covered,today){
+  var arr=(heads||[]).filter(function(h){return h&&Number(h.amount)>0;}).sort(function(a,b){return String(a.due||"").localeCompare(String(b.due||""));});
+  var cum=0,p=Number(covered)||0,hit=false,firstDue="";
+  for(var j=0;j<arr.length;j++){var due=String(arr[j].due||"");if(due&&due>today)break;cum+=Number(arr[j].amount||0);if(!hit&&p<cum){hit=true;firstDue=due;}}
+  if(!hit)return 0;
+  // A blank due (the saved structure leaves Installment I dateless = payable at once) ages from the
+  // session start — Indian AY runs April→March, so derive it from `today` rather than hardcoding a year.
+  if(!firstDue){var t=new Date(today+"T12:00");var y=t.getMonth()>=3?t.getFullYear():t.getFullYear()-1;firstDue=y+"-04-01";}
+  var d=Math.floor((new Date(today)-new Date(firstDue))/864e5);
+  return d>0?d:0;
 }
 
 // ── Branch identity ── Multi-branch deploys persist these in localStorage (set at branch setup / editable in-app);
@@ -2445,7 +2468,13 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
     // truth for "new this session" is the DIRECTORY (oldNew flag) — the admissions collection only holds form-created slips, not imports
     const newSession=dirIndex.all.filter(st=>String(st.status||"").toLowerCase()!=="left"&&String(st.oldNew||"").toLowerCase()==="new").length;
     return{month:all.filter(a=>String(a.at||a.date||"").slice(0,7)===month).length,total:all.length,newSession};},[admDB.data,month,dirIndex]);
-  const recentNotices=useMemo(()=>Object.values(noticesDB.data||{}).filter(n=>n&&n.active!==false&&n.title).sort((a,b)=>String(b.postedAt||"").localeCompare(String(a.postedAt||""))).slice(0,3),[noticesDB.data]);
+  // Only notices from the last 30 days belong in a "this week's record" tail — a March PTM circular
+  // showing in July reads as live news. Older ones live under Communication.
+  const recentNotices=useMemo(()=>Object.values(noticesDB.data||{}).filter(n=>{
+    if(!n||n.active===false||!n.title)return false;
+    const d=String(n.postedAt||"").slice(0,10);if(!d)return false;
+    try{return (new Date(today+"T12:00")-new Date(d+"T12:00"))/864e5<=30;}catch(e){return false;}
+  }).sort((a,b)=>String(b.postedAt||"").localeCompare(String(a.postedAt||""))).slice(0,3),[noticesDB.data,today]);
   // Daily attendance % across all classes — the last (up to) 7 marked school/working days, for comparison.
   const attTrend=useMemo(()=>{
     const byDate={};
@@ -2477,23 +2506,30 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
   },[stu,attTrend,fin,staff,enroll]);
   const aging=useMemo(()=>{if(!canFees||!fin)return null;
     const structure=Object.assign({},__feeClasses(),(feesDB.data.__structure&&feesDB.data.__structure.classes)||{});
-    const rosterFor=c=>{const d=academicRosterDB&&academicRosterDB.data&&academicRosterDB.data[safeId(c)];if(d&&Array.isArray(d.students)&&d.students.length)return d.students.map(s=>({admNo:String(s.admNo||""),name:s.name}));return ((studentsDB.data[safeId(c)]||{}).list||[]).map(nm=>({admNo:"",name:nm}));};
+    // Roster from the DIRECTORY first (active students, ALL classes 1–12+SIP — same coverage as the Fees
+    // page) so these buckets always sum to the same overdue the Fees page reports; legacy fallbacks kept.
+    const rosterFor=c=>{const cn=String(c).replace("Class ","").trim();const dd=dirDB&&dirDB.data&&dirDB.data[(cn==="SIP")?"dir_SIP_CLASS":("dir_"+cn)];
+      if(dd&&Array.isArray(dd.students)&&dd.students.length)return dd.students.filter(s=>String(s.status||"").toLowerCase()!=="left").map(s=>({admNo:String(s.admNo||""),name:s.name}));
+      const d=academicRosterDB&&academicRosterDB.data&&academicRosterDB.data[safeId(c)];if(d&&Array.isArray(d.students)&&d.students.length)return d.students.map(s=>({admNo:String(s.admNo||""),name:s.name}));return ((studentsDB.data[safeId(c)]||{}).list||[]).map(nm=>({admNo:"",name:nm}));};
     const payByAdm={},payByName={},payByExact={};
     Object.keys(feesDB.data||{}).forEach(id=>{if(id.startsWith("__"))return;const p=feesDB.data[id];if(!p)return;const amt=Number(p.amount||0);const pa=p.admNo?String(p.admNo):__admInBrack(p.student);if(pa)payByAdm[pa]=(payByAdm[pa]||0)+amt;else if(/\(/.test(String(p.student||"")))payByExact[p.cls+"||"+p.student]=(payByExact[p.cls+"||"+p.student]||0)+amt;else payByName[p.cls+"||"+nmKey(p.student)]=(payByName[p.cls+"||"+nmKey(p.student)]||0)+amt;});
     const buckets={b1:0,b2:0,b3:0,b4:0};const dayMs=864e5;
-    SCHOOL.classes.forEach(c=>{const heads=(structure[c]||[]).filter(h=>h&&Number(h.amount)>0);if(!heads.length)return;
+    const clsList=[...new Set(__DIR_ORDER.map(cn=>__clsTokLabel(cn)).concat(SCHOOL.classes))]; // all classes 1–12+SIP, not just 6–12
+    clsList.forEach(c=>{const heads=(structure[c]||[]).filter(h=>h&&Number(h.amount)>0);if(!heads.length)return;
       const annual=heads.reduce((a,h)=>a+Number(h.amount||0),0);
       const sorted=heads.slice().sort((a,b)=>String(a.due||"").localeCompare(String(b.due||"")));
       rosterFor(c).forEach(s=>{const paid=(s.admNo?(payByAdm[String(s.admNo)]||0):0)+(payByExact[c+"||"+s.name]||0)+(!/\(/.test(String(s.name||""))?(payByName[c+"||"+nmKey(s.name)]||0):0);
-        const waiver=waiverFor(feesDB.data,s.admNo);let cum=0,firstDue="";
-        for(let j=0;j<sorted.length;j++){const due=String(sorted[j].due||"");if(due&&due>today)break;cum+=Number(sorted[j].amount||0);if(!firstDue&&cum-waiver>paid)firstDue=due;}
+        const waiver=waiverFor(feesDB.data,s.admNo);let cum=0,hit=false,firstDue="";
+        for(let j=0;j<sorted.length;j++){const due=String(sorted[j].due||"");if(due&&due>today)break;cum+=Number(sorted[j].amount||0);if(!hit&&cum-waiver>paid){hit=true;firstDue=due;}}
         const overdue=Math.max(0,Math.min(cum,annual)-waiver-paid);
-        if(overdue<=0||!firstDue)return;
+        if(overdue<=0||!hit)return;
+        // blank due (dateless Installment I in the saved structure) = owed since the session started (April 1)
+        if(!firstDue){const t=new Date(today+"T12:00");const y=t.getMonth()>=3?t.getFullYear():t.getFullYear()-1;firstDue=y+"-04-01";}
         const age=Math.floor((new Date(today)-new Date(firstDue))/dayMs);
         if(age<=7)buckets.b1+=overdue;else if(age<=30)buckets.b2+=overdue;else if(age<=60)buckets.b3+=overdue;else buckets.b4+=overdue;});
     });
     return{buckets,total:buckets.b1+buckets.b2+buckets.b3+buckets.b4};
-  },[feesDB.data,academicRosterDB&&academicRosterDB.data,studentsDB.data,canFees,fin,today]);
+  },[feesDB.data,academicRosterDB&&academicRosterDB.data,studentsDB.data,dirDB&&dirDB.data,canFees,fin,today]);
 
   // Admissions funnel — honest stages from the real registration pipeline (enquiry → in review → admitted/lost).
   // The mock shows an 8-stage funnel we don't capture; we render only the stages our data actually has.
@@ -2523,7 +2559,9 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
     const cell={};const clsSet={},subjSet={};
     arr.forEach(t=>{
       const total=Number(t.total)||0;if(!total)return;
-      const vals=Object.values(t.rows).map(v=>Number(v)).filter(v=>!isNaN(v));
+      // blanks are NOT zeros — Number("")===0, so an entered-but-empty row (roster-sync'd test with no marks)
+      // must be dropped BEFORE Number(), else an all-blank test reads as a 0% class average (phantom risk)
+      const vals=Object.values(t.rows).filter(v=>v!==""&&v!=null).map(v=>Number(v)).filter(v=>!isNaN(v));
       if(!vals.length)return;
       const tAvg=vals.reduce((a,b)=>a+b,0)/vals.length/total*100;
       const k=t.cls+"||"+t.subj;const c=cell[k]||(cell[k]={sum:0,n:0});c.sum+=tAvg;c.n++;
@@ -2783,7 +2821,20 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
   const Act=({href,onClick,children,tone})=>{const st={fontSize:11.5,fontWeight:700,padding:"5px 11px",borderRadius:8,border:"1px solid "+(tone==="pri"?"var(--btn-pri-bg)":"var(--c-d2)"),background:tone==="pri"?"var(--btn-pri-bg)":"var(--c-fff)",color:tone==="pri"?"#fff":"var(--ap-ink)",cursor:"pointer",fontFamily:"var(--ss-font)",textDecoration:"none",display:"inline-flex",alignItems:"center",gap:5,whiteSpace:"nowrap"};
     return href?<a href={href} target={href.indexOf("http")===0?"_blank":undefined} rel="noreferrer" style={st}>{children}</a>:<button onClick={onClick} style={st}>{children}</button>;};
   const NameLink=({children,onClick})=>(<button onClick={onClick} style={{background:"none",border:"none",padding:0,cursor:"pointer",color:"var(--ap-ink)",fontWeight:700,fontSize:"inherit",fontFamily:"var(--ss-font)",textDecoration:"underline",textDecorationColor:"var(--c-d2)",textUnderlineOffset:3}}>{children}</button>);
-  const SecChip=({x})=>{const tot=x.total||x.rc||x.t||0;const pctTot=tot?Math.round(x.p/tot*100):0;return(<button onClick={()=>go("attendance","__attJump",{cls:x.cls,sec:x.section,date:today,atab:"mark"})} title={x.marked?(x.p+" present of "+tot+" students"+((tot>x.t)?(" · "+(tot-x.t)+" not yet marked"):"")):"not marked yet"} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 11px",borderRadius:9,border:"1px solid "+(x.marked?(x.pct<80?"var(--bd-red)":"var(--ap-line)"):"var(--bd-amb)"),background:x.marked?(x.pct<80?"var(--bg-red)":"var(--c-fff)"):"var(--bg-amb)",fontSize:12,fontWeight:700,color:"var(--ap-ink)",cursor:"pointer",fontFamily:"var(--ss-font)"}}>{x.label}{x.marked?<span style={{whiteSpace:"nowrap",color:x.pct<80?"var(--tx-red)":"var(--tx-grn2)"}}>{x.p}/{tot} present<span style={{color:"var(--ap-muted)",fontWeight:600,marginLeft:4}}>{pctTot}%</span></span>:<span style={{color:"var(--tx-org2)"}}>unmarked</span>}</button>);};
+  const SecChip=({x})=>{
+    const tot=x.total||x.rc||x.t||0;
+    const pctTot=tot?Math.round(x.p/tot*100):0;
+    // A SAVED register always shows its real numbers (a saved-but-part-ticked one must never read as "unmarked").
+    // When the teacher ticked well under the roster, the untouched students were auto-saved absent — flag that
+    // softly: amber border + "N auto-absent" note in the tooltip, so the director can verify without a false alarm.
+    const half=!!(x.marked&&x.rc>0&&x.mk<x.rc*0.6);
+    const bd=x.marked?(half?"var(--bd-amb)":(x.pct<80?"var(--bd-red)":"var(--ap-line)")):"var(--bd-amb)";
+    const bg=x.marked?(x.pct<80?"var(--bg-red)":"var(--c-fff)"):"var(--bg-amb)";
+    const tip=!x.marked?"not marked yet":half?(x.p+" present of "+tot+". Note: the teacher ticked "+x.mk+" of "+x.rc+" — the other "+(x.rc-x.mk)+" were auto-saved absent. Tap to verify them."):(x.p+" present of "+tot+" students"+((tot>x.t)?(" · "+(tot-x.t)+" not yet marked"):""));
+    return(<button onClick={()=>go("attendance","__attJump",{cls:x.cls,sec:x.section,date:today,atab:"mark"})} title={tip} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 11px",borderRadius:9,border:(half?"1.5px dashed ":"1px solid ")+bd,background:bg,fontSize:12,fontWeight:700,color:"var(--ap-ink)",cursor:"pointer",fontFamily:"var(--ss-font)"}}>{x.label}
+      {!x.marked?<span style={{color:"var(--tx-org2)"}}>unmarked</span>
+       :<span style={{whiteSpace:"nowrap",color:x.pct<80?"var(--tx-red)":"var(--tx-grn2)"}}>{x.p}/{tot} present<span style={{color:"var(--ap-muted)",fontWeight:600,marginLeft:4}}>{pctTot}%</span>{half?<span title="Some students were auto-marked absent — tap to verify" style={{color:"var(--tx-org2)",fontWeight:800,marginLeft:4}}>½</span>:null}</span>}
+    </button>);};
   const StripPanel=({title,sub,right,children})=>(<div className="dcc-panel"><div className="dcc-ph"><div className="tt">{title}{sub?<span className="s">{sub}</span>:null}</div>{right}</div><div style={{padding:"0 16px 14px"}}>{children}</div></div>);
   const Lnk=({onClick,children})=>(<button className="lnk" onClick={onClick} style={{fontSize:12.5,fontWeight:600,color:"var(--ap-accent)",display:"inline-flex",alignItems:"center",gap:3,background:"none",border:"none",cursor:"pointer",fontFamily:"var(--ss-font)"}}>{children}<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>);
   const arrowSvg=<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>;
@@ -2857,7 +2908,7 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
         {canFees&&<button className="dcc-kpi" onClick={()=>go("registration","__regJump",{filt:"pending"})} style={{textAlign:"left",cursor:"pointer",fontFamily:"var(--ss-font)"}}>
           <div className="ic" style={{background:"var(--bg-amb)",color:"var(--tx-org2)"}}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12.5h6M9 16.5h6"/></svg></div>
           <div className="lab">Enquiry pipeline</div><div className="val">{admEngine.pending}</div>
-          <div className="sub">{admEngine.cold.length?admEngine.cold.length+" going cold — call them":"all fresh"}</div></button>}
+          <div className="sub">{admEngine.cold.length?admEngine.cold.length+" going cold — call them":(admEngine.pending?"all fresh":"no enquiries yet")}</div></button>}
         <button className="dcc-kpi" onClick={()=>go("staffatt","__staffJump",{stab:"directory"})} style={{textAlign:"left",cursor:"pointer",fontFamily:"var(--ss-font)"}}>
           <div className="ic" style={{background:"var(--bg-pur)",color:"var(--tx-pur)"}}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><path d="M16 6.2a3 3 0 0 1 0 5.6"/></svg></div>
           <div className="lab">Staff strength</div><div className="val">{staff.total}</div>
@@ -2898,11 +2949,11 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
               if(it.kind==="unmarked")return(<div key={"um"+i} className="dcx-card">
                 <div style={{minWidth:0,flex:1}}><div style={{fontSize:10.5,fontWeight:800,letterSpacing:.6,color:"var(--tx-org2)"}}>ATTENDANCE PENDING</div>
                 <div style={{fontSize:13,fontWeight:700,color:"var(--ap-ink)",marginTop:2}}>{it.n} section{it.n>1?"s":""} not marked yet</div></div>
-                <Act onClick={()=>{const el=document.getElementById("dcx-people");if(el)el.scrollIntoView({behavior:"smooth",block:"start"});}}>Who ↓</Act></div>);
+                <Act onClick={()=>{const el=document.getElementById("dcx-people");if(el)el.scrollIntoView({behavior:"auto",block:"start"});}}>Who ↓</Act></div>);
               if(it.kind==="partial"){const f=it.first;return(<div key={"pa"+i} className="dcx-card">
-                <div style={{minWidth:0,flex:1}}><div style={{fontSize:10.5,fontWeight:800,letterSpacing:.6,color:"var(--tx-red)"}}>HALF-SAVED ATTENDANCE</div>
-                <div style={{fontSize:13,fontWeight:700,color:"var(--ap-ink)",marginTop:2}}>{f.label} marked {f.t}/{f.roster}{it.n>1?" · +"+(it.n-1)+" more":""}</div></div>
-                <Act tone="pri" onClick={()=>go("attendance","__attJump",{cls:f.cls,sec:f.section,date:today,atab:"mark"})}>Reopen {arrowSvg}</Act></div>);}
+                <div style={{minWidth:0,flex:1}}><div style={{fontSize:10.5,fontWeight:800,letterSpacing:.6,color:"var(--tx-org2)"}}>AUTO-ABSENTS TO VERIFY</div>
+                <div style={{fontSize:13,fontWeight:700,color:"var(--ap-ink)",marginTop:2}}>{f.label} saved — {f.t} ticked, {Math.max(0,(f.roster||0)-(f.t||0))} auto-absent{it.n>1?" · +"+(it.n-1)+" more":""}</div></div>
+                <Act tone="pri" onClick={()=>go("attendance","__attJump",{cls:f.cls,sec:f.section,date:today,atab:"mark"})}>Verify {arrowSvg}</Act></div>);}
               if(it.kind==="complaint"){const c=it.c;const ph=telA(c.phone||"");return(<div key={"cm"+i} className="dcx-card">
                 <div style={{minWidth:0,flex:1}}><div style={{fontSize:10.5,fontWeight:800,letterSpacing:.6,color:"var(--tx-red)"}}>OPEN COMPLAINT</div>
                 <div style={{fontSize:13,fontWeight:700,color:"var(--ap-ink)",marginTop:2}}>{c.from||"Parent"} <span style={{fontWeight:500,color:"var(--ap-muted)"}}>· {(c.note||c.about||"").slice(0,60)}{(c.note||c.about||"").length>60?"…":""}</span></div>
@@ -2915,7 +2966,7 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
               if(it.kind==="chronic")return(<div key={"ch"+i} className="dcx-card">
                 <div style={{minWidth:0,flex:1}}><div style={{fontSize:10.5,fontWeight:800,letterSpacing:.6,color:"var(--tx-red)"}}>CALL HOME</div>
                 <div style={{fontSize:13,fontWeight:700,color:"var(--ap-ink)",marginTop:2}}>{it.n} student{it.n>1?"s":""} absent 3+ days running</div></div>
-                <Act onClick={()=>{const el=document.getElementById("dcx-out");if(el)el.scrollIntoView({behavior:"smooth",block:"start"});}}>Who ↓</Act></div>);
+                <Act onClick={()=>{const el=document.getElementById("dcx-out");if(el)el.scrollIntoView({behavior:"auto",block:"start"});}}>Who ↓</Act></div>);
               return null;})}
           </div>
         </div>
@@ -2960,7 +3011,8 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
             <div style={{fontSize:11.5,fontWeight:700,letterSpacing:.5,textTransform:"uppercase",color:"var(--ap-muted)"}}>Collected {isPastView?today:"today"}</div>
             <div style={{fontSize:34,fontWeight:800,letterSpacing:"-.03em",color:"var(--ap-ink)",lineHeight:1.05}}>{inr(moneyToday.tot)}</div>
           </button>
-          {moneyToday.avg>0&&<div style={{fontSize:12,fontWeight:700,padding:"5px 11px",borderRadius:9,background:moneyToday.vs>=0?"var(--bg-grn)":"var(--bg-amb)",color:moneyToday.vs>=0?"var(--tx-grn)":"var(--tx-org2)"}}>{moneyToday.vs>=0?"+":""}{moneyToday.vs}% vs {dayShort} avg {inrShort(moneyToday.avg)}</div>}
+          {moneyToday.avg>0&&moneyToday.n>0&&<div style={{fontSize:12,fontWeight:700,padding:"5px 11px",borderRadius:9,background:moneyToday.vs>=0?"var(--bg-grn)":"var(--bg-amb)",color:moneyToday.vs>=0?"var(--tx-grn)":"var(--tx-org2)"}}>{moneyToday.vs>=0?"+":""}{moneyToday.vs}% vs {dayShort} avg {inrShort(moneyToday.avg)}</div>}
+          {moneyToday.avg>0&&moneyToday.n===0&&<div style={{fontSize:12,fontWeight:600,padding:"5px 11px",borderRadius:9,background:"var(--c-f7)",color:"var(--ap-muted)"}}>{dayShort} usually brings {inrShort(moneyToday.avg)}</div>}
           <div style={{display:"flex",gap:7,flexWrap:"wrap",alignItems:"center"}}>
             {moneyToday.modes.map(([m,amt])=>(<button key={m} onClick={()=>go("fees","__feesJump",{sub:"ledger",date:today})} style={{fontSize:12,fontWeight:700,padding:"5px 11px",borderRadius:9,border:"1px solid var(--ap-line)",background:"var(--c-f7)",color:"var(--ap-ink2)",cursor:"pointer",fontFamily:"var(--ss-font)"}}>{m} {inrShort(amt)}</button>))}
             {moneyToday.n>0&&<span style={{fontSize:11.5,color:"var(--ap-faint)"}}>{moneyToday.n} receipt{moneyToday.n>1?"s":""}</span>}
@@ -3053,8 +3105,8 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
             <div style={{height:10,borderRadius:99,background:"var(--c-f0)",overflow:"hidden"}}><div style={{width:Math.min(100,fin.pct)+"%",height:"100%",borderRadius:99,background:fin.pct>=70?"var(--tx-grn2)":fin.pct>=40?"linear-gradient(90deg,#16a85e,#e0a45f)":"linear-gradient(90deg,#e0a45f,#d2342a)"}}/></div>
           </button>
           {aging&&aging.total>0&&<div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
-            {[["≤7 days",aging.buckets.b1,"var(--bg-grn)","var(--tx-grn)"],["8–30",aging.buckets.b2,"var(--bg-amb)","var(--tx-org2)"],["31–60",aging.buckets.b3,"var(--bg-org)","var(--tx-org)"],["60+ days",aging.buckets.b4,"var(--bg-red)","var(--tx-red)"]].map(([lbl,amt,bg,fg])=>(
-              amt>0?<button key={lbl} onClick={()=>go("fees","__feesJump",{sub:"defaulters"})} style={{fontSize:12,fontWeight:700,padding:"6px 12px",borderRadius:9,border:"none",background:bg,color:fg,cursor:"pointer",fontFamily:"var(--ss-font)"}}>{lbl} · {inrShort(amt)}</button>:null))}
+            {[["≤7 days",aging.buckets.b1,"var(--bg-grn)","var(--tx-grn)","1-7"],["8–30",aging.buckets.b2,"var(--bg-amb)","var(--tx-org2)","8-30"],["31–60",aging.buckets.b3,"var(--bg-org)","var(--tx-org)","31-60"],["60+ days",aging.buckets.b4,"var(--bg-red)","var(--tx-red)","61+"]].map(([lbl,amt,bg,fg,bucket])=>(
+              amt>0?<button key={lbl} title={"Open defaulters owing for "+lbl} onClick={()=>go("fees","__feesJump",{sub:"defaulters",age:bucket})} style={{fontSize:12,fontWeight:700,padding:"6px 12px",borderRadius:9,border:"none",background:bg,color:fg,cursor:"pointer",fontFamily:"var(--ss-font)"}}>{lbl} · {inrShort(amt)}</button>:null))}
           </div>}
           {(()=>{const worst=fin.perClass.filter(c=>c.pct<fin.pct).sort((a,b)=>a.pct-b.pct);const ok=fin.perClass.length-worst.length;
             return(<div style={{display:"flex",flexDirection:"column",gap:6}}>
@@ -3114,7 +3166,7 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
             {funnel&&<div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
               {funnel.stages.map(st=>(<button key={st.label} onClick={()=>go("registration","__regJump",{filt:st.label==="Admitted"?"admitted":st.label==="In review"?"pending":"all"})} style={{fontSize:12,fontWeight:700,padding:"6px 12px",borderRadius:9,border:"1px solid var(--ap-line)",background:"var(--c-f7)",color:st.color,cursor:"pointer",fontFamily:"var(--ss-font)"}}>{st.label} <b>{st.n}</b></button>))}
             </div>}
-            {admEngine.cold.length===0&&<AllClear msg="No leads going cold — pipeline is fresh."/>}
+            {admEngine.cold.length===0&&<AllClear msg={admEngine.pending?"No leads going cold — pipeline is fresh.":"No open enquiries — new registrations will appear here."}/>}
             {admEngine.cold.length>0&&<div>
               <div style={{fontSize:11,fontWeight:800,letterSpacing:.5,textTransform:"uppercase",color:"var(--tx-org2)",margin:"2px 0 7px"}}>Going cold — untouched 7+ days</div>
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
@@ -3127,7 +3179,7 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
           </div>
         </div>:null}
         <div className="dcc-panel">
-          <div className="dcc-ph"><div className="tt">Academic risk<span className="s">{acadEx.bad.length?acadEx.bad.length+" class-subjects under 40%":"weekly-test averages by class × subject"}</span></div><Lnk onClick={()=>setTab&&setTab("insights")}>Insights</Lnk></div>
+          <div className="dcc-ph"><div className="tt">Academic risk<span className="s">{acadEx.bad.length?acadEx.bad.length+" class-subject"+(acadEx.bad.length>1?"s":"")+" under 40%":"weekly-test averages by class × subject"}</span></div><Lnk onClick={()=>setTab&&setTab("insights")}>Insights</Lnk></div>
           <div style={{padding:"0 16px 14px",display:"flex",flexDirection:"column",gap:9}}>
             {acadEx.bad.length===0&&<AllClear msg="No class-subject averaging below 40%."/>}
             {acadEx.bad.length>0&&<div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
@@ -3162,7 +3214,7 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
           {discWeek.length===0&&openCompl.length===0&&<AllClear msg="No open complaints · no discipline incidents this week."/>}
           {discWeek.length>0&&<div style={{fontSize:12.5,color:"var(--ap-ink2)"}}><b style={{color:"var(--tx-org2)"}}>Discipline ({discWeek.length} this week):</b> {discWeek.slice(0,4).map((d,i)=>{const adm=(dirIndex.all.find(s=>s&&s.name===d.student)||{}).admNo;return(<span key={i}>{i>0?" · ":""}<NameLink onClick={()=>adm?goStu(adm,"Discipline"):null}>{d.student}</NameLink> <span style={{color:"var(--ap-faint)"}}>({d.type||"incident"}{d.cls?", "+String(d.cls).replace("Class ","Cl "):""})</span></span>);})}{discWeek.length>4?" +"+(discWeek.length-4):""}</div>}
           {openCompl.length>0&&<div style={{fontSize:12.5,color:"var(--ap-ink2)"}}><b style={{color:"var(--tx-red)"}}>Open complaints ({openCompl.length}):</b> {openCompl.slice(0,3).map((c,i)=>(<span key={i}>{i>0?" · ":""}{c.from||"Parent"} — {(c.note||c.about||"").slice(0,40)} <button onClick={()=>resolveComplInline(c)} style={{fontSize:11,fontWeight:700,color:"var(--ap-accent)",background:"none",border:"none",cursor:"pointer",fontFamily:"var(--ss-font)",padding:0}}>[resolve]</button></span>))}</div>}
-          {recentNotices.length>0&&<div style={{fontSize:12,color:"var(--ap-muted)"}}>{recentNotices.map((n,i)=>(<span key={i}>{i>0?" · ":""}<button onClick={()=>setTab&&setTab("notices")} style={{background:"none",border:"none",padding:0,cursor:"pointer",color:"var(--ap-muted)",fontFamily:"var(--ss-font)",fontSize:12,textDecoration:"underline",textDecorationColor:"var(--c-e6)",textUnderlineOffset:3}}>{n.title}</button></span>))}</div>}
+          {recentNotices.length>0&&<div style={{fontSize:12,color:"var(--ap-muted)"}}>{recentNotices.map((n,i)=>(<span key={i}>{i>0?" · ":""}<button onClick={()=>setTab&&setTab("notices")} style={{background:"none",border:"none",padding:0,cursor:"pointer",color:"var(--ap-muted)",fontFamily:"var(--ss-font)",fontSize:12,textDecoration:"underline",textDecorationColor:"var(--c-e6)",textUnderlineOffset:3}}>{n.title}</button><span style={{color:"var(--ap-faint)"}}> · {fmtDate(String(n.postedAt||"").slice(0,10))}</span></span>))}</div>}
         </div>
       </StripPanel>
     </div>
@@ -5232,7 +5284,8 @@ function Attendance({user,attendanceDB,studentsDB,usersDB,academicRosterDB,dirDB
   const[saved,setSaved]=useState(false);
   const[saving,setSaving]=useState(false);
   const[sortMode,setSortMode]=useState("added"); // "added" = roll/order added (default) · "az" = alphabetical
-  const[atab,setAtab]=useState(function(){try{var j=window.__attJump;window.__attJump=null;if(j&&j.atab)return j.atab;}catch(_){}return "mark";}); // mark | absences | chronic (+ __attJump one-shot: last reader nulls)
+  const[atab,setAtab]=useState(function(){try{var j=window.__attJump;window.__attJump=null;if(j&&j.atab)return j.atab;}catch(_){}return "mark";}); // mark | absences | chronic | month (+ __attJump one-shot: last reader nulls)
+  const[mvMonth,setMvMonth]=useState(today().slice(0,7)); // Month-view month (YYYY-MM)
   const[absRemind,setAbsRemind]=useState(null); // bulk "notify absent parents" run (rows for ReminderRun)
 
   // Key includes section: "Class 6-A__2026-05-11"
@@ -5403,7 +5456,7 @@ function Attendance({user,attendanceDB,studentsDB,usersDB,academicRosterDB,dirDB
 
       {/* tabs */}
       <div className="ap-subnav" style={{width:"fit-content",maxWidth:"100%"}}>
-        {[["mark","Mark attendance",0],["absences","Today's absences",_absentToday.length],["chronic","Chronic",_clsChronic.length]].map(function(t){var on=atab===t[0];return <button key={t[0]} onClick={()=>setAtab(t[0])} className={"ap-pill"+(on?" on":"")}>{t[1]}{t[2]?<span style={{fontSize:10,fontWeight:800,background:"#d2342a",color:"#fff",borderRadius:99,padding:"0 6px"}}>{t[2]}</span>:null}</button>;})}
+        {[["mark","Mark attendance",0],["absences","Today's absences",_absentToday.length],["chronic","Chronic",_clsChronic.length],["month","Month view",0]].map(function(t){var on=atab===t[0];return <button key={t[0]} onClick={()=>setAtab(t[0])} className={"ap-pill"+(on?" on":"")}>{t[1]}{t[2]?<span style={{fontSize:10,fontWeight:800,background:"#d2342a",color:"#fff",borderRadius:99,padding:"0 6px"}}>{t[2]}</span>:null}</button>;})}
       </div>
 
       {atab==="mark"&&<>
@@ -5493,6 +5546,91 @@ function Attendance({user,attendanceDB,studentsDB,usersDB,academicRosterDB,dirDB
           ? <ChronicCallCard chronic={_clsChronic} phoneOf={_phoneOf} title={"Chronic absentees — "+cls} subtitle="absent on 3+ of the last 10 marked days · call the parent"/>
           : <div className="ap-panel" style={{padding:"22px",textAlign:"center",fontSize:13,color:"var(--c-94)"}}>No chronic absentees in {cls} — everyone is above 75% on the last 10 marked days. </div>
       )}
+
+      {atab==="month"&&(()=>{ /* ── MONTH HEATMAP — one class-section, every day at a glance ── */
+        const parts=mvMonth.split("-");const Y=Number(parts[0]),M=Number(parts[1]);
+        if(!Y||!M)return null;
+        const dim=new Date(Y,M,0).getDate();
+        const tdy=today();
+        const byDate={};
+        Object.values(attendanceDB.data||{}).forEach(r=>{
+          if(!r||!r.date||String(r.date).slice(0,7)!==mvMonth)return;
+          if(String(r.cls||"")!==cls)return;
+          if(hasSections&&normSection(cls,r.section||"")!==sec)return;
+          const o=byDate[r.date]=byDate[r.date]||{p:0,t:0,mk:0,rc:0,holiday:false};
+          if(r.holiday){o.holiday=true;return;}
+          const st=r.status||{};
+          const n=Object.values(st).filter(v=>v!==undefined&&v!=="U").length;
+          o.mk+=(typeof r.markedCount==="number"?r.markedCount:n);
+          o.rc+=(typeof r.rosterCount==="number"?r.rosterCount:n);
+          Object.values(st).forEach(v=>{if(v===undefined||v==="U")return;o.t++;if(v==="P"||v==="L")o.p++;});
+        });
+        const first=new Date(Y,M-1,1);const startCol=(first.getDay()+6)%7; // Mon = column 0
+        const cells=[];for(let i=0;i<startCol;i++)cells.push(null);for(let d=1;d<=dim;d++)cells.push(d);while(cells.length%7)cells.push(null);
+        const weeks=[];for(let i=0;i<cells.length;i+=7)weeks.push(cells.slice(i,i+7));
+        const dstr=d=>mvMonth+"-"+String(d).padStart(2,"0");
+        // weekday averages (Mon..Sat) + month totals
+        const wdAgg=[0,1,2,3,4,5].map(()=>({s:0,n:0}));
+        let mp=0,mt=0,markedDays=0;
+        Object.keys(byDate).forEach(ds=>{const o=byDate[ds];if(o.holiday||!o.t)return;const wd=(new Date(ds+"T12:00").getDay()+6)%7;if(wd<=5){wdAgg[wd].s+=Math.round(o.p/o.t*100);wdAgg[wd].n++;}mp+=o.p;mt+=o.t;markedDays++;});
+        const wdAvg=wdAgg.map(a=>a.n?Math.round(a.s/a.n):null);
+        const monthPct=mt?Math.round(mp/mt*100):null;
+        let bestWd=-1,worstWd=-1;wdAvg.forEach((v,i)=>{if(v==null)return;if(bestWd<0||v>wdAvg[bestWd])bestWd=i;if(worstWd<0||v<wdAvg[worstWd])worstWd=i;});
+        const WD=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+        const colOf=p=>p>=80?["var(--bg-grn)","var(--tx-grn2)"]:p>=60?["var(--bg-amb)","var(--tx-org2)"]:["var(--bg-red)","var(--tx-red)"];
+        const cellUI=(d,ci)=>{
+          if(d==null)return <td key={"e"+ci} style={{padding:3}}/>;
+          const ds=dstr(d);const isSun=ci===6;const future=ds>tdy;const o=byDate[ds];
+          const base={borderRadius:10,padding:"7px 4px 6px",textAlign:"center",minWidth:56,cursor:(!future&&!isSun)?"pointer":"default",border:"1px solid transparent"};
+          let bg="var(--c-fff)",fg="var(--ap-ink)",body=null,tip="";
+          if(isSun){bg="transparent";fg="var(--ap-faint)";body=<div style={{fontSize:9.5,fontWeight:600}}>Sun</div>;}
+          else if(future){bg="transparent";fg="var(--ap-faint)";}
+          else if(o&&o.holiday){bg="var(--c-f7)";fg="var(--ap-muted)";body=<div style={{fontSize:9.5,fontWeight:700}}>Holiday</div>;tip="Marked as a holiday";}
+          else if(o&&o.t>0){
+            // Saved registers always show their real numbers; a part-ticked save (auto-absents) gets a dashed
+            // amber outline + a "½" marker instead of reading like it was never marked.
+            const half=o.rc>0&&o.mk<o.rc*0.6;
+            const p=Math.round(o.p/o.t*100);const c=colOf(p);bg=c[0];fg=c[1];
+            if(half)base.border="1.5px dashed var(--bd-amb)";
+            body=<div style={{fontSize:11.5,fontWeight:800}}>{p}%{half?<span style={{color:"var(--tx-org2)",fontSize:9,marginLeft:2}}>½</span>:null}<div style={{fontSize:8.5,fontWeight:600,opacity:.85}}>{o.p}/{o.t}</div></div>;
+            tip=half?(o.p+" present of "+o.t+". The teacher ticked "+o.mk+" of "+o.rc+" — "+(o.rc-o.mk)+" were auto-saved absent. Tap to verify."):(o.p+" present of "+o.t+" — tap to open the register");
+          }
+          else{bg="var(--c-fff)";fg="var(--c-94)";body=<div style={{fontSize:9.5,fontWeight:700,color:"var(--tx-org2)"}}>unmarked</div>;tip="No attendance saved — tap to mark now";}
+          return(<td key={ds} style={{padding:3}}>
+            <div title={tip} onClick={()=>{if(future||isSun)return;guardSwitch(()=>{setDate(ds);setAtab("mark");window.scrollTo(0,0);});}} style={{...base,background:bg,color:fg}}>
+              <div style={{fontSize:10,fontWeight:700,opacity:.75}}>{d}</div>{body}
+            </div>
+          </td>);
+        };
+        return(<>
+        <div className="ap-toolbar">
+          <div className="ap-subnav">{aC.map(c=><button key={c} className={"ap-pill"+(cls===c?" on":"")} onClick={()=>guardSwitch(()=>{setCls(c);const s=getSections(c);setSec(s[0]||"A");})}>{c}</button>)}</div>
+          <div className="ap-subnav">{sections.map(s=><button key={s} className={"ap-pill"+(sec===s?" on":"")} onClick={()=>guardSwitch(()=>setSec(s))}>Sec {s}</button>)}</div>
+          <div className="ap-field"><svg viewBox="0 0 24 24"><path d="M4 5h16v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M4 9h16M8 3v4M16 3v4"/></svg><input type="month" value={mvMonth} max={today().slice(0,7)} onChange={e=>setMvMonth(e.target.value)} style={{border:"none",outline:"none",background:"none",fontSize:13.5,fontFamily:"var(--ss-font)"}}/></div>
+        </div>
+        <div className="ap-panel" style={{padding:16}}>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:12}}>
+            <span style={{fontSize:14.5,fontWeight:700,color:"var(--ap-ink)"}}>{cls} · Sec {sec}</span>
+            {monthPct!=null&&<span style={{fontSize:12,fontWeight:700,padding:"4px 11px",borderRadius:99,background:colOf(monthPct)[0],color:colOf(monthPct)[1]}}>{monthPct}% month average</span>}
+            <span style={{fontSize:12,color:"var(--ap-muted)"}}>{markedDays} day{markedDays===1?"":"s"} marked</span>
+            {bestWd>=0&&worstWd>=0&&bestWd!==worstWd&&<span style={{fontSize:12,color:"var(--ap-muted)"}}>best {WD[bestWd]} {wdAvg[bestWd]}% · weakest <b style={{color:"var(--tx-org2)"}}>{WD[worstWd]} {wdAvg[worstWd]}%</b></span>}
+          </div>
+          <div style={{overflowX:"auto"}}>
+            <table style={{borderCollapse:"collapse",width:"100%",minWidth:460}}>
+              <thead><tr>{WD.map(w=><th key={w} style={{padding:"2px 3px 7px",fontSize:10,fontWeight:700,color:w==="Sun"?"var(--ap-faint)":"var(--ap-muted)",textTransform:"uppercase",letterSpacing:.5}}>{w}</th>)}</tr></thead>
+              <tbody>{weeks.map((wk,wi)=><tr key={wi}>{wk.map((d,ci)=>cellUI(d,ci))}</tr>)}</tbody>
+            </table>
+          </div>
+          <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginTop:12,paddingTop:10,borderTop:"1px solid var(--ap-line)"}}>
+            <span style={{fontSize:10.5,fontWeight:700,color:"var(--ap-muted)",textTransform:"uppercase",letterSpacing:.4}}>Weekday average</span>
+            {WD.slice(0,6).map((w,i)=>wdAvg[i]!=null?<span key={w} style={{fontSize:11.5,fontWeight:700,padding:"3px 9px",borderRadius:8,background:colOf(wdAvg[i])[0],color:colOf(wdAvg[i])[1]}}>{w} {wdAvg[i]}%</span>:null)}
+            <span style={{marginLeft:"auto",display:"inline-flex",gap:10,fontSize:10.5,color:"var(--ap-muted)"}}>
+              {[["var(--bg-grn)","≥80%"],["var(--bg-amb)","60–79%"],["var(--bg-red)","<60%"]].map(([b,l])=><span key={l} style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:10,height:10,borderRadius:3,background:b,display:"inline-block"}}/>{l}</span>)}<span style={{color:"var(--ap-muted)"}}>½ = some auto-marked absent</span>
+            </span>
+          </div>
+        </div>
+        </>);
+      })()}
 
       {absRemind&&<ReminderRun title="Notify absent parents" rows={absRemind} onClose={function(){setAbsRemind(null);}}/>}
     </div>
@@ -5855,6 +5993,147 @@ function TestParticipation({user,testsDB,studentsDB,dirDB}){
           </Card>
         </>
       )}
+    </div>
+  );
+}
+
+// ── FOCUS GROUP — the director's board for students with LOGINS (Question Bank + practice-test users) ──
+// A "focus group" student = an account with role "student". Their work syncs to users/prog_<username>
+// ({tests: test_<ts>→{score,total,pct,subject,chapters,date}, done: QB questions ticked, marks: bookmarks,
+// updatedAt}) and every wrong answer is logged in wrongAnswers — this board reads both, no new collections.
+function FocusGroupPanel({usersDB,wrongDB,dirDB}){
+  const isMob=useIsMobile();
+  const[grp,setGrp]=useState("focus"); // focus = 10th + 12th · "10" · "12" · other
+  const[open,setOpen]=useState("");
+  // name → class token from the directory (unique matches only, active students)
+  const dirCls=useMemo(()=>{
+    const m={},dup=new Set();
+    Object.keys((dirDB&&dirDB.data)||{}).forEach(k=>{
+      if(k.indexOf("dir_")!==0)return;const cn=k.slice(4).replace("_CLASS","");
+      ((dirDB.data[k]||{}).students||[]).forEach(s=>{
+        if(!s||!s.name||String(s.status||"").toLowerCase()==="left")return;
+        const nk=nmKey(s.name);
+        if(m[nk]&&m[nk]!==cn)dup.add(nk);else m[nk]=cn;
+      });
+    });
+    dup.forEach(nk=>delete m[nk]);
+    return m;
+  },[dirDB&&dirDB.data]);
+  const rows=useMemo(()=>{
+    const U=usersDB.data||{};
+    const canon=un=>safeId(String(un||"").toLowerCase());
+    const prog={};
+    Object.keys(U).forEach(k=>{const v=U[k];if(k.indexOf("prog_")===0&&v&&v.username)prog[canon(v.username)]=v;});
+    const wrongsByUser={},wrongsByName={};
+    Object.values((wrongDB&&wrongDB.data)||{}).forEach(e=>{
+      if(!e)return;
+      if(e.username)(wrongsByUser[canon(e.username)]=wrongsByUser[canon(e.username)]||[]).push(e);
+      else if(e.name)(wrongsByName[nmKey(e.name)]=wrongsByName[nmKey(e.name)]||[]).push(e);
+    });
+    // Account roster = built-in seed logins (most focus-group students exist ONLY there) + live account docs,
+    // reconciled by canonical username — same lesson as the teacher roster. A live doc marked left/removed/
+    // disabled removes the login; any prog_* practice doc with no matching account still gets a row (work
+    // must never hide because the account record is missing).
+    const acct={};
+    if((window.__currentBranch||"greencity")==="greencity")Object.entries(typeof DEFAULT_USERS!=="undefined"?DEFAULT_USERS:{}).forEach(([k,v])=>{if(v&&v.role==="student")acct[canon(k)]={uname:k,name:v.name||k};});
+    Object.entries(U).forEach(([k,u])=>{
+      if(!u||k.indexOf("__")===0||k.indexOf("prog_")===0)return;
+      if(u.role!=="student")return;
+      const cu=canon(u.username||k);
+      if(u.left===true||u.removed===true||u.active===false){delete acct[cu];return;}
+      acct[cu]={uname:u.username||k,name:u.name||u.username||k};
+    });
+    Object.keys(prog).forEach(cu=>{if(!acct[cu])acct[cu]={uname:prog[cu].username,name:prog[cu].name||prog[cu].username,orphan:true};});
+    const out=[];
+    Object.entries(acct).forEach(([cu,a])=>{
+      const uname=a.uname;
+      const tag=(String(a.name||"").match(/\((\d{1,2})/)||[])[1]||"";
+      const cleanName=String(a.name||uname).replace(/\s*\([^)]*\)\s*/g," ").replace(/\s+/g," ").trim();
+      const cls=tag||dirCls[nmKey(a.name)]||dirCls[nmKey(cleanName)]||"";
+      const p=prog[cu]||{};
+      const tests=Object.entries(p.tests||{}).map(([tk,t])=>({ts:Number(String(tk).slice(5))||0,...t})).sort((a,b)=>b.ts-a.ts);
+      const doneN=Object.keys(p.done||{}).length;
+      const bmN=Object.keys(p.marks||{}).length;
+      const wr=(wrongsByUser[cu]||[]).concat(a.name?(wrongsByName[nmKey(a.name)]||[]):[]);
+      const byCh={};wr.forEach(e=>{if(e.chapter)byCh[e.chapter]=(byCh[e.chapter]||0)+1;});
+      const weak=Object.entries(byCh).sort((a,b)=>b[1]-a[1]).slice(0,3);
+      const avg=tests.length?Math.round(tests.reduce((a,t)=>a+(Number(t.pct)||0),0)/tests.length):null;
+      const last=tests[0]||null;
+      const prevAvg=tests.length>1?Math.round(tests.slice(1,4).reduce((a,t)=>a+(Number(t.pct)||0),0)/Math.min(3,tests.length-1)):null;
+      const lastActive=p.updatedAt?Math.max(0,Math.floor((new Date()-new Date(p.updatedAt))/864e5)):null;
+      const testsWeek=tests.filter(t=>t.ts>=Date.now()-7*864e5).length;
+      out.push({uname,name:cleanName,cls,tests,testsN:tests.length,avg,last,prevAvg,doneN,bmN,mistakes:wr.length,weak,lastActive,testsWeek});
+    });
+    out.sort((a,b)=>{const la=a.lastActive==null?9999:a.lastActive,lb=b.lastActive==null?9999:b.lastActive;return la-lb||b.testsN-a.testsN||a.name.localeCompare(b.name);});
+    return out;
+  },[usersDB.data,wrongDB&&wrongDB.data,dirCls]);
+  const inGrp=r=>grp==="focus"?(r.cls==="10"||r.cls==="12"):grp==="other"?(r.cls!=="10"&&r.cls!=="12"):r.cls===grp;
+  const list=rows.filter(inGrp);
+  const otherN=rows.filter(r=>r.cls!=="10"&&r.cls!=="12").length;
+  const activeWeek=list.filter(r=>r.lastActive!=null&&r.lastActive<=7).length;
+  const totTests=list.reduce((a,r)=>a+r.testsN,0);
+  const scored=list.filter(r=>r.avg!=null);
+  const grpAvg=scored.length?Math.round(scored.reduce((a,r)=>a+r.avg,0)/scored.length):null;
+  const SUBJ={std:"Maths Std",bas:"Maths Basic",sci:"Science",sst:"SST",eng:"English",comp:"Computer",m9:"Maths",s9:"Science",e9:"English",sst9:"SST",mat11:"Maths",mat12:"Maths",phy11:"Physics",phy12:"Physics",chem11:"Chemistry",chem12:"Chemistry",bio11:"Biology",bio12:"Biology",acc11:"Accounts",acc12:"Accounts",bst11:"Bus. Studies",bst12:"Bus. Studies",eco11:"Economics",eco12:"Economics",mistakes:"Mistake re-attempt"};
+  const agoTxt=d=>d==null?"no activity yet":d===0?"active today":d===1?"active yesterday":"active "+d+" days ago";
+  const agoCol=d=>d==null?"var(--tx-red)":d<=3?"var(--tx-grn2)":d<=7?"var(--tx-org2)":"var(--tx-red)";
+  const pctCol=p=>p>=75?"var(--tx-grn2)":p>=50?"var(--tx-org2)":"var(--tx-red)";
+  const trend=r=>{if(!r.last||r.prevAvg==null)return null;const d=(Number(r.last.pct)||0)-r.prevAvg;if(d>=5)return <span title={"Last test "+r.last.pct+"% vs earlier avg "+r.prevAvg+"%"} style={{color:"var(--tx-grn2)",fontWeight:800}}>▲</span>;if(d<=-5)return <span title={"Last test "+r.last.pct+"% vs earlier avg "+r.prevAvg+"%"} style={{color:"var(--tx-red)",fontWeight:800}}>▼</span>;return <span title="Holding steady" style={{color:"var(--ap-muted)",fontWeight:800}}>→</span>;};
+  if(usersDB.loading)return <Spinner/>;
+  return(
+    <div className="fi" style={{display:"flex",flexDirection:"column",gap:16,maxWidth:1100,margin:"0 auto"}}>
+      <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:16,flexWrap:"wrap"}}>
+        <div><div className="ap-hi">Focus Group</div><div className="ap-hisub">Students with their own login — self-practice on the Question Bank & practice tests, tracked live.</div></div>
+        <div className="ap-subnav">{[["focus","10th + 12th"],["10","Class 10"],["12","Class 12"],["other","Others · "+otherN]].map(([v,l])=><button key={v} className={"ap-pill"+(grp===v?" on":"")} onClick={()=>setGrp(v)}>{l}</button>)}</div>
+      </div>
+      <div className="grid4" style={{display:"grid",gridTemplateColumns:isMob?"repeat(2,1fr)":"repeat(4,1fr)",gap:14}}>
+        <StatCard label="In the group" val={list.length} icon="🎯" color="var(--brand)" sub="student logins"/>
+        <StatCard label="Active this week" val={activeWeek+" / "+list.length} icon="⚡" color={activeWeek>=list.length*0.6?"var(--tx-grn2)":"var(--tx-org)"} sub="practised in the last 7 days"/>
+        <StatCard label="Practice tests" val={totTests} icon="📝" color="var(--tx-pur)" sub="taken all-time by this group"/>
+        <StatCard label="Group average" val={grpAvg!=null?grpAvg+"%":"—"} icon="📊" color={grpAvg!=null?pctCol(grpAvg):"var(--ap-muted)"} sub="across all their tests"/>
+      </div>
+      {list.length===0?<div className="ap-panel" style={{padding:26,textAlign:"center",fontSize:13,color:"var(--c-94)"}}>No student logins in this group yet — create them in Accounts (role: Student) and their practice will appear here automatically.</div>:
+      <div className="ap-panel" style={{padding:0,overflow:"hidden"}}>
+        <div style={{padding:"12px 16px",borderBottom:"1px solid var(--ap-line)",fontWeight:650,fontSize:15,color:"var(--ap-ink)"}}>Student progress <span style={{fontSize:12,color:"var(--ap-muted)",fontWeight:500}}>· most recently active first · tap a student for detail</span></div>
+        <div style={{display:"flex",flexDirection:"column"}}>
+          {list.map(r=>{const isOpen=open===r.uname;return(
+            <div key={r.uname} style={{borderTop:"1px solid var(--c-f0)"}}>
+              <button onClick={()=>setOpen(isOpen?"":r.uname)} style={{width:"100%",display:"grid",gridTemplateColumns:isMob?"1fr auto":"minmax(150px,1.4fr) 110px 120px 110px 90px 24px",alignItems:"center",gap:10,padding:"11px 16px",background:"none",border:"none",cursor:"pointer",textAlign:"left",fontFamily:"var(--ss-font)"}}>
+                <span style={{minWidth:0}}>
+                  <span style={{fontSize:13.5,fontWeight:700,color:"var(--ap-ink)",display:"block",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{r.name} {r.cls?<span style={{fontSize:10.5,fontWeight:700,background:"var(--bg-blu)",color:"var(--tx-blu)",borderRadius:6,padding:"1px 7px",marginLeft:4}}>Cl {r.cls}</span>:null}</span>
+                  <span style={{fontSize:11,color:agoCol(r.lastActive),fontWeight:600}}>{agoTxt(r.lastActive)}{r.testsWeek?<span style={{color:"var(--ap-muted)",fontWeight:500}}> · {r.testsWeek} test{r.testsWeek>1?"s":""} this week</span>:null}</span>
+                </span>
+                {!isMob&&<span style={{fontSize:12.5,color:"var(--ap-ink2)"}}><b style={{fontFamily:"var(--ss-font)"}}>{r.testsN}</b> test{r.testsN===1?"":"s"}</span>}
+                {!isMob&&<span style={{fontSize:12.5}}>{r.avg!=null?<span><b style={{color:pctCol(r.avg)}}>{r.avg}%</b> avg {trend(r)}</span>:<span style={{color:"var(--ap-faint)"}}>no tests</span>}</span>}
+                {!isMob&&<span style={{fontSize:12.5,color:r.doneN?"var(--ap-ink2)":"var(--ap-faint)"}}>{r.doneN} QB done</span>}
+                {!isMob&&<span style={{fontSize:12.5,color:r.mistakes?"var(--tx-org2)":"var(--ap-faint)"}}>{r.mistakes} wrong</span>}
+                <span style={{color:"var(--c-ae)",transform:isOpen?"rotate(90deg)":"none",transition:"transform .15s"}}>▸</span>
+              </button>
+              {isOpen&&<div style={{padding:"2px 16px 14px",display:"flex",flexDirection:"column",gap:10}}>
+                {isMob&&<div style={{display:"flex",gap:8,flexWrap:"wrap",fontSize:12}}>
+                  <span><b>{r.testsN}</b> tests</span>{r.avg!=null&&<span><b style={{color:pctCol(r.avg)}}>{r.avg}%</b> avg {trend(r)}</span>}<span>{r.doneN} QB done</span><span style={{color:r.mistakes?"var(--tx-org2)":"inherit"}}>{r.mistakes} wrong</span>
+                </div>}
+                {r.tests.length>0&&<div>
+                  <div style={{fontSize:10.5,fontWeight:800,letterSpacing:.5,textTransform:"uppercase",color:"var(--ap-muted)",marginBottom:6}}>Recent practice tests</div>
+                  <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                    {r.tests.slice(0,5).map((t,i)=>(
+                      <div key={i} style={{display:"flex",alignItems:"center",gap:10,fontSize:12.5,padding:"7px 11px",background:"var(--c-f7)",borderRadius:9,flexWrap:"wrap"}}>
+                        <b style={{color:pctCol(Number(t.pct)||0),fontFamily:"var(--ss-font)",minWidth:44}}>{t.pct}%</b>
+                        <span style={{color:"var(--ap-ink2)"}}>{t.score}/{t.total}</span>
+                        <span style={{color:"var(--ap-muted)"}}>{SUBJ[t.subject]||t.subject||"—"}</span>
+                        <span style={{marginLeft:"auto",color:"var(--ap-faint)",fontSize:11.5}}>{t.ts?new Date(t.ts).toLocaleDateString("en-IN",{day:"numeric",month:"short"}):(t.date||"")}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>}
+                {r.weak.length>0&&<div style={{fontSize:12.5,color:"var(--ap-ink2)"}}><b style={{color:"var(--tx-org2)"}}>Weak chapters:</b> {r.weak.map(([c,n])=>c+" ("+n+")").join(" · ")}</div>}
+                {r.bmN>0&&<div style={{fontSize:12,color:"var(--ap-muted)"}}>{r.bmN} question{r.bmN>1?"s":""} bookmarked for revision</div>}
+                {r.testsN===0&&r.doneN===0&&<div style={{fontSize:12.5,color:"var(--ap-muted)"}}>Login created but no practice recorded yet — worth a nudge.</div>}
+              </div>}
+            </div>
+          );})}
+        </div>
+      </div>}
     </div>
   );
 }
@@ -8708,7 +8987,9 @@ function Fees({user,feesDB,studentsDB,academicRosterDB,dirDB,metaDB}){
   const[structCls,setStructCls]=useState(SCHOOL.classes[0]);
   const[draft,setDraft]=useState([]);
   const[expandCls,setExpandCls]=useState("");
-  const[dueFilter,setDueFilter]=useState("overdue"); // overdue | unpaid | balance | all
+  const[dueFilter,setDueFilter]=useState("overdue"); // overdue | unpaid | partpaid | balance | all
+  const[ageFilter,setAgeFilter]=useState(function(){try{var j=window.__feesJump;if(j&&j.age)return j.age;}catch(_){}return "";}); // "" | "1-7" | "8-30" | "31-60" | "61+" (cockpit aging chips deep-link here)
+  const[defCls,setDefCls]=useState(""); // heatmap cell click → Defaulters scoped to one class
   const[remindRun,setRemindRun]=useState(null); // bulk reminder run: {rows, idx, done:{admNo:'sent'|'skip'}, msgs:{admNo:text}}
   const[isConc,setIsConc]=useState(false);
   const[wStudent,setWStudent]=useState("");
@@ -9090,6 +9371,46 @@ td.r,th.r{text-align:right}
           <span style={{fontSize:12.5,color:__isErrMsg(pubMsg)?"#d2342a":pubMsg.charAt(0)==="✓"?"var(--tx-grn2)":"var(--c-64)",flex:1,minWidth:200}}>{pubMsg||"Lets each parent see their own child's fee balance in the portal. Re-run after recording payments."}</span>
         </div>}
         <UpiCollections feesDB={feesDB} metaDB={metaDB} intentsDB={intentsDB} user={user} isDirector={isDirector}/>
+        {(()=>{ /* ── Collection heatmap — class × installment, % of billed covered (cash+concession+waiver, allocated oldest-first) ── */
+          const _tdy=today();
+          const hm=agg.perClass.map(pc=>{
+            const heads=(structure[pc.cls]||[]).filter(h=>h&&Number(h.amount)>0).slice().sort((a,b)=>String(a.due||"").localeCompare(String(b.due||"")));
+            if(!heads.length||!pc.rows.length)return null;
+            const cover=heads.map(()=>0);
+            pc.rows.forEach(r=>{let left=r.cash+r.conc+(r.waiver||0);for(let i=0;i<heads.length&&left>0;i++){const take=Math.min(left,Number(heads[i].amount||0));cover[i]+=take;left-=take;}});
+            const cells=heads.map((h,i)=>{const billed=Number(h.amount||0)*pc.rows.length;return{name:h.name||("Installment "+(i+1)),due:h.due||"",pct:billed?Math.round(cover[i]/billed*100):null,future:!!(h.due&&String(h.due)>_tdy)};});
+            return {cls:pc.cls,n:pc.rows.length,cells};
+          }).filter(Boolean);
+          if(!hm.length)return null;
+          const cols=Math.max(...hm.map(r=>r.cells.length));
+          const ORD=["I","II","III","IV","V","VI"];
+          const colFor=(pct)=>pct>=90?["var(--bg-grn)","var(--tx-grn2)"]:pct>=75?["rgba(201,168,76,.16)","var(--tx-gold)"]:pct>=50?["var(--bg-amb)","var(--tx-org2)"]:["var(--bg-red)","var(--tx-red)"];
+          return(<><InsPanel title="Collection heatmap" sub="each cell = % of that installment covered (waivers & concessions count) · tap a cell to chase that class" pad={0}>
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"separate",borderSpacing:4,minWidth:420,padding:"6px 12px"}}>
+                <thead><tr>
+                  <th style={{textAlign:"left",padding:"6px 10px",fontSize:10.5,fontWeight:700,color:"var(--ap-muted)",textTransform:"uppercase",letterSpacing:.4}}>Class</th>
+                  {Array.from({length:cols},(_,i)=><th key={i} style={{padding:"6px 4px",fontSize:10.5,fontWeight:700,color:"var(--ap-muted)"}}>{ORD[i]||(i+1)}</th>)}
+                </tr></thead>
+                <tbody>{hm.map(r=>(
+                  <tr key={r.cls}>
+                    <td style={{padding:"4px 10px",fontSize:12.5,fontWeight:700,color:"var(--ap-ink)",whiteSpace:"nowrap"}}>{String(r.cls).replace("Class ","Cl ")} <span style={{color:"var(--ap-faint)",fontWeight:500}}>· {r.n}</span></td>
+                    {Array.from({length:cols},(_,i)=>{
+                      const c=r.cells[i];
+                      if(!c)return <td key={i}/>;
+                      if(c.future)return(<td key={i} title={c.name+(c.due?" · due "+fmtDate(c.due):"")+" · not due yet · "+c.pct+"% already in"} style={{textAlign:"center",padding:"7px 4px",borderRadius:8,background:"var(--c-f7)",color:"var(--c-94)",fontSize:11.5,fontWeight:600}}>{c.pct>0?c.pct+"%":"—"}</td>);
+                      const [bg,fg]=colFor(c.pct);
+                      return(<td key={i} onClick={()=>{setDefCls(r.cls);setSub("defaulters");setDueFilter("overdue");window.scrollTo(0,0);}} title={c.name+(c.due?" · was due "+fmtDate(c.due):"")+" · "+c.pct+"% collected — tap to chase "+r.cls} style={{textAlign:"center",padding:"7px 4px",borderRadius:8,background:bg,color:fg,fontSize:12,fontWeight:800,cursor:"pointer"}}>{c.pct}%</td>);
+                    })}
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+            <div style={{display:"flex",gap:12,flexWrap:"wrap",alignItems:"center",padding:"4px 16px 12px",fontSize:11,color:"var(--ap-muted)"}}>
+              {[["var(--bg-grn)","≥90%"],["rgba(201,168,76,.16)","75–89%"],["var(--bg-amb)","50–74%"],["var(--bg-red)","<50%"],["var(--c-f7)","not due yet"]].map(([bg,lbl])=><span key={lbl} style={{display:"inline-flex",alignItems:"center",gap:5}}><span style={{width:12,height:12,borderRadius:4,background:bg,border:"1px solid var(--ap-line)",display:"inline-block"}}/>{lbl}</span>)}
+            </div>
+          </InsPanel><div style={{height:16}}/></>);
+        })()}
         <InsPanel title="Outstanding by class" sub="most due first — tap a class to chase the parents" pad={0}>
           {agg.perClass.length===0?<div style={{padding:24,textAlign:"center",color:"var(--c-94)",fontSize:13}}>No classes with students yet.</div>:
           <div style={{padding:"10px 16px 14px",display:"flex",flexDirection:"column",gap:13}}>
@@ -9411,21 +9732,42 @@ td.r,th.r{text-align:right}
       {sub==="defaulters"&&(()=>{
         const FILT=[["overdue","Overdue now"],["unpaid","Not paid"],["partpaid","Part-paid"],["balance","Has balance"],["all","All"]];
         const amtOf=(r)=>dueFilter==="overdue"?r.overdue:r.bal;
+        const _tdy=today();
+        // age of the oldest unmet past-due installment (only meaningful on the Overdue view)
+        const ageOf=(r,cls)=>__feeAgeDays(structure[cls]||[],r.cash+r.conc+(r.waiver||0),_tdy);
+        const inBucket=(d)=>ageFilter==="1-7"?(d>=1&&d<=7):ageFilter==="8-30"?(d>=8&&d<=30):ageFilter==="31-60"?(d>=31&&d<=60):ageFilter==="61+"?(d>=61):true;
         // "partpaid" = actually paid some CASH but not the full year yet (paid>0 AND balance>0)
-        const groups=agg.perClass.map(pc=>({cls:pc.cls,rows:pc.rows.filter(r=>dueFilter==="overdue"?r.overdue>0:dueFilter==="unpaid"?r.status==="unpaid":dueFilter==="partpaid"?(r.cash>0&&r.bal>0):dueFilter==="balance"?r.bal>0:true),due:0})).filter(g=>g.rows.length>0);
+        const groups0=agg.perClass.filter(pc=>!defCls||pc.cls===defCls).map(pc=>({cls:pc.cls,rows:pc.rows.filter(r=>dueFilter==="overdue"?r.overdue>0:dueFilter==="unpaid"?r.status==="unpaid":dueFilter==="partpaid"?(r.cash>0&&r.bal>0):dueFilter==="balance"?r.bal>0:true),due:0})).filter(g=>g.rows.length>0);
+        // aging buckets (₹ overdue by how long the oldest unmet installment has waited) — before the age filter
+        const ageBk={"1-7":0,"8-30":0,"31-60":0,"61+":0};
+        if(dueFilter==="overdue")groups0.forEach(g=>g.rows.forEach(r=>{const d=ageOf(r,g.cls);if(d>=61)ageBk["61+"]+=r.overdue;else if(d>=31)ageBk["31-60"]+=r.overdue;else if(d>=8)ageBk["8-30"]+=r.overdue;else if(d>=1)ageBk["1-7"]+=r.overdue;}));
+        const groups=(dueFilter==="overdue"&&ageFilter)?groups0.map(g=>({cls:g.cls,rows:g.rows.filter(r=>inBucket(ageOf(r,g.cls))),due:0})).filter(g=>g.rows.length>0):groups0;
         groups.forEach(g=>{g.due=g.rows.reduce((a,r)=>a+amtOf(r),0);g.rows.sort((a,b)=>amtOf(b)-amtOf(a)||a.student.localeCompare(b.student));});
         groups.sort((a,b)=>b.due-a.due); // biggest dues first — chase the largest amounts
         const total=groups.reduce((a,g)=>a+g.rows.length,0),totalDue=groups.reduce((a,g)=>a+g.due,0);
-        return <InsPanel title="Pending fees" sub={total+" student"+(total===1?"":"s")+(dueFilter==="unpaid"?" haven't paid anything yet":dueFilter==="overdue"?" past an installment due date · "+inr(totalDue)+" overdue":dueFilter==="partpaid"?" have part-paid · "+inr(totalDue)+" still owed":" · "+inr(totalDue)+" outstanding")} pad={0}
+        const AGE_META=[["1-7","≤7 days","var(--bg-grn)","var(--tx-grn2)"],["8-30","8–30","var(--bg-amb)","var(--tx-org2)"],["31-60","31–60","var(--bg-org)","var(--tx-org)"],["61+","60+ days","var(--bg-red)","var(--tx-red)"]];
+        const ageTotal=ageBk["1-7"]+ageBk["8-30"]+ageBk["31-60"]+ageBk["61+"];
+        return <InsPanel title="Pending fees" sub={total+" student"+(total===1?"":"s")+(dueFilter==="unpaid"?" haven't paid anything yet":dueFilter==="overdue"?" past an installment due date · "+inr(totalDue)+" overdue":dueFilter==="partpaid"?" have part-paid · "+inr(totalDue)+" still owed":" · "+inr(totalDue)+" outstanding")+(defCls?" · "+defCls+" only":"")} pad={0}
           right={<div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-            <div className="ap-subnav">{FILT.map(f=><button key={f[0]} className={"ap-pill"+(dueFilter===f[0]?" on":"")} onClick={()=>setDueFilter(f[0])} style={{fontSize:11.5,padding:"5px 11px"}}>{f[1]}</button>)}</div>
+            {defCls&&<button onClick={()=>setDefCls("")} style={{display:"inline-flex",alignItems:"center",gap:5,background:"var(--bg-blu)",color:"var(--tx-blu)",border:"none",borderRadius:9,padding:"6px 11px",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>{defCls} only ×</button>}
+            <div className="ap-subnav">{FILT.map(f=><button key={f[0]} className={"ap-pill"+(dueFilter===f[0]?" on":"")} onClick={()=>{setDueFilter(f[0]);if(f[0]!=="overdue")setAgeFilter("");}} style={{fontSize:11.5,padding:"5px 11px"}}>{f[1]}</button>)}</div>
             {total>0&&<button onClick={()=>{
               var rows=[];groups.forEach(function(g){g.rows.forEach(function(r){var a=amtOf(r);if(a>0)rows.push({key:String(r.admNo||r.student),name:r.student,meta:g.cls,phone:_feePhone(r.admNo),amount:a,msg:_feeMsg(r.student,g.cls,a)});});});
               setRemindRun(rows);
             }} style={{display:"inline-flex",alignItems:"center",gap:5,background:"#25D366",color:"#fff",border:"none",borderRadius:9,padding:"7px 13px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Remind all · {total}</button>}
             {total>0&&<Btn v="ghost" style={{padding:"7px 12px",fontSize:12}} onClick={exportDefaulters}>⬇ CSV</Btn>}
           </div>}>
-          {total===0?<div style={{padding:24,textAlign:"center",color:"var(--c-94)",fontSize:13}}>{dueFilter==="unpaid"?"Every student has paid something.":dueFilter==="overdue"?"No overdue installments — everyone is on time.":dueFilter==="partpaid"?"No part-payments — students have either cleared or paid nothing.":"No outstanding balances."}</div>:
+          {dueFilter==="overdue"&&ageTotal>0&&<div style={{padding:"12px 18px 4px"}}>
+            <div style={{display:"flex",height:10,borderRadius:99,overflow:"hidden",background:"var(--c-f0)"}}>
+              {AGE_META.map(([k,lbl,bg,fg])=>ageBk[k]>0?<div key={k} title={lbl+" · "+inr(ageBk[k])} style={{width:Math.max(2,ageBk[k]/ageTotal*100)+"%",background:fg,opacity:(ageFilter&&ageFilter!==k)?.25:.85}}/>:null)}
+            </div>
+            <div style={{display:"flex",gap:7,flexWrap:"wrap",marginTop:8,alignItems:"center"}}>
+              <span style={{fontSize:10.5,fontWeight:700,color:"var(--ap-muted)",textTransform:"uppercase",letterSpacing:.4}}>Waiting since</span>
+              {AGE_META.map(([k,lbl,bg,fg])=>ageBk[k]>0?<button key={k} onClick={()=>setAgeFilter(ageFilter===k?"":k)} title={"Show only dues aged "+lbl} style={{fontSize:11.5,fontWeight:700,padding:"5px 11px",borderRadius:9,border:"1.5px solid "+(ageFilter===k?fg:"transparent"),background:bg,color:fg,cursor:"pointer",fontFamily:"var(--ss-font)"}}>{lbl} · {inrShort(ageBk[k])}{ageFilter===k?" ×":""}</button>:null)}
+              {ageFilter&&<button onClick={()=>setAgeFilter("")} style={{fontSize:11.5,fontWeight:600,padding:"5px 10px",borderRadius:9,border:"1px solid var(--c-d2)",background:"var(--c-fff)",color:"var(--ap-ink2)",cursor:"pointer",fontFamily:"var(--ss-font)"}}>Show all</button>}
+            </div>
+          </div>}
+          {total===0?<div style={{padding:24,textAlign:"center",color:"var(--c-94)",fontSize:13}}>{dueFilter==="unpaid"?"Every student has paid something.":dueFilter==="overdue"?(ageFilter?"No dues waiting in this age band.":"No overdue installments — everyone is on time."):dueFilter==="partpaid"?"No part-payments — students have either cleared or paid nothing.":"No outstanding balances."}</div>:
           <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:640}}>
             <thead><tr><th style={{...th,paddingLeft:18}}>Student</th><th style={{...th,textAlign:"right"}}>Annual</th><th style={{...th,textAlign:"right"}}>Paid</th><th style={{...th,textAlign:"right"}}>{dueFilter==="overdue"?"Overdue":"Balance"}</th><th style={{...th,textAlign:"right",paddingRight:18}}>Chase the parent</th></tr></thead>
             <tbody>{groups.map(g=>[
@@ -15941,6 +16283,7 @@ function App(){
       {id:"profile",       label:"Profile 360°"},
       {id:"topics",        label:"Topics"},
       {id:"testschedule",  label:"Test Schedule"},
+      ...(isAdmin?[{id:"focusgroup", label:"Focus Group"}]:[]),
       ...(isAdmin?[{id:"tracker", label:"Monthly Tracker"}]:[]),
       ...(isDirector?[{id:"branchsetup", label:"Branch Setup"}]:[]),
       {id:"teacherlog",    label:"Teacher Log"},
@@ -15999,6 +16342,15 @@ function App(){
   return(
     <div className="ap-shell"><ToastHost/><ConfirmHost/><OfflineBanner/><StaffPhonePrompt user={user} onSaved={ph=>setUser(u=>u?{...u,phone:ph}:u)}/>
       <div className={"ap-scrim"+(navOpen?" open":"")} onClick={()=>setNavOpen(false)}/>
+      {/* Mobile quick-bar — the 4 most-used screens, one thumb-tap away (phone widths only; parents keep their own nav) */}
+      {!isParent&&(()=>{
+        const items=user.role==="teacher"
+          ?[{t:"dashboard",l:"Home",ic:"home-grp"},{t:"attendance",l:"Attendance",ic:"attendance-grp"},{t:"enter",l:"Marks",ic:"tracker-grp"},{t:"mytimetable",l:"Timetable",ic:"mytimetable-grp"}]
+          :[{t:"dashboard",l:"Home",ic:"home-grp"},(canFees?{t:"fees",l:"Fees",ic:"fees-grp"}:{t:"overview",l:"Academics",ic:"tracker-grp"}),{t:"attendance",l:"Attendance",ic:"attendance-grp"},{t:"directory",l:"Students",ic:"directory-grp"}];
+        return(<nav className="ap-qbar">{items.map(it=>(
+          <button key={it.t} className={tab===it.t?"on":""} onClick={()=>{setTab(it.t);setNavOpen(false);window.scrollTo(0,0);}}><NavIcon id={it.ic}/>{it.l}</button>
+        ))}</nav>);
+      })()}
       {/* ─── Sidebar ─── */}
       <aside className={"ap-sidebar"+(navOpen?" open":"")}>
         <div className="ap-brand">
@@ -16114,6 +16466,7 @@ function App(){
         {tab==="student"&&!isParent&&<StudentReport user={user} testsDB={testsDB} studentsDB={studentsDB} dirDB={dirDB} academicRosterDB={academicRosterDB} jumpStudent={jumpStudent}/>}
         {tab==="profile"&&!isParent&&<StudentProfile user={user} testsDB={testsDB} examsDB={examsDB} studentsDB={studentsDB} attendanceDB={attendanceDB} wrongDB={wrongDB} feesDB={feesDB} canFees={canFees} dirDB={dirDB} academicRosterDB={academicRosterDB}/>}
         {tab==="testschedule"&&!isParent&&<TestSchedulePanel user={user} ttSetDB={ttSetDB} usersDB={usersDB}/>}
+        {tab==="focusgroup"&&isAdmin&&<FocusGroupPanel usersDB={usersDB} wrongDB={wrongDB} dirDB={dirDB}/>}
         {tab==="insights"&&isAdmin&&<Insights testsDB={testsDB} studentsDB={studentsDB} attendanceDB={attendanceDB} wrongDB={wrongDB} usersDB={usersDB} dirDB={dirDB} academicRosterDB={academicRosterDB}/>}
         {tab==="fees"&&canFees&&<Fees user={user} feesDB={feesDB} studentsDB={studentsDB} academicRosterDB={academicRosterDB} dirDB={dirDB} metaDB={metaDB}/>}
         {tab==="salary"&&canFees&&<SalaryPanel user={user}/>}
