@@ -447,6 +447,14 @@ body,.ap-panel,.ap-content,.ap-nav,.ap-topbar{transition:background-color .25s e
 .ap-lrow{align-items:center;padding:11px 20px;border-top:1px solid var(--ap-line);transition:background .12s}
 .ap-lrow:hover{background:var(--c-f7)}
 .ap-roll{width:32px;height:32px;border-radius:9px;background:var(--c-f0);display:grid;place-items:center;font-size:12.5px;font-weight:700;color:var(--ap-ink2);font-feature-settings:"tnum"}
+/* Enter Marks grid — responsive so the STUDENT NAME column never collapses on a phone (fixed cols used to overflow a narrow screen and squeeze the name to 0 width, hiding every name). */
+.em-mgrid{display:grid;grid-template-columns:54px minmax(0,1fr) 150px 66px 64px;gap:12px;align-items:center}
+@media(max-width:600px){
+  .em-mgrid{grid-template-columns:26px minmax(0,1fr) 60px 44px;gap:8px}
+  .em-mgrid.ap-lrow,.em-mgrid.ap-lhead{padding-left:12px;padding-right:12px}
+  .em-mgrid .ap-avt{display:none}
+  .em-mgrid .em-col-grade{display:none}
+}
 .qbfig{margin:10px 0;text-align:center}.qbfig svg,.qbfig img{max-width:100%;max-height:280px;height:auto;background:#fff;border:1px solid var(--c-e6);border-radius:8px;padding:6px}
 .ap-mini{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:var(--ap-muted);background:none;border:none;cursor:pointer;transition:.15s;font-size:13px}
 .ap-mini:hover{background:#eef0f3;color:var(--ap-ink)}
@@ -6413,7 +6421,6 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB}){
   const GRADS=[["var(--ap-accent)","#4aa6ff"],["var(--tx-pur)","#8f8aef"],["var(--tx-grn2)","#56c98a"],["var(--tx-org)","#e9a64f"],["#d2342a","#f06a60"]];
   const initials=n=>n.split(" ").filter(Boolean).map(w=>w[0]).slice(0,2).join("").toUpperCase();
   const gcolor=p=>p>=75?"var(--tx-grn2)":p>=50?"var(--tx-org)":"#d2342a";
-  const mcol="54px 1fr 150px 66px 64px";
   return(
     <div className="fi" style={{display:"flex",flexDirection:"column",gap:18}}>
       {/* context strip — navy, with live mini-stats */}
@@ -6486,14 +6493,14 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB}){
         <>
           <div style={{fontSize:12.5,color:"var(--ap-muted)",padding:"0 2px"}}>Tip — press <strong style={{color:"var(--ap-ink2)"}}>Tab</strong> or <strong style={{color:"var(--ap-ink2)"}}>Enter</strong> after each mark to jump to the next student.</div>
           <div className="ap-list">
-            <div className="ap-lhead" style={{display:"grid",gridTemplateColumns:mcol,gap:12}}>
-              <div>Roll</div><div>Student</div><div>Marks /{total}</div><div>Pct</div><div>Grade</div>
+            <div className="ap-lhead em-mgrid">
+              <div>Roll</div><div>Student</div><div>Marks /{total}</div><div>Pct</div><div className="em-col-grade">Grade</div>
             </div>
             {students.map((s,i)=>{
               const m=rows[s];const has=m!==undefined&&m!=="";const mNum=Number(m);const isOver=has&&mNum>total;
               const p=has&&!isOver?pct(mNum,total):null;const g=p!==null?gradeOf(p):null;const grd=GRADS[i%GRADS.length];
               return(
-                <div key={s} className="ap-lrow" style={{display:"grid",gridTemplateColumns:mcol,gap:12,background:isOver?"var(--bg-red)":undefined}}>
+                <div key={s} className="ap-lrow em-mgrid" style={{background:isOver?"var(--bg-red)":undefined}}>
                   <div className="ap-roll">{i+1}</div>
                   <div style={{display:"flex",alignItems:"center",gap:11,minWidth:0}}>
                     <div className="ap-avt" style={{width:32,height:32,fontSize:12,background:"linear-gradient(140deg,"+grd[0]+","+grd[1]+")"}}>{initials(s)}</div>
@@ -6504,11 +6511,11 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB}){
                       ref={el=>inputRefs.current[i]=el}
                       onChange={e=>setMark(s,e.target.value)}
                       onKeyDown={e=>handleKeyDown(e,i)}
-                      className="ss-input" style={{width:122,padding:"8px 12px",borderRadius:9,border:"1px solid "+(isOver?"#fca5a5":"var(--c-d2)"),fontSize:14,fontFamily:"var(--ss-font)",outline:"none",background:"var(--c-fff)",textAlign:"center"}}/>
+                      className="ss-input" style={{width:"100%",maxWidth:122,padding:"8px 12px",borderRadius:9,border:"1px solid "+(isOver?"#fca5a5":"var(--c-d2)"),fontSize:14,fontFamily:"var(--ss-font)",outline:"none",background:"var(--c-fff)",textAlign:"center"}}/>
                     {isOver&&<div style={{fontSize:10,color:"var(--tx-red)",marginTop:2}}>Exceeds {total}</div>}
                   </div>
                   <div style={{fontFamily:"var(--ss-font)",fontSize:13.5,fontWeight:700,color:p!==null?gcolor(p):"var(--c-cb)"}}>{p!==null?p+"%":"—"}</div>
-                  <div>{g?<span style={{background:g.bg,color:g.c,borderRadius:7,padding:"3px 9px",fontSize:11,fontWeight:700}}>{g.l}</span>:<span style={{color:"var(--c-cb)",fontSize:13}}>—</span>}</div>
+                  <div className="em-col-grade">{g?<span style={{background:g.bg,color:g.c,borderRadius:7,padding:"3px 9px",fontSize:11,fontWeight:700}}>{g.l}</span>:<span style={{color:"var(--c-cb)",fontSize:13}}>—</span>}</div>
                 </div>
               );
             })}
