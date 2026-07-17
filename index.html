@@ -5608,13 +5608,17 @@ function Attendance({user,attendanceDB,studentsDB,usersDB,academicRosterDB,dirDB
       )}
 
       {atab==="month"&&(()=>{ /* ── MONTH HEATMAP — one class-section, every day at a glance ── */
-        const parts=mvMonth.split("-");const Y=Number(parts[0]),M=Number(parts[1]);
-        if(!Y||!M)return null;
+        // Sanitize: a phone's month picker can hand back an empty/partial value when changed. NEVER early-return
+        // null here — that would unmount the whole view INCLUDING the month picker, stranding the user on a blank
+        // screen with no control to recover. Fall back to the current month instead so the view always renders.
+        const safeMonth=(/^\d{4}-(0[1-9]|1[0-2])$/.test(mvMonth))?mvMonth:today().slice(0,7);
+        const parts=safeMonth.split("-");const Y=Number(parts[0]),M=Number(parts[1]);
+        const stepMonth=(delta)=>{var d=new Date(Y,M-1+delta,1);var nm=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");if(delta>0&&nm>today().slice(0,7))return;setMvMonth(nm);};
         const dim=new Date(Y,M,0).getDate();
         const tdy=today();
         const byDate={};
         Object.values(attendanceDB.data||{}).forEach(r=>{
-          if(!r||!r.date||String(r.date).slice(0,7)!==mvMonth)return;
+          if(!r||!r.date||String(r.date).slice(0,7)!==safeMonth)return;
           if(String(r.cls||"")!==cls)return;
           if(hasSections&&normSection(cls,r.section||"")!==normSection(cls,sec))return;
           const o=byDate[r.date]=byDate[r.date]||{p:0,t:0,mk:0,rc:0,holiday:false};
@@ -5628,7 +5632,7 @@ function Attendance({user,attendanceDB,studentsDB,usersDB,academicRosterDB,dirDB
         const first=new Date(Y,M-1,1);const startCol=(first.getDay()+6)%7; // Mon = column 0
         const cells=[];for(let i=0;i<startCol;i++)cells.push(null);for(let d=1;d<=dim;d++)cells.push(d);while(cells.length%7)cells.push(null);
         const weeks=[];for(let i=0;i<cells.length;i+=7)weeks.push(cells.slice(i,i+7));
-        const dstr=d=>mvMonth+"-"+String(d).padStart(2,"0");
+        const dstr=d=>safeMonth+"-"+String(d).padStart(2,"0");
         // weekday averages (Mon..Sat) + month totals
         const wdAgg=[0,1,2,3,4,5].map(()=>({s:0,n:0}));
         let mp=0,mt=0,markedDays=0;
@@ -5666,7 +5670,11 @@ function Attendance({user,attendanceDB,studentsDB,usersDB,academicRosterDB,dirDB
         <div className="ap-toolbar">
           <div className="ap-subnav">{aC.map(c=><button key={c} className={"ap-pill"+(cls===c?" on":"")} onClick={()=>guardSwitch(()=>{setCls(c);const s=getSections(c);setSec(s[0]||"A");})}>{c}</button>)}</div>
           <div className="ap-subnav">{sections.map(s=><button key={s} className={"ap-pill"+(sec===s?" on":"")} onClick={()=>guardSwitch(()=>setSec(s))}>Sec {s}</button>)}</div>
-          <div className="ap-field"><svg viewBox="0 0 24 24"><path d="M4 5h16v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M4 9h16M8 3v4M16 3v4"/></svg><input type="month" value={mvMonth} max={today().slice(0,7)} onChange={e=>setMvMonth(e.target.value)} style={{border:"none",outline:"none",background:"none",fontSize:13.5,fontFamily:"var(--ss-font)"}}/></div>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <button onClick={()=>stepMonth(-1)} title="Previous month" aria-label="Previous month" style={{width:34,height:34,borderRadius:9,border:"1px solid var(--c-d2)",background:"var(--c-fff)",color:"var(--ap-ink2)",fontSize:16,fontWeight:800,cursor:"pointer",lineHeight:1,fontFamily:"var(--ss-font)"}}>‹</button>
+            <div className="ap-field"><svg viewBox="0 0 24 24"><path d="M4 5h16v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M4 9h16M8 3v4M16 3v4"/></svg><input type="month" value={safeMonth} max={today().slice(0,7)} onChange={e=>{if(e.target.value)setMvMonth(e.target.value);}} style={{border:"none",outline:"none",background:"none",fontSize:13.5,fontFamily:"var(--ss-font)"}}/></div>
+            <button onClick={()=>stepMonth(1)} disabled={safeMonth>=today().slice(0,7)} title="Next month" aria-label="Next month" style={{width:34,height:34,borderRadius:9,border:"1px solid var(--c-d2)",background:"var(--c-fff)",color:safeMonth>=today().slice(0,7)?"var(--c-cb)":"var(--ap-ink2)",fontSize:16,fontWeight:800,cursor:safeMonth>=today().slice(0,7)?"default":"pointer",lineHeight:1,fontFamily:"var(--ss-font)"}}>›</button>
+          </div>
         </div>
         <div className="ap-panel" style={{padding:16}}>
           <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:12}}>
@@ -15782,7 +15790,7 @@ function StaffAttendanceRegister({user,isDirector,setTab:goTab}){
   const[mapsInput,setMapsInput]=useState("");
   const dirDB=useFirestore("studentDirectory");   // for the embedded Assignments panel
   const studentsDB=useFirestore("students");
-  const[stab,setStab]=useState(function(){try{var j=window.__staffJump;if(j&&j.stab)return j.stab;}catch(_){}return "directory";});       // Staff hub tab: directory · register · assignments (+ __staffJump one-shot)
+  const[stab,setStab]=useState(function(){try{var j=window.__staffJump;if(j&&j.stab)return j.stab;}catch(_){}return "directory";});       // Staff hub tab: directory · register · assignments (+ __staffJump one-shot). Directory is the default; the Director can mark P/L/A right on each directory row.
   const[sq,setSq]=useState(function(){try{var j=window.__staffJump;window.__staffJump=null;if(j&&j.q)return j.q;}catch(_){}return "";});   // directory search (last flag reader — nulls it)
   const[srole,setSrole]=useState("All");            // directory role filter
   const cfg=(attDB.data&&attDB.data["__config"])||null;
@@ -15836,6 +15844,10 @@ function StaffAttendanceRegister({user,isDirector,setTab:goTab}){
     if(rec)return{key:rec.status||"present",rec:rec};
     var onLeave=Object.values(leaveDB.data||{}).some(function(l){return l&&l.status==="approved"&&__ttNorm(l.teacherName)===__ttNorm(u.name)&&l.from<=date&&l.to>=date;});
     if(onLeave)return{key:"leave",rec:null};
+    // NEVER auto-absent the person running the register (you're obviously present) or the Director (they don't
+    // clock in) — the "unmarked = absent" rule is for teachers only. Without this the Director sees themselves ABSENT.
+    var _isHead=String(u.username)===String(user.username)||(u.role==="admin"&&(u.username==="director"||(DEFAULT_USERS[u.username]&&DEFAULT_USERS[u.username].fees!==false)));
+    if(_isHead)return{key:"none",rec:null};
     // director's rule: still unmarked once the day is underway (or any past weekday) = ABSENT (auto)
     if(typeof __staffAutoAbsent==="function"&&__staffAutoAbsent(date,_attTodayStr(),new Date().toTimeString().slice(0,5),(cfg&&cfg.lateAfter)||"",calDB.data))return{key:"autoabs",rec:null};
     return{key:"none",rec:null};
@@ -15959,6 +15971,13 @@ function StaffAttendanceRegister({user,isDirector,setTab:goTab}){
               <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flex:"none"}}>
                 {u.phone?<a href={"tel:"+u.phone} style={{fontSize:11.5,color:"var(--ap-muted)",fontWeight:600,fontFamily:"var(--ss-font)",textDecoration:"none"}}>{u.phone}</a>:null}
                 <span style={{background:STK[k][2],color:STK[k][1],borderRadius:99,padding:"3px 10px",fontSize:10.5,fontWeight:700,whiteSpace:"nowrap"}}>{STK[k][0]}</span>
+                {isDirector&&<div style={{display:"flex",gap:4,marginTop:2}}>
+                  {[["present","P",["var(--bg-grn)","var(--tx-grn2)"]],["late","L",["var(--bg-amb)","var(--tx-org2)"]],["absent","A",["var(--bg-red)","var(--tx-red)"]]].map(function(opt){
+                    var on=!!st.rec&&k===opt[0];
+                    return <button key={opt[0]} onClick={function(){setStatus(u,on?"__clear":opt[0]);}} title={on?"Tap to clear":("Mark "+u.name.split(" ")[0]+" "+opt[0])}
+                      style={{width:27,height:24,borderRadius:7,fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:"var(--ss-font)",transition:".12s",border:"1px solid "+(on?opt[2][1]:"var(--ap-line2)"),background:on?opt[2][0]:"var(--c-f7)",color:on?opt[2][1]:"var(--ap-ink2)"}}>{opt[1]}</button>;
+                  })}
+                </div>}
               </div>
             </div>);})}
       </div>}
