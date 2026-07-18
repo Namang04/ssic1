@@ -1399,9 +1399,13 @@ function rosterFromDir(dirDB,cls){
 }
 // Canonical accessor used everywhere marks/attendance/fees need a class list: directory first, legacy
 // 'students' roster as a safe fallback. Always returns [{admNo,name,section,oldNew}].
-function rosterForCls(dirDB,studentsDB,cls){
+function rosterForCls(dirDB,studentsDB,cls,academicRosterDB){
   var d=rosterFromDir(dirDB,cls);
   if(d)return d;
+  // academicRoster is the PII-free roster TEACHERS can read (studentDirectory + students are admin/office-scoped
+  // for them) — without this, every teacher screen using rosterForCls shows an empty class. Same order as Attendance.
+  var ar=academicRosterDB&&academicRosterDB.data&&academicRosterDB.data[safeId(cls)];
+  if(ar&&Array.isArray(ar.students)&&ar.students.length)return ar.students.map(function(s){return {admNo:String(s.admNo||""),name:s.name,section:_rosterSec(s.section,cls),oldNew:""};});
   var leg=studentsDB&&studentsDB.data&&studentsDB.data[safeId(cls)];
   if(leg&&Array.isArray(leg.list))return leg.list.map(function(nm){return {admNo:String((leg.admNo||{})[nm]||""),name:nm,section:((leg.sections||{})[nm])||"",oldNew:""};});
   return [];
@@ -5313,7 +5317,7 @@ function Attendance({user,attendanceDB,studentsDB,usersDB,academicRosterDB,dirDB
 
   // Build section list for selected class
   const getSections=(cls)=>{
-    if(canMarkAll){var rs=rosterForCls(dirDB,studentsDB,cls);var present=[...new Set(rs.map(s=>_rosterSec(s.section,cls)).filter(Boolean))].sort();if(present.length&&rs.some(s=>!_rosterSec(s.section,cls)))present.push("Unassigned");return present.length?present:(CLASS_SECTIONS[cls]||["A"]);}
+    if(canMarkAll){var rs=rosterForCls(dirDB,studentsDB,cls,academicRosterDB);var present=[...new Set(rs.map(s=>_rosterSec(s.section,cls)).filter(Boolean))].sort();if(present.length&&rs.some(s=>!_rosterSec(s.section,cls)))present.push("Unassigned");return present.length?present:(CLASS_SECTIONS[cls]||["A"]);}
     // Class teacher: ONLY the section(s) they are the class teacher of (not the classes they merely teach a subject in)
     return [...new Set(myCTSecs.filter(s=>toClassKey(s)===cls).map(s=>_rosterSec(toSection(s),cls)).filter(Boolean))];
   };
@@ -5706,7 +5710,7 @@ function Attendance({user,attendanceDB,studentsDB,usersDB,academicRosterDB,dirDB
 }
 
 // ── SCHOOL-WIDE TEST TRACKER (biweekly: 2 tests / subject / month) ──
-function TestTracker({user,testsDB,studentsDB,usersDB,dirDB}){
+function TestTracker({user,testsDB,studentsDB,usersDB,dirDB,academicRosterDB}){
   const ymNow=today().slice(0,7);
   const[month,setMonth]=useState(ymNow);
   const[expected,setExpected]=useState(2);
@@ -5733,7 +5737,7 @@ function TestTracker({user,testsDB,studentsDB,usersDB,dirDB}){
     return s;
   },[isTeacherTT,user,teachClassSet]);
   const teacherUnassigned=isTeacherTT&&(!teachClassSet||teachClassSet.size===0||!teachPairs||teachPairs.size===0);
-  const classes=useMemo(()=>SCHOOL.classes.filter(c=>(!teachClassSet||teachClassSet.has(c))&&rosterForCls(dirDB,studentsDB,c).length>0),[studentsDB.data,dirDB&&dirDB.data,teachClassSet]);
+  const classes=useMemo(()=>SCHOOL.classes.filter(c=>(!teachClassSet||teachClassSet.has(c))&&rosterForCls(dirDB,studentsDB,c,academicRosterDB).length>0),[studentsDB.data,dirDB&&dirDB.data,academicRosterDB&&academicRosterDB.data,teachClassSet]);
   const __brTT=useBranch();
   const allUsers=useMemo(()=>_branchUsers((usersDB&&usersDB.data)||{},__brTT),[usersDB&&usersDB.data,__brTT]);
   const teacherFor=(cls,subj)=>{const names=[];Object.entries(allUsers).forEach(([uname,u])=>{if(!u||u.role!=="teacher"||!u.classes||!u.classes.length||!u.subjects||!u.subjects.length)return;if(getTeacherClasses(u).includes(cls)&&getTeacherSubjects(u,cls).includes(subj))names.push(u.name||uname);});return names;};
@@ -5754,7 +5758,7 @@ function TestTracker({user,testsDB,studentsDB,usersDB,dirDB}){
   const matrix=useMemo(()=>classes.map(cls=>{
     const base=SCHOOL.subjects[cls]||[];
     const subjects=base.concat((customByCls[cls]||[]).filter(s=>base.indexOf(s)<0));
-    const students=rosterForCls(dirDB,studentsDB,cls); // [{admNo,name,...}] from the record
+    const students=rosterForCls(dirDB,studentsDB,cls,academicRosterDB); // [{admNo,name,...}] from the record
     const cells=subjects.map(subj=>{
       const ts=monthTests.filter(t=>t.cls===cls&&t.subj===subj);
       const ps=[];ts.forEach(t=>students.forEach(s=>{const v=_markOf(t,s.admNo,s.name);if(v!==undefined&&v!=="")ps.push(pct(Number(v),t.total));}));
@@ -5766,7 +5770,7 @@ function TestTracker({user,testsDB,studentsDB,usersDB,dirDB}){
     const prevAvg=poolAvg(prevMonthTests.filter(t=>t.cls===cls));
     const trend=(classAvg!=null&&prevAvg!=null)?classAvg-prevAvg:null;
     return{cls,cells,classAvg,prevAvg,trend,behind:cells.filter(c=>c.behind),done:cells.filter(c=>!c.behind).length,subjN:subjects.length};
-  }),[classes,monthTests,prevMonthTests,expected,studentsDB.data,dirDB&&dirDB.data,customByCls]);
+  }),[classes,monthTests,prevMonthTests,expected,studentsDB.data,dirDB&&dirDB.data,academicRosterDB&&academicRosterDB.data,customByCls]);
   const totalExpected=matrix.reduce((a,r)=>a+r.subjN*expected,0);
   const totalRecorded=matrix.reduce((a,r)=>a+r.cells.reduce((x,c)=>x+Math.min(c.count,expected),0),0);
   const behindCells=matrix.flatMap(r=>r.behind.map(c=>({cls:r.cls,subj:c.subj,count:c.count,teachers:teacherFor(r.cls,c.subj)})));
@@ -5784,14 +5788,13 @@ function TestTracker({user,testsDB,studentsDB,usersDB,dirDB}){
   // ── Remedial: students below the pass threshold per chapter — they stay after school for remedial until they re-pass ──
   const __ttBcfg=useBranchConfig();
   const remedialThreshold=Number(__ttBcfg.cfg.remedialThreshold||50);
-  const academicRosterDB=useFirestore("academicRoster"); // parent phones for the remedial notice
   const _remPhone=useMemo(()=>{const m={};Object.values(academicRosterDB.data||{}).forEach(d=>((d&&d.students)||[]).forEach(s=>{if(s&&s.admNo&&s.contact)m[String(s.admNo)]=String(s.contact);}));Object.values((dirDB&&dirDB.data)||{}).forEach(d=>((d&&d.students)||[]).forEach(s=>{if(s&&s.admNo){var p=_attPhone(s);if(p)m[String(s.admNo)]=p;}}));return m;},[academicRosterDB.data,dirDB&&dirDB.data]);
   const _remMsg=(st,cls,subj,ch)=>"Dear Parent, Greetings from "+BRANCH_LABEL+". Your ward "+st.name+" ("+cls+") scored "+st.pct+"% ("+st.mark+"/"+st.total+") in the "+subj+" test on \""+ch+"\", below our "+remedialThreshold+"% mark. They will attend after-school remedial classes for this chapter until they clear a re-test. Kindly ensure timely pick-up. Thank you.";
   const remedialGroups=useMemo(()=>{
     const out=[];
     monthTests.forEach(t=>{ if(!t||!t.total)return;
       if(teachPairs&&!teachPairs.has(t.cls+"|"+t.subj))return; // a teacher only sees remedial for the subjects they teach
-      const roster=rosterForCls(dirDB,studentsDB,t.cls);
+      const roster=rosterForCls(dirDB,studentsDB,t.cls,academicRosterDB);
       const below=[];
       roster.forEach(s=>{const v=_markOf(t,s.admNo,s.name);if(v===undefined||v==="")return;const m=Number(v);if(isNaN(m))return;const p=pct(m,t.total);if(p<remedialThreshold)below.push({name:s.name,admNo:s.admNo,section:s.section,pct:p,mark:m,total:t.total});});
       if(!below.length)return;
@@ -5799,7 +5802,7 @@ function TestTracker({user,testsDB,studentsDB,usersDB,dirDB}){
       chapters.forEach(ch=>out.push({key:t.cls+"|"+t.subj+"|"+ch+"|"+(t.week||t.testDate||""),cls:t.cls,subj:t.subj,chapter:ch,week:t.week,testDate:t.testDate,students:below.slice().sort((a,b)=>a.pct-b.pct)}));
     });
     return out.sort((a,b)=>String(a.cls).localeCompare(String(b.cls),undefined,{numeric:true})||a.subj.localeCompare(b.subj));
-  },[monthTests,remedialThreshold,studentsDB.data,dirDB&&dirDB.data,teachPairs]);
+  },[monthTests,remedialThreshold,studentsDB.data,dirDB&&dirDB.data,academicRosterDB&&academicRosterDB.data,teachPairs]);
   const remedialTotal=useMemo(()=>{var s=new Set();remedialGroups.forEach(g=>g.students.forEach(st=>s.add(g.cls+"|"+(st.admNo||st.name))));return s.size;},[remedialGroups]);
   const[ttView,setTtView]=useState(isTeacherTT?"remedial":"compliance"); // teachers land on (and only see) Remedial
   const[remRun,setRemRun]=useState(null);                 // ReminderRun rows for remedial notices
@@ -5917,7 +5920,7 @@ function TestTracker({user,testsDB,studentsDB,usersDB,dirDB}){
   );
 }
 
-function TestParticipation({user,testsDB,studentsDB,dirDB}){
+function TestParticipation({user,testsDB,studentsDB,dirDB,academicRosterDB}){
   const isAdmin=user.role==="admin";
   const aC=getTeacherClasses(user);
   const[cls,setCls]=useState(aC[0]||"");
@@ -5925,7 +5928,7 @@ function TestParticipation({user,testsDB,studentsDB,dirDB}){
   const[subj,setSubj]=useState(aS[0]||"");
   useEffect(()=>{setSubj(aS[0]||"");setFilterSec("");},[cls]);
   // Roster, sections and admission-no. map from the student record (directory), legacy fallback.
-  const _roster=rosterForCls(dirDB,studentsDB,cls);
+  const _roster=rosterForCls(dirDB,studentsDB,cls,academicRosterDB);
   const allStudents=_roster.map(s=>s.name);
   const classSections=(()=>{var m={};_roster.forEach(s=>{if(s.name)m[s.name]=s.section;});return m;})();
   const admOf=(()=>{var m={};_roster.forEach(s=>{if(s.name)m[s.name]=s.admNo;});return m;})();
@@ -6326,7 +6329,7 @@ function TestSchedulePanel({user,ttSetDB,usersDB}){
   );
 }
 
-function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB}){
+function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB,academicRosterDB}){
   const aC=getTeacherClasses(user);
   const canViewAllSec=user.role==="admin"||user.role==="vp";
   // A teacher's GENUINELY assigned sections for a class (empty if they were assigned the class with no
@@ -6367,7 +6370,7 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB}){
     else if(testSel==="new"){dirtyRef.current={};setRows({});setSelTopics([]);setTestDate(today());setTotal(20);}
   },[testSel,editing&&editing.at]);
   // Roster + sections + admission-no. map all come from the student record (directory), legacy fallback.
-  const emRoster=rosterForCls(dirDB,studentsDB,cls);
+  const emRoster=rosterForCls(dirDB,studentsDB,cls,academicRosterDB);
   const allStudentsEM=emRoster.map(s=>s.name);
   const emSections=(()=>{var m={};emRoster.forEach(s=>{if(s.name)m[s.name]=s.section;});return m;})();
   const emAdmOf=(()=>{var m={};emRoster.forEach(s=>{if(s.name)m[s.name]=s.admNo;});return m;})();
@@ -6559,7 +6562,7 @@ function SubjectBar({label,pct}){
   );
 }
 
-function ClassOverview({user,testsDB,studentsDB,dirDB,jumpStudent}){
+function ClassOverview({user,testsDB,studentsDB,dirDB,jumpStudent,academicRosterDB}){
   const aC=getTeacherClasses(user);
   const[cls,setCls]=useState(aC[0]||"Class 10");
 
@@ -6572,7 +6575,7 @@ function ClassOverview({user,testsDB,studentsDB,dirDB,jumpStudent}){
   const subjAvgs=useMemo(()=>{
     // Roster-aware (like stuAvgs): only count the CURRENT roster's marks, read admission-no.-first, so a
     // student who has left doesn't skew the subject average with their old test rows.
-    const roster=rosterForCls(dirDB,studentsDB,cls);
+    const roster=rosterForCls(dirDB,studentsDB,cls,academicRosterDB);
     const map={};
     allTests.forEach(test=>{
       const subj=test.subj||"";
@@ -6587,13 +6590,13 @@ function ClassOverview({user,testsDB,studentsDB,dirDB,jumpStudent}){
       .filter(([,d])=>d.n>0)
       .map(([subj,d])=>({subj,pct:Math.round(d.sum/d.maxSum*100),n:d.n}))
       .sort((a,b)=>a.pct-b.pct);
-  },[allTests,cls,dirDB&&dirDB.data,studentsDB.data]);
+  },[allTests,cls,dirDB&&dirDB.data,studentsDB.data,academicRosterDB&&academicRosterDB.data]);
 
   // Student averages
   const stuAvgs=useMemo(()=>{
     // Driven by the student record: each active student's marks read admission-no.-first, so a renamed
     // student is one row (not split) and students who have left are excluded.
-    const roster=rosterForCls(dirDB,studentsDB,cls);
+    const roster=rosterForCls(dirDB,studentsDB,cls,academicRosterDB);
     return roster.map(stuObj=>{
       const stu=stuObj.name;const d={sum:0,maxSum:0,n:0,subjs:{}};
       allTests.forEach(test=>{
@@ -6611,12 +6614,12 @@ function ClassOverview({user,testsDB,studentsDB,dirDB,jumpStudent}){
       const bst=[...subjArr].sort((a,b)=>b.pct-a.pct)[0];
       return{stu,pct,n:d.n,worstSubj:worst?SUBJ_LABELS[worst.s]||worst.s:"",worstPct:worst?worst.pct:0,bestSubj:bst?SUBJ_LABELS[bst.s]||bst.s:"",bestPct:bst?bst.pct:0};
     }).filter(Boolean).sort((a,b)=>a.pct-b.pct);
-  },[allTests,cls,dirDB&&dirDB.data,studentsDB.data]);
+  },[allTests,cls,dirDB&&dirDB.data,studentsDB.data,academicRosterDB&&academicRosterDB.data]);
 
   // Weakest topics from teacher-entered test marks
   const weakChapters=useMemo(()=>{
     // Roster-aware: per-test averages count only current-roster marks (departed students excluded).
-    const roster=rosterForCls(dirDB,studentsDB,cls);
+    const roster=rosterForCls(dirDB,studentsDB,cls,academicRosterDB);
     const map={};
     allTests.forEach(test=>{
       const topics=test.topics||[];
@@ -6638,11 +6641,11 @@ function ClassOverview({user,testsDB,studentsDB,dirDB,jumpStudent}){
       .map(c=>({...c,avgPct:Math.round(c.sumPct/c.n)}))
       .sort((a,b)=>a.avgPct-b.avgPct)
       .slice(0,8);
-  },[allTests,cls,dirDB&&dirDB.data,studentsDB.data]);
+  },[allTests,cls,dirDB&&dirDB.data,studentsDB.data,academicRosterDB&&academicRosterDB.data]);
 
   // Pooled class average — all marks across all tests (not an average of per-student averages). Roster-aware:
   // only current-roster students' marks count, so a departed student's old rows can't move the headline number.
-  const classAvg=useMemo(()=>{const roster=rosterForCls(dirDB,studentsDB,cls);let s=0,m=0;allTests.forEach(test=>{const mx=Number(test.total)||80;roster.forEach(stuObj=>{const v=_markOf(test,stuObj.admNo,stuObj.name);if(v!==null&&v!==undefined&&v!==""){s+=Number(v);m+=mx;}});});return m?Math.round(s/m*100):0;},[allTests,cls,dirDB&&dirDB.data,studentsDB.data]);
+  const classAvg=useMemo(()=>{const roster=rosterForCls(dirDB,studentsDB,cls,academicRosterDB);let s=0,m=0;allTests.forEach(test=>{const mx=Number(test.total)||80;roster.forEach(stuObj=>{const v=_markOf(test,stuObj.admNo,stuObj.name);if(v!==null&&v!==undefined&&v!==""){s+=Number(v);m+=mx;}});});return m?Math.round(s/m*100):0;},[allTests,cls,dirDB&&dirDB.data,studentsDB.data,academicRosterDB&&academicRosterDB.data]);
   const weakestSubj=subjAvgs[0];
   const needAttn=stuAvgs.filter(s=>s.pct<40).length;
 
@@ -6801,7 +6804,7 @@ function ClassProgress({user,testsDB,studentsDB,dirDB,academicRosterDB,jumpStude
   const[subj,setSubj]=useState(aS[0]||"");
   useEffect(()=>{setSubj(aS[0]||"");setFilterSec("");},[cls]);
   // Roster, sections and admission-no. map from the student record (directory), legacy fallback.
-  const _roster=rosterForCls(dirDB,studentsDB,cls);
+  const _roster=rosterForCls(dirDB,studentsDB,cls,academicRosterDB);
   const allStudents=_roster.map(s=>s.name);
   const classSections=(()=>{var m={};_roster.forEach(s=>{if(s.name)m[s.name]=s.section;});return m;})();
   const admOf=(()=>{var m={};_roster.forEach(s=>{if(s.name)m[s.name]=s.admNo;});return m;})();
@@ -7022,11 +7025,11 @@ function ClassProgress({user,testsDB,studentsDB,dirDB,academicRosterDB,jumpStude
 function StudentReport({user,testsDB,studentsDB,dirDB,academicRosterDB,jumpStudent}){
   const aC=getTeacherClasses(user);
   const[cls,setCls]=useState(aC[0]);
-  const _srRoster=rosterForCls(dirDB,studentsDB,cls);
+  const _srRoster=rosterForCls(dirDB,studentsDB,cls,academicRosterDB);
   const students=_srRoster.map(s=>s.name);
   const[student,setStudent]=useState(students[0]||"");
   const[search,setSearch]=useState("");
-  useEffect(()=>setStudent((rosterForCls(dirDB,studentsDB,cls)[0]||{}).name||""),[cls,studentsDB.data,dirDB&&dirDB.data]);
+  useEffect(()=>setStudent((rosterForCls(dirDB,studentsDB,cls,academicRosterDB)[0]||{}).name||""),[cls,studentsDB.data,dirDB&&dirDB.data]);
   const subjects=SCHOOL.subjects[cls]||[];
   const padm=String((_srRoster.find(s=>s.name===student)||{}).admNo||""); /* admission no. from the directory-first roster → marks read admNo-first */
   const sd=useMemo(()=>subjects.map(subj=>{
@@ -7738,7 +7741,7 @@ function Insights({testsDB,studentsDB,attendanceDB,wrongDB,usersDB,dirDB,academi
     const clsSubj={},stuScores={},topicFail={};
     tests.forEach(t=>{
       // Roster from the student record; marks read admission-no.-first so renamed students stay one person.
-      const list=rosterForCls(dirDB,studentsDB,t.cls);
+      const list=rosterForCls(dirDB,studentsDB,t.cls,academicRosterDB);
       let low=0,scored=0;
       list.forEach(stuObj=>{const s=stuObj.name;const v=_markOf(t,stuObj.admNo,s); if(v===undefined||v==="")return;
         const p=pct(Number(v),t.total); scored++; if(p<40)low++;
@@ -7774,7 +7777,7 @@ function Insights({testsDB,studentsDB,attendanceDB,wrongDB,usersDB,dirDB,academi
   const part=useMemo(()=>{
     const tests=Object.values(testsDB.data||{}).filter(t=>t&&t.rows&&(fCls==="all"||t.cls===fCls));
     let total=0,filled=0; const byClass={};
-    tests.forEach(t=>{const list=rosterForCls(dirDB,studentsDB,t.cls);list.forEach(stuObj=>{total++;const v=_markOf(t,stuObj.admNo,stuObj.name);const has=v!==undefined&&v!=="";if(has)filled++;(byClass[t.cls]=byClass[t.cls]||{t:0,f:0});byClass[t.cls].t++;if(has)byClass[t.cls].f++;});});
+    tests.forEach(t=>{const list=rosterForCls(dirDB,studentsDB,t.cls,academicRosterDB);list.forEach(stuObj=>{total++;const v=_markOf(t,stuObj.admNo,stuObj.name);const has=v!==undefined&&v!=="";if(has)filled++;(byClass[t.cls]=byClass[t.cls]||{t:0,f:0});byClass[t.cls].t++;if(has)byClass[t.cls].f++;});});
     const rows=Object.entries(byClass).map(([c,o])=>({c:c.replace("Class ","Cl "),pct:o.t?Math.round(o.f/o.t*100):0,missed:o.t-o.f})).sort((a,b)=>b.missed-a.missed);
     return{pct:total?Math.round(filled/total*100):0,missed:total-filled,rows};
   },[testsDB.data,studentsDB.data,dirDB&&dirDB.data,fCls]);
@@ -8120,7 +8123,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
   },[selId]);
 
   // Roster from the student record (directory), legacy fallback. Objects carry admNo so marks bind to it.
-  const rosterObjsOf=c=>rosterForCls(dirDB,studentsDB,c);
+  const rosterObjsOf=c=>rosterForCls(dirDB,studentsDB,c,academicRosterDB);
   // Sections this user may see for a class. Now that streams (BIO, COMM…) are assignable in the Assign panel,
   // gate by the intersection of the roster's sections with the teacher's assigned sections. If a teacher's
   // assignment doesn't match any roster section (e.g. a legacy "Class 11-A" set before streams existed), show
@@ -16661,10 +16664,10 @@ function App(){
         {tab==="students"&&!isParent&&<ManageStudents user={user} usersDB={usersDB} studentsDB={studentsDB} testsDB={testsDB} academicRosterDB={academicRosterDB} studentLinksDB={studentLinksDB} dirDB={dirDB}/>}
         {tab==="datacenter"&&isDirector&&<DataCenter user={user} dirDB={dirDB} studentsDB={studentsDB} testsDB={testsDB} usersDB={usersDB} feesDB={feesDB} examsDB={examsDB} noticesDB={noticesDB} registrationsDB={registrationsDB} academicRosterDB={academicRosterDB} metaDB={metaDB} attendanceDB={attendanceDB} curSession={curSession} viewSession={viewSession} setViewSession={setViewSession} allSessions={allSessions}/>}
         {tab==="topics"&&!isParent&&<ManageTopics user={user} usersDB={usersDB} topicsDB={topicsDB}/>}
-        {tab==="tracker"&&!isParent&&<TestTracker user={user} testsDB={testsDB} studentsDB={studentsDB} usersDB={usersDB} dirDB={dirDB}/>}
-        {tab==="participation"&&!isParent&&<TestParticipation user={user} testsDB={testsDB} studentsDB={studentsDB} dirDB={dirDB}/>}
-        {tab==="enter"&&!isParent&&<EnterMarks user={user} testsDB={testsDB} topicsDB={topicsDB} studentsDB={studentsDB} dirDB={dirDB} ttSetDB={ttSetDB}/>}
-        {tab==="overview"&&!isParent&&<ClassOverview user={user} testsDB={testsDB} studentsDB={studentsDB} dirDB={dirDB} jumpStudent={(isAdmin||isOffice||user.role==="vp")?jumpStudent:undefined}/>}
+        {tab==="tracker"&&!isParent&&<TestTracker user={user} testsDB={testsDB} studentsDB={studentsDB} usersDB={usersDB} dirDB={dirDB} academicRosterDB={academicRosterDB}/>}
+        {tab==="participation"&&!isParent&&<TestParticipation user={user} testsDB={testsDB} studentsDB={studentsDB} dirDB={dirDB} academicRosterDB={academicRosterDB}/>}
+        {tab==="enter"&&!isParent&&<EnterMarks user={user} testsDB={testsDB} topicsDB={topicsDB} studentsDB={studentsDB} dirDB={dirDB} ttSetDB={ttSetDB} academicRosterDB={academicRosterDB}/>}
+        {tab==="overview"&&!isParent&&<ClassOverview user={user} testsDB={testsDB} studentsDB={studentsDB} dirDB={dirDB} jumpStudent={(isAdmin||isOffice||user.role==="vp")?jumpStudent:undefined} academicRosterDB={academicRosterDB}/>}
       {tab==="class"&&!isParent&&<ClassProgress user={user} testsDB={testsDB} studentsDB={studentsDB} dirDB={dirDB} academicRosterDB={academicRosterDB} jumpStudent={(isAdmin||isOffice||user.role==="vp")?jumpStudent:undefined}/>}
         {tab==="student"&&!isParent&&<StudentReport user={user} testsDB={testsDB} studentsDB={studentsDB} dirDB={dirDB} academicRosterDB={academicRosterDB} jumpStudent={(isAdmin||isOffice||user.role==="vp")?jumpStudent:undefined}/>}
         {tab==="profile"&&!isParent&&<StudentProfile user={user} testsDB={testsDB} examsDB={examsDB} studentsDB={studentsDB} attendanceDB={attendanceDB} wrongDB={wrongDB} feesDB={feesDB} canFees={canFees} dirDB={dirDB} academicRosterDB={academicRosterDB}/>}
