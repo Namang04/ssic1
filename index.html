@@ -10929,7 +10929,9 @@ service cloud.firestore {
       // accounts holds username/role/name/email/admNo (+ a parent's child name/class). Staff need the full list;
       // a family member reads ONLY their own account doc (keyed by uid) — no cross-branch enumeration of everyone.
       allow read: if isAny(['admin','office','vp']) || (signedIn() && id == request.auth.uid);
-      allow write: if isAny(['admin']);
+      // Director manages all. The VP may CREATE new (non-admin) logins only — not edit, disable or delete existing accounts.
+      allow create: if isAny(['admin']) || (isAny(['vp']) && request.resource.data.get('role','teacher') in ['teacher','office','student','parent']);
+      allow update, delete: if isAny(['admin']);
     }
 
     // ── Money — Director + Office only, and only within Greencity ────────────
@@ -11090,6 +11092,12 @@ service cloud.firestore {
       // role unchanged" clause let any session rewrite any staff profile).
       allow write: if isAny(['admin','office'])
         || ((id.matches('.*__subjects') || id.matches('.*__classTeachers')) && isAny(['admin','vp']))
+        || (isAny(['vp']) && !id.matches('.*__subjects') && !id.matches('.*__classTeachers')
+            && resource != null && resource.data.get('role','') == 'teacher'
+            && request.resource.data.get('role','') == 'teacher')
+        || (isAny(['vp']) && !id.matches('.*__subjects') && !id.matches('.*__classTeachers')
+            && resource == null
+            && request.resource.data.get('role','teacher') in ['teacher','office','student','parent'])
         || (!id.matches('.*__subjects') && !id.matches('.*__classTeachers')
             && signedIn() && ownsUserDoc(id)
             && request.resource.data.get('role', role()) == role());
@@ -11344,9 +11352,9 @@ function StudyNotesPanel({user}){
   );
 }
 
-function AccountsPanel({user,usersDB,studentsDB,dirDB,academicRosterDB}){
+function AccountsPanel({user,usersDB,studentsDB,dirDB,academicRosterDB,canManage=true}){
   const accountsDB=useFirestore("accounts");
-  const[tab,setTab]=useState(function(){try{var j=window.__acctJump;if(j){window.__acctJump=null;return j;}}catch(_){}return "manage";});
+  const[tab,setTab]=useState(function(){try{var j=window.__acctJump;if(j){window.__acctJump=null;return j;}}catch(_){}return canManage?"manage":"add";});
   const[role,setRole]=useState("student");
   const[uname,setUname]=useState("");
   const[name,setName]=useState("");
@@ -11492,7 +11500,7 @@ function AccountsPanel({user,usersDB,studentsDB,dirDB,academicRosterDB}){
   const td={padding:"9px 10px",fontSize:12.5,borderBottom:"1px solid var(--c-f0)"};
   const th={padding:"9px 10px",fontSize:10,fontWeight:700,color:"var(--c-64)",textTransform:"uppercase",letterSpacing:.6,textAlign:"left",borderBottom:"1px solid var(--c-ec)"};
   const fieldStyle={width:"100%",padding:"10px 14px",borderRadius:10,fontSize:13.5};
-  const TABS=[{id:"manage",label:"All accounts"},{id:"add",label:"Add account"}];
+  const TABS=canManage?[{id:"manage",label:"All accounts"},{id:"add",label:"Add account"}]:[{id:"add",label:"Add account"}];
   const statusOf=(u)=>{const a=acctByUser[u.username];return a?(a.role==="disabled"?"disabled":"active"):"nologin";};
   const kpiActive=allUsers.filter(u=>statusOf(u)==="active").length;
   const kpiNoLogin=allUsers.filter(u=>statusOf(u)==="nologin").length;
@@ -11516,7 +11524,7 @@ function AccountsPanel({user,usersDB,studentsDB,dirDB,academicRosterDB}){
   return(
     <div style={{maxWidth:1080,margin:"0 auto"}}>
       <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",flexWrap:"wrap",gap:12,marginBottom:16}}>
-        <div><h1 className="ap-hi" style={{margin:0}}>Accounts</h1><p className="ap-hisub" style={{margin:"4px 0 0"}}>Add people, set their role, and enable/disable logins · {allUsers.length} accounts</p></div>
+        <div><h1 className="ap-hi" style={{margin:0}}>Accounts</h1><p className="ap-hisub" style={{margin:"4px 0 0"}}>{canManage?"Add people, set their role, and enable/disable logins":"Create new logins — accounts are managed by the Director"} · {allUsers.length} accounts</p></div>
         <div className="ap-subnav">{TABS.map(t=><button key={t.id} className={"ap-pill"+(tab===t.id?" on":"")} onClick={()=>{setTab(t.id);setMsg(null);}}>{t.label}</button>)}</div>
       </div>
 
@@ -11540,7 +11548,7 @@ function AccountsPanel({user,usersDB,studentsDB,dirDB,academicRosterDB}){
         </div>
       </InsPanel>}
 
-      {tab==="manage"&&<>
+      {tab==="manage"&&canManage&&<>
         {/* KPI strip — clickable to filter by status */}
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:10,marginBottom:14}}>
           <KPI label="Total accounts" val={allUsers.length} color="var(--ap-ink)" active={statusFilter==="all"} onClick={()=>setStatusFilter("all")}/>
@@ -12588,6 +12596,61 @@ const QB_DIFF_COLOR={e:"#c9a84c",m:"#d97706",h:"var(--tx-red)"};
 const QB_SEC_COLOR={A:"#1a2e45",B:"#c9a84c",C:"#d97706",E:"#7c3aed",D:"var(--tx-red)"};
 function qbShuffle(arr){const a=[...arr];for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
 
+// ── PAPER-GENERATOR INTEGRITY (single source of truth for grade; strip internal tags; refuse missing data) ──
+// Authoritative level→grade map (inverse of the QuestionBank lvl setter) — a paper's Class comes from HERE, never a hardcoded default.
+var QB_LVL_GRADE={
+  std:{cls:"Class 10",subj:"Mathematics"},bas:{cls:"Class 10",subj:"Mathematics (Basic)"},sci:{cls:"Class 10",subj:"Science"},sst:{cls:"Class 10",subj:"Social Science"},eng:{cls:"Class 10",subj:"English"},comp:{cls:"Class 10",subj:"Computer"},
+  m9:{cls:"Class 9",subj:"Mathematics"},s9:{cls:"Class 9",subj:"Science"},sst9:{cls:"Class 9",subj:"Social Science"},e9:{cls:"Class 9",subj:"English"},
+  mat11:{cls:"Class 11",subj:"Mathematics"},phy11:{cls:"Class 11",subj:"Physics"},chem11:{cls:"Class 11",subj:"Chemistry"},bio11:{cls:"Class 11",subj:"Biology"},acc11:{cls:"Class 11",subj:"Accountancy"},bst11:{cls:"Class 11",subj:"Business Studies"},eco11:{cls:"Class 11",subj:"Economics"},geo11:{cls:"Class 11",subj:"Geography"},hist11:{cls:"Class 11",subj:"History"},pol11:{cls:"Class 11",subj:"Political Science"},fa11:{cls:"Class 11",subj:"Fine Arts"},
+  mat12:{cls:"Class 12",subj:"Mathematics"},phy12:{cls:"Class 12",subj:"Physics"},chem12:{cls:"Class 12",subj:"Chemistry"},bio12:{cls:"Class 12",subj:"Biology"},acc12:{cls:"Class 12",subj:"Accountancy"},bst12:{cls:"Class 12",subj:"Business Studies"},eco12:{cls:"Class 12",subj:"Economics"},geo12:{cls:"Class 12",subj:"Geography"},hist12:{cls:"Class 12",subj:"History"},pol12:{cls:"Class 12",subj:"Political Science"},fa12:{cls:"Class 12",subj:"Fine Arts"}
+};
+// Strip internal bank ids / source-paper numbering from a candidate-facing stem. The tag stays in the data (metadata via qbSrcTag); it just never prints.
+function qbStripTags(t){ if(t==null)return ""; var s=String(t),prev; do{ prev=s; s=s.replace(/^\s*\[[^\]]*\]\s*/,"").replace(/^\s*(M\d+\.)?Q\.?\d+\s*[:.]\s*/i,""); }while(s!==prev); return s.replace(/\bM\d+\.Q\d+\.?\s*/g,"").replace(/^\s+/,""); }
+function qbSrcTag(t){ var m=String(t||"").match(/^\s*(\[[^\]]*\])|\bM\d+\.Q\d+/); return m?(m[1]||m[0]).trim():""; }
+// Dependent-data: stem refers to a table/figure/balance-sheet/"given data" that must accompany it.
+var QB_DEP_RX=/(balance sheet|from the (following )?(table|graph|passage)|as per the data given|in the (figure|graph|diagram)|shown (below|in the figure)|from the given figure|following (data|information|table))/i;
+function qbHasInlineData(q){ return /(\d[\d,]*\s*[–-]\s*\d)|₹\s?\d|\d+\s*(cm|m|kg|°|Ω|μF|V|%)\b|(\d{2,}\D+){3,}/i.test(String(q||"")); }
+function qbNeedsData(q,fig){ return QB_DEP_RX.test(String(q||"")) && !fig && !qbHasInlineData(q); }
+// Pre-print structural validator. Returns {errors:[], dropped:[]} — the generator ABORTS on errors and REMOVES dropped items.
+function qbValidatePaper(items,meta){
+  var errors=[],dropped=[];
+  var lvls=[]; items.forEach(function(it){ if(lvls.indexOf(it.lvl)<0)lvls.push(it.lvl); });
+  if(lvls.length>1)errors.push("Paper mixes grades/levels ("+lvls.join(", ")+") — generate one class at a time.");
+  var g=QB_LVL_GRADE[lvls[0]];
+  if(g&&meta&&meta.cls){ var a=String(meta.cls).replace(/^Class\s*/i,"").trim(), b=String(g.cls).replace(/^Class\s*/i,"").trim(); if(a!==b)errors.push("Printed class '"+meta.cls+"' ≠ questions' grade '"+g.cls+"'."); }
+  items.forEach(function(it,n){ var q=it.q||{};
+    if(/\bM\d+\.Q\d+/.test(qbStripTags(q.q))||/^\s*(\[[^\]]*\]\s*)?Q\.?\d+\s*[:.]/i.test(qbStripTags(q.q)))errors.push("Q"+(n+1)+": an internal reference tag survived into the stem.");
+    if(qbNeedsData(q.q,q.fig))dropped.push({n:n+1,q:qbStripTags(q.q).slice(0,80)});
+  });
+  return {errors:errors,dropped:dropped,grade:g};
+}
+// A model answer/answer set needing subject-expert review (explicit q.rev flag, an override, missing data, or a count mismatch).
+var QB_COUNT_RX=/\b(mention|state|give|list|write|name|identify)\s+(any\s+)?(two|three|four|five|six)\b/i;
+function qbCountMismatch(q){ if(!q)return null; var Q=String(q.q||""); if(/Case Study|class=.csb|\(a\)/i.test(Q))return null; var m=Q.match(QB_COUNT_RX); if(!m)return null; var want={two:2,three:3,four:4,five:5,six:6}[m[3].toLowerCase()]; var A=String(q.a||""); var got=Math.max((A.match(/(?:^|[^0-9])([1-9])[).]\s/g)||[]).length,(A.match(/\((?:i{1,3}|iv|v|vi{0,3}|vii|viii|ix|x)\)/gi)||[]).length,(A.match(/[•▪‣]/g)||[]).length); return (got>0&&got!==want)?{want:want,got:got}:null; }
+function qbFlagged(q){ if(!q)return ""; if(q.rev)return "flagged for subject-expert review"; if(typeof window!=="undefined"&&window.__QB_REVIEW&&window.__QB_REVIEW[solKey(q)])return "flagged for subject-expert review"; if(qbNeedsData(q.q,q.fig))return "this question depends on a table/figure not shown"; return ""; }
+// Bank-health report — surfaces every question a subject expert should review before shipping. Nothing is auto-edited.
+function qbHealthReport(){
+  var QB=(typeof QB_DATA!=="undefined")?QB_DATA:{}; var rows={ref:[],dep:[],count:[],rev:[]};
+  Object.keys(QB).forEach(function(lvl){ (QB[lvl]||[]).forEach(function(q,i){ var id=lvl+" #"+i, Q=String(q.q||"");
+    if(/\bM\d+\.Q\d+/.test(Q)||/^\s*(\[[^\]]*\]\s*)?Q\.?\d+\s*[:.]/i.test(Q)) rows.ref.push([id,q.c||"",qbStripTags(Q).slice(0,90)]);
+    if(qbNeedsData(q.q,q.fig)) rows.dep.push([id,q.c||"",qbStripTags(Q).slice(0,110)]);
+    var cm=qbCountMismatch(q); if(cm) rows.count.push([id,q.c||"","asks "+cm.want+", answer lists ~"+cm.got,qbStripTags(Q).slice(0,80)]);
+    if(q.rev||(typeof window!=="undefined"&&window.__QB_REVIEW&&window.__QB_REVIEW[solKey(q)])) rows.rev.push([id,q.c||"",qbStripTags(Q).slice(0,90)]);
+  });});
+  var e2=function(s){return String(s==null?"":s).replace(/[&<>]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c];});};
+  var tbl=function(title,sub,cols,arr){ return '<h2>'+e2(title)+' <span style="color:#b42318">('+arr.length+')</span></h2><p class="s">'+e2(sub)+'</p>'+(arr.length?'<table><tr>'+cols.map(function(c){return '<th>'+e2(c)+'</th>';}).join("")+'</tr>'+arr.map(function(r){return '<tr>'+r.map(function(c){return '<td>'+e2(c)+'</td>';}).join("")+'</tr>';}).join("")+'</table>':'<p class="ok">None — clean.</p>'); };
+  var h='<!DOCTYPE html><html><head><meta charset="utf-8"><title>Question Bank — Health Report</title><style>body{font-family:Georgia,serif;max-width:960px;margin:0 auto;padding:26px;color:#1a1a1a}h1{color:#0d1b2a}h2{color:#0d1b2a;border-bottom:1px solid #ccc;padding-bottom:4px;margin-top:26px}.s{font-size:12px;color:#666;font-style:italic;margin:2px 0 8px}.ok{color:#15803d}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #ddd;padding:5px 8px;text-align:left;vertical-align:top}th{background:#eef1f8}</style></head><body>';
+  h+='<h1>Question Bank — Health Report</h1><p class="s">These questions/answers should be reviewed by a subject expert before use. Nothing here is auto-edited.</p>';
+  h+=tbl("Internal reference tags in stems","Printed stripped for candidates; clean these at the content source too.",["Where","Chapter","Stem (cleaned)"],rows.ref);
+  h+=tbl("Depends on missing data/figure","Stem refers to a table/figure/balance-sheet with no data block — the generator refuses these.",["Where","Chapter","Stem"],rows.dep);
+  h+=tbl("Possible count mismatch","Stem asks for N points; stored answer appears to list a different number.",["Where","Chapter","Issue","Stem"],rows.count);
+  h+=tbl("Flagged for expert review","Explicitly flagged answers (q.rev / __QB_REVIEW).",["Where","Chapter","Stem"],rows.rev);
+  h+='</body></html>';
+  var w=window.open("","_blank"); if(w){w.document.write(h);w.document.close();}
+  return {ref:rows.ref.length,dep:rows.dep.length,count:rows.count.length,rev:rows.rev.length};
+}
+if(typeof window!=="undefined")window.__qbHealthReport=qbHealthReport;
+
 
 function QuestionBank({user}){
   // Branch chose to start without the built-in question bank (stable module const → consistent early return).
@@ -12751,12 +12814,28 @@ function QuestionBank({user}){
 
   function generatePaper(){
     if(!testItems.length)return;
-    const name=testName||"Weekly Test";
-    const cls=testCls||"10";
-    const subj=(activeCombo&&activeCombo.subj)?activeCombo.subj:"Mathematics";
+    // 1) CLASS comes from the questions' actual grade (level), never a hardcoded default.
+    var _lvls=[]; testItems.forEach(function(ti){ if(_lvls.indexOf(ti.lvl)<0)_lvls.push(ti.lvl); });
+    if(_lvls.length>1){ (window.__toast?window.__toast("This paper mixes grades ("+_lvls.map(l=>(QB_LVL_GRADE[l]||{}).cls||l).join(", ")+"). Build one class at a time.","err"):alert("This paper mixes grades. Build one class at a time.")); return; }
+    var _grade=QB_LVL_GRADE[_lvls[0]]||{cls:(activeCombo&&activeCombo.cls)||"Class 10",subj:(activeCombo&&activeCombo.subj)||"Mathematics"};
+    const cls=_grade.cls;
+    const subj=_grade.subj||(activeCombo&&activeCombo.subj)||"Mathematics";
+    // 2) REFUSE questions whose required data (table/figure/balance-sheet/"given data") is missing — drop + report.
+    const _pre=qbValidatePaper(testItems,{cls:cls});
+    if(_pre.errors.length){ alert("Paper cannot be generated — validation failed:\n\n• "+_pre.errors.join("\n• ")); return; }
+    const _droppedNos=_pre.dropped.map(function(d){return d.n;});
+    const kept=testItems.filter(function(ti,i){return _droppedNos.indexOf(i+1)<0;});
+    if(!kept.length){ alert("Every selected question depends on a table/figure that isn't in the bank, so none can be printed. Add those questions' data blocks first."); return; }
+    if(_pre.dropped.length){ alert(_pre.dropped.length+" question(s) were left OUT because their required data (table/figure/balance-sheet) is missing:\n\n• "+_pre.dropped.map(function(d){return d.q+"…";}).join("\n• ")+"\n\nThe paper will print with the remaining questions."); }
+    // 3) TITLE / MARKS / TIME from ONE source: actual marks of the kept questions.
+    const actualMarks=kept.reduce(function(s,ti){return s+(Number(ti.q.m)||0);},0);
+    const timeMin=Math.max(15,Math.round(actualMarks*1.5));
+    const baseName=(testName||"Test").replace(/\s*\(\d+\s*m\)\s*$/i,"").trim();  // drop the ambiguous "(30m)" bucket suffix
+    const name=baseName+" — "+actualMarks+" mark"+(actualMarks===1?"":"s");
     const bySection={};
-    testItems.forEach(ti=>{if(!bySection[ti.q.s])bySection[ti.q.s]=[];bySection[ti.q.s].push(ti);});
-    let html=`<html><head><title>${name}</title><meta charset="utf-8"><style>
+    kept.forEach(ti=>{if(!bySection[ti.q.s])bySection[ti.q.s]=[];bySection[ti.q.s].push(ti);});
+    const KX='<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css"><scr'+'ipt src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"><\/scr'+'ipt><scr'+'ipt src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"><\/scr'+'ipt>';
+    let html=`<!DOCTYPE html><html><head><title>${name}</title><meta charset="utf-8">${KX}<style>
 *{box-sizing:border-box}
 body{font-family:'Times New Roman',Georgia,serif;padding:30px 34px;color:#1a1a1a;max-width:860px;margin:0 auto;line-height:1.5}
 .hdr{text-align:center;border-bottom:2.5px solid #0d1b2a;padding-bottom:12px;margin-bottom:6px}
@@ -12770,11 +12849,14 @@ body{font-family:'Times New Roman',Georgia,serif;padding:30px 34px;color:#1a1a1a
 .q .mk{float:right;color:#666;font-weight:600}
 .qfig{margin:8px 0 8px 24px}.qfig svg,.qfig img{max-width:320px;max-height:240px;height:auto;border:1px solid #ccc;background:#fff;padding:4px}
 .opts{display:grid;grid-template-columns:1fr 1fr;gap:3px 20px;margin-top:5px;padding-left:24px;font-size:12.5px}
+.opts.wide{grid-template-columns:1fr}
+.opts div{white-space:normal;overflow-wrap:anywhere;word-break:break-word}
+.vfail{background:#b42318;color:#fff;padding:11px 15px;font-weight:700;border-radius:6px;margin-bottom:14px;font-size:13px}
 .foot{margin-top:26px;font-size:11px;color:#999;text-align:center;border-top:1px solid #e0e0e0;padding-top:10px}
 @media print{body{padding:14px}.no-print{display:none}}
-</style></head><body>`;
+</style></head><body data-cls="${esc(cls.replace(/^Class\s*/i,""))}" data-grade="${esc(_grade.cls.replace(/^Class\s*/i,""))}">`;
     html+=`<div class="hdr"><h1>STEPPING STONE INTER COLLEGE</h1><div class="sub">${BRANCH_LABEL}, ${BRANCH_ADDR}</div></div>`;
-    html+=`<div class="meta"><span><b>Test:</b> ${name}</span><span><b>Class:</b> ${cls}</span><span><b>Subject:</b> ${subj}</span><span><b>Max Marks:</b> ${totalTestMarks}</span><span><b>Time:</b> ${Math.round(totalTestMarks*1.5)} min</span><span><b>Date:</b> ____________</span></div>`;
+    html+=`<div class="meta"><span><b>Test:</b> ${esc(name)}</span><span><b>Class:</b> ${esc(cls)}</span><span><b>Subject:</b> ${esc(subj)}</span><span><b>Max Marks:</b> ${actualMarks}</span><span><b>Time:</b> ${timeMin} min</span><span><b>Date:</b> ____________</span></div>`;
     html+=`<div class="instr">General Instructions: All questions are compulsory. Read each question carefully before answering.</div>`;
     let qn=1;
     ["A","B","C","D","E"].forEach(sec=>{
@@ -12782,16 +12864,21 @@ body{font-family:'Times New Roman',Georgia,serif;padding:30px 34px;color:#1a1a1a
       html+=`<div class="sec-hdr">${QB_SNAMES[sec]}</div>`;
       bySection[sec].forEach(ti=>{
         const q=ti.q;
-        html+=`<div class="q"><b>Q${qn}.</b> ${q.q.replace(/<div[^>]*>|<\/div>/g,"").replace(/<[^>]+>/g,s=>["<b>","</b>","<br>","<br/>"].includes(s)?s:"")} <span class="mk">[${q.m} Mark${q.m>1?"s":""}]</span>`;
+        // strip internal/source tags FIRST, then drop HTML tags except b/br — LaTeX (\( \) \frac …) is left intact for KaTeX below.
+        const stem=qbStripTags(q.q).replace(/<div[^>]*>|<\/div>/g,"").replace(/<[^>]+>/g,s=>["<b>","</b>","<br>","<br/>"].includes(s)?s:"");
+        html+=`<div class="q"><b>Q${qn}.</b> ${stem} <span class="mk">[${q.m} Mark${q.m>1?"s":""}]</span>`;
         if(q.fig)html+=`<div class="qfig">${q.fig}</div>`;
-        if(q.o&&q.o.length)html+=`<div class="opts">${q.o.map(o=>`<div>${o}</div>`).join("")}</div>`;
+        if(q.o&&q.o.length){ const wide=q.o.some(o=>String(o).length>42); html+=`<div class="opts${wide?" wide":""}">${q.o.map(o=>`<div>${o}</div>`).join("")}</div>`; }
         html+=`</div>`;
         qn++;
       });
     });
-    html+=`<div class="foot">Generated by Stepping Stone — Academic Portal${subj?" · "+subj:""}</div></body></html>`;
+    html+=`<div class="foot">Generated by Stepping Stone — Academic Portal${subj?" · "+subj:""}</div>`;
+    // 4) Render ALL math via KaTeX, then run the OUTPUT validator; a failure shows a red banner instead of a clean print.
+    html+='<scr'+'ipt>window.addEventListener("load",function(){function fin(){var b=document.body.innerText,e=[];if(/M\\d+\\.Q\\d+/.test(b))e.push("internal reference tag in a stem");if(/\\\\(frac|dfrac|tfrac|sqrt|left|right|Rightarrow|Leftarrow|displaystyle|int|sum|lim|cdot|times|div|geq|leq|neq)/.test(b))e.push("un-rendered LaTeX");var d=document.body.dataset;if(d.cls!==d.grade)e.push("class "+d.cls+" does not match grade "+d.grade);if(e.length){var w=document.createElement("div");w.className="vfail";w.textContent="\\u26A0 PAPER VALIDATION FAILED — do not distribute: "+e.join(" \\u00B7 ");document.body.insertBefore(w,document.body.firstChild);try{console.error("QB paper validation failed:",e);}catch(_){}return;}window.print();}function go(){try{window.renderMathInElement(document.body,{delimiters:[{left:"\\\\(",right:"\\\\)",display:false},{left:"\\\\[",right:"\\\\]",display:true},{left:"$$",right:"$$",display:true}],throwOnError:false});}catch(_){}setTimeout(fin,150);}if(window.renderMathInElement){go();}else{var n=0,t=setInterval(function(){if(window.renderMathInElement){clearInterval(t);go();}else if(n++>60){clearInterval(t);fin();}},100);}});<\/scr'+'ipt>';
+    html+=`</body></html>`;
     const w=window.open("","_blank");
-    if(w){w.document.write(html);w.document.close();setTimeout(()=>w.print(),500);}
+    if(w){w.document.write(html);w.document.close();}
   }
 
   // ── Empty/locked states ──
@@ -12972,7 +13059,7 @@ body{font-family:'Times New Roman',Georgia,serif;padding:30px 34px;color:#1a1a1a
                             <span style={{marginLeft:"auto",fontSize:10.5,fontWeight:700,color:"var(--ap-accent)",background:"var(--ap-accent-soft)",padding:"2px 9px",borderRadius:99}}>{q.m} mark{q.m>1?"s":""}</span>
                           </div>
                           {/* question */}
-                          <TeX block style={{fontSize:13.5,lineHeight:1.6,color:"var(--ap-ink)"}} html={q.q}/>{q.fig?<div className="qbfig" dangerouslySetInnerHTML={{__html:q.fig}}/>:null}
+                          <TeX block style={{fontSize:13.5,lineHeight:1.6,color:"var(--ap-ink)"}} html={qbStripTags(q.q)}/>{q.fig?<div className="qbfig" dangerouslySetInnerHTML={{__html:q.fig}}/>:null}
                           {/* options */}
                           {q.o&&q.o.length>0&&(
                             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginTop:11}}>
@@ -12993,6 +13080,7 @@ body{font-family:'Times New Roman',Georgia,serif;padding:30px 34px;color:#1a1a1a
                           {revealed&&(
                             <div style={{marginTop:11,padding:"10px 12px",background:"var(--bg-grn)",border:"1px solid var(--bg-grn)",borderRadius:10,fontSize:12.5,color:"var(--tx-grn3)",lineHeight:1.65}}>
                               <div style={{fontSize:9.5,fontWeight:700,letterSpacing:.8,textTransform:"uppercase",marginBottom:4,color:"var(--tx-grn2)"}}>Solution</div>
+                              {qbFlagged(q)&&<div style={{marginBottom:6,fontSize:11,fontWeight:700,color:"var(--tx-org2)",background:"var(--bg-amb)",border:"1px solid var(--bd-amb)",borderRadius:7,padding:"5px 9px"}}>⚠ {qbFlagged(q)} — verify before use.</div>}
                               <TeX html={fmtSolution(getSolution(q))}/>
                             </div>
                           )}
@@ -13057,9 +13145,10 @@ body{font-family:'Times New Roman',Georgia,serif;padding:30px 34px;color:#1a1a1a
             <div style={{padding:"13px 15px",borderTop:"1px solid var(--ap-line)",display:"flex",flexDirection:"column",gap:9}}>
               <div style={{display:"flex",gap:8}}>
                 <input value={testName} onChange={e=>setTestName(e.target.value)} placeholder="Test name" className="ss-input" style={{flex:1,padding:"9px 12px",borderRadius:9,border:"1px solid var(--c-d2)",fontSize:12.5,outline:"none"}}/>
-                <input value={testCls} onChange={e=>setTestCls(e.target.value)} placeholder="Class" className="ss-input" style={{width:62,padding:"9px 10px",borderRadius:9,border:"1px solid var(--c-d2)",fontSize:12.5,outline:"none"}}/>
+                <span title="Class comes from the selected question bank — it can't be set wrong." style={{width:88,padding:"9px 10px",borderRadius:9,border:"1px dashed var(--c-d2)",fontSize:12,fontWeight:700,color:"var(--ap-ink2)",background:"var(--c-f7)",textAlign:"center",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{(QB_LVL_GRADE[lvl]||{}).cls||"—"}</span>
               </div>
               <Btn onClick={generatePaper} v="pri" style={{width:"100%",padding:11,fontSize:13.5}} disabled={testItems.length===0}>Generate &amp; print paper</Btn>
+              {isAdmin&&<button onClick={()=>{try{qbHealthReport();}catch(e){alert("Report error: "+e.message);}}} style={{width:"100%",padding:"8px",fontSize:12,fontWeight:600,background:"none",border:"1px solid var(--c-d2)",borderRadius:9,color:"var(--ap-ink2)",cursor:"pointer",fontFamily:"var(--ss-font)"}}>⚑ Bank health report (questions to review)</button>}
             </div>
           </div>
 
@@ -16393,6 +16482,7 @@ function App(){
   const canFees=(isAdmin&&user.fees!==false)||isOffice;
   // Director only (the VP is admin-with-fees:false, so excluded here) — for account management.
   const isDirector=isAdmin&&user.fees!==false;
+  const isVP=!isDirector&&(isAdmin||user.role==="vp"); // Vice Principal — both encodings (role 'vp' OR legacy admin+fees:false)
   // Unread notices badge
   const unreadNotices = !isAdmin ? Object.values(noticesDB.data||{}).filter(function(n){
     if(!n||!n.title||n.active===false||!_noticeVisible(n,user))return false;        // match the board's predicate (undefined active = active)
@@ -16503,7 +16593,7 @@ function App(){
       ...(isAdmin?[{id:"admin", label:"Admin"}]:[]),
     ]},
     // ═══ MANAGE ═══
-    ...(isAdmin?[{id:"staffatt-grp", label:"Staff", sec:"MANAGE", children:[
+    ...((isAdmin||user.role==="vp")?[{id:"staffatt-grp", label:"Staff", sec:"MANAGE", children:[
       {id:"staffatt", label:"Directory & Register"},
       {id:"leave",    label:"Leave"},
     ]}]:[{id:"leave-grp", label:"Leave", sec:"MANAGE", single:"leave"}]),
@@ -16519,6 +16609,7 @@ function App(){
       {id:"security-grp",   label:"Roles & Security", sec:"Settings", single:"security"},
       {id:"trash-grp",      label:"Recently Deleted", sec:"Settings", single:"trash"},
     ]:[]),
+    ...(isVP?[{id:"accounts-grp", label:"Add Accounts", sec:"Settings", single:"accounts"}]:[]),
     {id:"account-grp", label:"Account", sec:"Settings", single:"account"},
   ];
 
@@ -16687,12 +16778,12 @@ function App(){
         {tab==="account"&&<AccountSettings user={user} usersDB={usersDB} onUpdate={handleUpdateUser}/> }
         {tab==="teacherlog"&&!isParent&&<TeacherLogPanel user={user}/>}
         {tab==="attendance"&&!isParent&&<Attendance user={user} attendanceDB={attendanceDB} studentsDB={studentsDB} usersDB={usersDB} academicRosterDB={academicRosterDB} dirDB={dirDB} calendarDB={calendarDB}/>}
-        {tab==="staffatt"&&isAdmin&&<StaffAttendanceRegister user={user} isDirector={isDirector} setTab={setTab}/>}
+        {tab==="staffatt"&&(isAdmin||user.role==="vp")&&<StaffAttendanceRegister user={user} isDirector={isDirector} setTab={setTab}/>}
         {tab==="assign"&&isAdmin&&<AssignPanel usersDB={usersDB} dirDB={dirDB} studentsDB={studentsDB}/>}
         {tab==="security"&&isDirector&&<SecurityPanel user={user} usersDB={usersDB}/>}
         {tab==="branchsetup"&&isDirector&&<BranchSetup user={user}/>}
         {tab==="trash"&&isDirector&&<RecentlyDeleted feesDB={feesDB} examsDB={examsDB} testsDB={testsDB} noticesDB={noticesDB}/>}
-        {tab==="accounts"&&isDirector&&<AccountsPanel user={user} usersDB={usersDB} studentsDB={studentsDB} dirDB={dirDB} academicRosterDB={academicRosterDB}/>}
+        {tab==="accounts"&&(isDirector||isVP)&&<AccountsPanel user={user} usersDB={usersDB} studentsDB={studentsDB} dirDB={dirDB} academicRosterDB={academicRosterDB} canManage={isDirector}/>}
         {tab==="cnotes"&&(isAdmin||isTeacher)&&<ContentGate label="Loading concept notes…"><ConceptNotesPanel user={user}/></ContentGate>}
         {tab==="studynotes"&&isDirector&&<ContentGate label="Loading study notes…"><StudyNotesPanel user={user}/></ContentGate>}
         {tab==="timetable"&&canTimetable&&<TimetablePanel user={user}/>}
@@ -17650,7 +17741,7 @@ function StudentQCard({q,isDone,onToggleDone,isBm,onToggleBm,diffColors,diffLabe
           {onToggleBm&&<button onClick={onToggleBm} title={isBm?"Remove bookmark":"Bookmark this question"} className="ss-press" style={{marginLeft:"auto",background:"none",border:"none",cursor:"pointer",fontSize:16,lineHeight:1,color:isBm?"#e9a64f":"var(--ap-faint)",padding:"0 2px"}}>{isBm?"":""}</button>}
           {isDone&&<span style={{fontSize:10.5,fontWeight:700,color:"var(--tx-grn)",background:"var(--bg-grn)",padding:"2px 9px",borderRadius:99}}>✓ Done</span>}
         </div>
-        <TeX block style={{fontSize:13.5,lineHeight:1.6,color:"var(--ap-ink)"}} html={q.q}/>{q.fig?<div className="qbfig" dangerouslySetInnerHTML={{__html:q.fig}}/>:null}
+        <TeX block style={{fontSize:13.5,lineHeight:1.6,color:"var(--ap-ink)"}} html={qbStripTags(q.q)}/>{q.fig?<div className="qbfig" dangerouslySetInnerHTML={{__html:q.fig}}/>:null}
         {q.o&&q.o.length>0&&(
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginTop:11}}>
             {q.o.map((opt,i)=>{
