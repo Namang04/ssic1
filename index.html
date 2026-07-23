@@ -993,7 +993,7 @@ function __applyBranch(id){var b=__branchById(id);BRANCH_LABEL=b.label;BRANCH_AD
 // reads/writes "<branch>_<base>". Identity/global collections (accounts, users, auditLogs, loginLogs, meta) are NOT
 // branch-scoped: one login pool, one audit trail. The prefix is applied centrally by wrapping __fbCollection/__fbDoc,
 // so every read, write, doc and transaction is scoped without touching the ~30 call sites individually.
-const __BRANCH_SCOPED=new Set(["studentDirectory","students","academicRoster","attendance","fees","counters","portalFees","salaries","exams","staffAttendance","leaves","complaints","discipline","registrations","admissions","paymentIntents","timetables","timetableSettings","notices","lessonPlans","teacherLogs","studentPhotos","studentLinks","tests","topics","wrongAnswers","calendar"]);
+const __BRANCH_SCOPED=new Set(["studentDirectory","students","academicRoster","attendance","fees","counters","portalFees","salaries","exams","staffAttendance","leaves","complaints","discipline","registrations","admissions","paymentIntents","timetables","timetableSettings","notices","lessonPlans","teacherLogs","studentPhotos","studentLinks","tests","topics","syllabus","wrongAnswers","calendar"]);
 function _bcoll(base){var b=(typeof window!=="undefined"&&window.__currentBranch)||"greencity";return (b&&b!=="greencity"&&__BRANCH_SCOPED.has(base))?(b+"_"+base):base;}
 function __wrapFb(){
   if(typeof window==="undefined"||window.__bcollWrapped||!window.__fbCollection||!window.__fbDoc)return;
@@ -1356,7 +1356,9 @@ function _markOf(test,adm,name){if(!test)return undefined;var rba=test.rowsByAdm
 function __bcastClsKey(s){var p=String(s||"").trim().split(/\s+/).filter(Boolean);var sec=(p.length>1&&/^[A-Za-z]$/.test(p[p.length-1]))?String(p.pop()).toUpperCase():"";return{cls:p.length?String(__clsNum(p.join(" "))):"",sec:sec};}
 function __bcastClsMatch(nCls,uCls,uSec){var a=__bcastClsKey(nCls);if(!a.cls)return true;var b=__bcastClsKey(uCls);if(!b.cls||a.cls!==b.cls)return false;if(!a.sec)return true;var s=String(uSec||b.sec||"").toUpperCase().trim();return !s||s===a.sec;} // unknown section → show (never hide from the right class)
 function _noticeVisible(n,user){var a=n&&n.audience;var r=(user&&user.role)||"";
-  if(a==="Parents"){if(r==="admin")return true;if(r!=="parent"&&r!=="student")return false;return !n.cls||__bcastClsMatch(n.cls,user&&user.cls,user&&user.section);}
+  if(a==="Parents"){if(r==="admin")return true;if(r!=="parent"&&r!=="student")return false;
+    if(n.admNo)return String(n.admNo)===String((user&&(user.admNo||user.childAdmNo))||""); // per-student notice (discipline etc.) — admission no. DECIDES; class is ignored so a stale cls stamp can never hide it from the one parent it targets
+    return !n.cls||__bcastClsMatch(n.cls,user&&user.cls,user&&user.section);}
   if(!a||a==="All")return true;
   if(r==="admin")return true;
   if(a==="Senior Staff")return r==="vp"||r==="office";
@@ -2203,7 +2205,7 @@ function PrincipalDashboard({user,attendanceDB,staffAttDB,leaveDB,disciplineDB,c
   // Closing an incident/complaint is a one-tap state change — confirm first so a stray tap can't silently
   // clear it from the open list, then toast so the action is visible.
   const _askResolve=async(what)=>{try{if(window.__confirm)return await window.__confirm({title:"Mark "+what+" resolved?",body:"It moves out of the open list. You can still see it under resolved.",confirmText:"Mark resolved"});}catch(e){}return window.confirm("Mark this "+what+" resolved?");};
-  const resolveDisc=async(d)=>{if(!(await _askResolve("incident")))return;var r=Object.assign({},d);delete r.id;try{await disciplineDB.set(d.id,Object.assign({},r,{status:"resolved",resolvedBy:user.name,resolvedAt:new Date().toISOString()}));window.__toast&&window.__toast("Incident resolved","ok");}catch(e){window.__toast&&window.__toast("Could not update — "+((e&&e.message)||"try again"),"err");}};
+  const resolveDisc=async(d)=>{if(!(await _askResolve("incident")))return;try{await disciplineDB.patch(d.id,{status:"resolved",resolvedBy:user.name,resolvedAt:new Date().toISOString()});window.__toast&&window.__toast("Incident resolved","ok");}catch(e){window.__toast&&window.__toast("Could not update — "+((e&&e.message)||"try again"),"err");}};
   const resolveCompl=async(c)=>{if(!(await _askResolve("complaint")))return;var r=Object.assign({},c);delete r.id;try{await complaintsDB.set(c.id,Object.assign({},r,{status:"resolved",resolvedBy:user.name,resolvedAt:new Date().toISOString()}));window.__toast&&window.__toast("Complaint resolved","ok");}catch(e){window.__toast&&window.__toast("Could not update — "+((e&&e.message)||"try again"),"err");}};
   if(attendanceDB.loading)return<Spinner/>;
   const ringC=2*Math.PI*40;
@@ -2234,7 +2236,7 @@ function PrincipalDashboard({user,attendanceDB,staffAttDB,leaveDB,disciplineDB,c
           <StatCard label="Sections marked" val={(sectionSet.length-unmarked.length)+" / "+sectionSet.length} icon="📋" color={unmarked.length?"var(--tx-org)":"var(--tx-grn2)"} sub={unmarked.length?unmarked.length+" still to mark":"all in"} onClick={()=>setTab("attendance")}/>
           <StatCard label="On leave today" val={onLeaveToday.length} icon="📅" color={onLeaveToday.length?"var(--tx-org)":"var(--tx-grn2)"} sub={onLeaveToday.length?"need cover":"full strength"} onClick={()=>setTab("leave")}/>
           <StatCard label="Approvals pending" val={pendingLeaves.length} icon="⏳" color={pendingLeaves.length?"var(--tx-red)":"var(--tx-grn2)"} sub="leave requests" onClick={()=>setTab("leave")}/>
-          <StatCard label="Discipline open" val={discList.length} icon="📋" color={discList.length?"var(--tx-pur)":"var(--tx-grn2)"} sub={discList.length?"incidents to close":"clean record"} onClick={()=>{var el=document.getElementById("pd-disc-open");el&&el.scrollIntoView({behavior:"smooth",block:"start"});}}/>
+          <StatCard label="Discipline open" val={discList.length} icon="📋" color={discList.length?"var(--tx-pur)":"var(--tx-grn2)"} sub={discList.length?"open the case files":"clean record"} onClick={()=>setTab&&setTab("discipline")}/>
           <StatCard label="Complaints open" val={complList.length} icon="📢" color={complList.length?"var(--tx-red)":"var(--tx-grn2)"} sub={complList.length?"need a response":"none open"} onClick={()=>{var el=document.getElementById("pd-compl-open");el&&el.scrollIntoView({behavior:"smooth",block:"start"});}}/>
         </div>
         {/* class-wise attendance */}
@@ -2330,7 +2332,7 @@ function PrincipalDashboard({user,attendanceDB,staffAttDB,leaveDB,disciplineDB,c
             {onLeaveToday.length>0&&<button onClick={()=>setTab("timetable")} style={{width:"100%",marginTop:8,fontSize:12,fontWeight:600,color:"var(--ap-accent)",background:"none",border:"none",cursor:"pointer"}}>Assign cover in Timetable →</button>}
           </div>
         </InsPanel>
-        <InsPanel id="pd-disc-open" title="Discipline · open" sub={discList.length+" incident"+(discList.length===1?"":"s")} pad={0} right={<button onClick={()=>openLog("discipline")} style={{fontSize:11.5,fontWeight:700,color:"var(--ap-accent)",background:"none",border:"none",cursor:"pointer"}}>+ Log</button>}>
+        <InsPanel id="pd-disc-open" title="Discipline · open" sub={discList.length+" incident"+(discList.length===1?"":"s")} pad={0} right={<span style={{display:"inline-flex",gap:12,alignItems:"center"}}><button onClick={()=>openLog("discipline")} style={{fontSize:11.5,fontWeight:700,color:"var(--ap-accent)",background:"none",border:"none",cursor:"pointer"}}>+ Log</button><button onClick={()=>setTab&&setTab("discipline")} style={{fontSize:11.5,fontWeight:700,color:"var(--ap-accent)",background:"none",border:"none",cursor:"pointer"}}>All cases →</button></span>}>
           <div style={{padding:"6px 16px 12px"}}>
             {discList.length===0?<div style={{fontSize:12.5,color:"var(--c-94)",padding:"8px 0"}}>No open incidents — clean record. ✓</div>:
             discList.slice(0,5).map((d,i)=>(
@@ -2422,9 +2424,9 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
     // any past weekday) — director's rule. Sundays / calendar Holidays / early morning stay "none".
     const _sCfg=(staffAttDB.data&&staffAttDB.data["__config"])||{};
     const _autoNow=(typeof __staffAutoAbsent==="function")&&__staffAutoAbsent(today,_realToday,_nowHM,_sCfg.lateAfter,calendarDB&&calendarDB.data);
-    staffRoster.forEach(u=>{let k=staffStat(u);let auto=false;if(k==="none"&&_autoNow){k="absent";auto=true;}c[k]++;if(k==="absent"||k==="leave"||k==="late")out.push({name:u.name,kind:k,auto});});
+    staffRoster.forEach(u=>{var _isHead=String(u.username)===String(user.username)||(u.role==="admin"&&(u.username==="director"||(typeof DEFAULT_USERS!=="undefined"&&DEFAULT_USERS[u.username]&&DEFAULT_USERS[u.username].fees!==false)));let k=staffStat(u);let auto=false;if(k==="none"&&_autoNow&&!_isHead){k="absent";auto=true;}c[k]++;if((k==="absent"||k==="leave"||k==="late")&&!_isHead)out.push({name:u.name,kind:k,auto});});
     return {c,flagged:out,total:staffRoster.length,inToday:c.present+c.late};
-  },[staffRoster,staffAttDB.data,leaveDB.data,today,calendarDB&&calendarDB.data,_nowHM]);
+  },[staffRoster,staffAttDB.data,leaveDB.data,today,calendarDB&&calendarDB.data,_nowHM,user]);
 
   // Student attendance today
   const stu=useMemo(()=>{let present=0,total=0;const byCS={};
@@ -3263,7 +3265,7 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
       <StripPanel title="Discipline · complaints · notices" sub="this week's record" right={<Lnk onClick={()=>setTab&&setTab("notices")}>Communication</Lnk>}>
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           {discWeek.length===0&&openCompl.length===0&&<AllClear msg="No open complaints · no discipline incidents this week."/>}
-          {discWeek.length>0&&<div style={{fontSize:12.5,color:"var(--ap-ink2)"}}><b style={{color:"var(--tx-org2)"}}>Discipline ({discWeek.length} this week):</b> {discWeek.slice(0,4).map((d,i)=>{const adm=d.admNo||(dirIndex.all.find(s=>s&&s.name===d.student)||{}).admNo;return(<span key={i}>{i>0?" · ":""}{adm?<NameLink onClick={()=>goStu(adm,"Discipline")}>{d.student}</NameLink>:<b style={{color:"var(--ap-ink)"}}>{d.student}</b>} <span style={{color:"var(--ap-faint)"}}>({d.type||"incident"}{d.cls?", "+String(d.cls).replace("Class ","Cl "):""})</span></span>);})}{discWeek.length>4?" +"+(discWeek.length-4):""}</div>}
+          {discWeek.length>0&&<div style={{fontSize:12.5,color:"var(--ap-ink2)"}}><b onClick={()=>setTab&&setTab("discipline")} role="button" tabIndex={0} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setTab&&setTab("discipline");}}} title="Open the Discipline case files" style={{color:"var(--tx-org2)",cursor:"pointer",textDecoration:"underline",textUnderlineOffset:3}}>Discipline ({discWeek.length} this week):</b> {discWeek.slice(0,4).map((d,i)=>{const adm=d.admNo||(dirIndex.all.find(s=>s&&s.name===d.student)||{}).admNo;return(<span key={i}>{i>0?" · ":""}{adm?<NameLink onClick={()=>goStu(adm,"Discipline")}>{d.student}</NameLink>:<b style={{color:"var(--ap-ink)"}}>{d.student}</b>} <span style={{color:"var(--ap-faint)"}}>({d.type||"incident"}{d.cls?", "+String(d.cls).replace("Class ","Cl "):""})</span></span>);})}{discWeek.length>4?" +"+(discWeek.length-4):""}</div>}
           {openCompl.length>0&&<div style={{fontSize:12.5,color:"var(--ap-ink2)"}}><b style={{color:"var(--tx-red)"}}>Open complaints ({openCompl.length}):</b> {openCompl.slice(0,3).map((c,i)=>(<span key={i}>{i>0?" · ":""}{c.from||"Parent"} — {(c.note||c.about||"").slice(0,40)} <button onClick={()=>resolveComplInline(c)} style={{fontSize:11,fontWeight:700,color:"var(--ap-accent)",background:"none",border:"none",cursor:"pointer",fontFamily:"var(--ss-font)",padding:0}}>[resolve]</button></span>))}</div>}
           {recentNotices.length>0&&<div style={{fontSize:12,color:"var(--ap-muted)"}}>{recentNotices.map((n,i)=>(<span key={i}>{i>0?" · ":""}<button onClick={()=>setTab&&setTab("notices")} style={{background:"none",border:"none",padding:0,cursor:"pointer",color:"var(--ap-muted)",fontFamily:"var(--ss-font)",fontSize:12,textDecoration:"underline",textDecorationColor:"var(--c-e6)",textUnderlineOffset:3}}>{n.title}</button><span style={{color:"var(--ap-faint)"}}> · {fmtDate(String(n.postedAt||"").slice(0,10))}</span></span>))}</div>}
         </div>
@@ -3609,6 +3611,15 @@ function DisciplineQuickLog({user,students,onClose}){
               <button onClick={()=>setSel(null)} style={{background:"none",border:"1px solid var(--ap-line2)",borderRadius:8,padding:"4px 10px",fontSize:11.5,fontWeight:600,cursor:"pointer",color:"var(--ap-ink2)"}}>Change</button>
             </div>
           )}
+          {sel&&(function(){
+            // prior history → the ladder tells the reporter how serious this pick already is
+            var prior=Object.keys(discDB.data||{}).filter(function(k){return k.indexOf("__")!==0;}).map(function(k){return discDB.data[k];}).filter(function(d){return __discMatchesStu(d,sel.name,sel.admNo);});
+            if(!prior.length)return null;
+            var lad=__discLadder(prior);
+            return <div style={{display:"flex",alignItems:"center",gap:8,background:lad.level>=3?"var(--bg-red)":"var(--bg-amb)",borderRadius:10,padding:"8px 12px",fontSize:12,fontWeight:600,color:lad.level>=3?"var(--tx-red)":"var(--tx-org2)"}}>
+              <span>⚠</span><span>{prior.length} prior incident{prior.length===1?"":"s"} on file{lad.total?" — ladder says: "+lad.label:" (all older than 180 days)"}</span>
+            </div>;
+          })()}
           <div><div style={{fontSize:11,fontWeight:700,letterSpacing:.4,textTransform:"uppercase",color:"var(--ap-muted)",marginBottom:6}}>Type</div>
             <select value={itype} onChange={e=>setItype(e.target.value)} style={{width:"100%",border:"1px solid var(--ap-line2)",borderRadius:10,padding:"9px 12px",fontSize:13.5,fontFamily:"var(--ss-font)",background:"var(--c-fff)",color:"var(--ap-ink)"}}>{TYPES.map(t=><option key={t}>{t}</option>)}</select>
           </div>
@@ -3620,11 +3631,510 @@ function DisciplineQuickLog({user,students,onClose}){
           </div>
           <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
             <label style={{fontSize:12,color:"var(--ap-muted)"}}>Date <input type="date" value={date} max={today()} onChange={e=>setDate(e.target.value||today())} style={{border:"1px solid var(--ap-line2)",borderRadius:8,padding:"5px 9px",fontSize:12.5,fontFamily:"var(--ss-font)",marginLeft:4}}/></label>
-            <button onClick={save} disabled={saving} className="ss-press" style={{marginLeft:"auto",background:"var(--tx-org)",color:"#fff",border:"none",borderRadius:10,padding:"10px 20px",fontSize:13.5,fontWeight:700,cursor:saving?"default":"pointer",opacity:saving?.6:1,fontFamily:"var(--ss-font)"}}>{saving?"Saving…":"Log incident"}</button>
+            <button onClick={save} disabled={saving} className="ss-press" style={{marginLeft:"auto",background:"var(--btn-pri-bg)",color:"#fff",border:"none",borderRadius:10,padding:"10px 20px",fontSize:13.5,fontWeight:700,cursor:saving?"default":"pointer",opacity:saving?.6:1,fontFamily:"var(--ss-font)"}}>{saving?"Saving…":"Log incident"}</button>
           </div>
           {msg&&<div style={{fontSize:12.5,fontWeight:600,color:msg.indexOf("✓")===0?"var(--tx-grn2)":"var(--tx-red)"}}>{msg}</div>}
         </div>
       </div>
+    </div>
+  );
+}
+// ── DISCIPLINE MODULE ── the full disciplinary-action channel. Every logged incident is a CASE that moves
+// Reported → Under review → Action taken → Resolved with a recorded action trail, a severity-based escalation
+// ladder (recommended next step from the student's 180-day history), parent notification (in-app notice with
+// acknowledgment), printable warning/meeting/suspension letters, and a repeat-offender watchlist.
+// Backward-compatible: old flat-log docs simply appear as cases in "Reported"; legacy status values untouched.
+function __discStatusMeta(s){
+  var m={open:["Reported","var(--bg-amb)","var(--tx-org2)"],review:["Under review","rgba(0,113,227,.10)","var(--ap-accent)"],action:["Action taken","var(--bg-pur)","var(--tx-pur)"],resolved:["Resolved","var(--bg-grn)","var(--tx-grn2)"]};
+  return m[String(s||"open")]||m.open;
+}
+function __discSevMeta(s){return ({Minor:["var(--bg-amb)","var(--tx-org2)"],Major:["var(--bg-red)","var(--tx-red)"],Severe:["var(--bg-red)","var(--tx-red)"]})[s]||["var(--c-f7)","var(--c-64)"];}
+// One student = one thread: admission no. first, bracket-disambiguated "(adm)" second, normalized name last —
+// the same tiering the Student-360 uses, so both surfaces group incidents identically.
+function __discStuKey(name,admNo){
+  var a=String(admNo||"").trim();if(a)return "a:"+a;
+  var b=(typeof __admInBrack==="function"?__admInBrack(String(name||"")):"");if(b)return "a:"+b;
+  return "n:"+nmKey(String(name||""));
+}
+// Escalation ladder over the student's last 180 days (weights Minor 1 / Major 3 / Severe 6). Guidance, not enforcement.
+function __discLadder(incs){
+  var cut=new Date(Date.now()-180*864e5).toISOString().slice(0,10);
+  var minor=0,major=0,severe=0;
+  (incs||[]).forEach(function(d){var dt=String(d.date||d.at||"").slice(0,10);if(dt&&dt<cut)return;
+    if(d.severity==="Severe")severe++;else if(d.severity==="Major")major++;else minor++;});
+  var score=minor+major*3+severe*6;
+  var lv=(severe>0||score>=8)?4:(major>=2||score>=5)?3:(major>=1||score>=3)?2:1;
+  var L={1:"Level 1 · Verbal warning",2:"Level 2 · Written warning + inform parent",3:"Level 3 · Parent meeting + counselling",4:"Level 4 · Suspension / Director review"};
+  return {level:lv,label:L[lv],score:score,minor:minor,major:major,severe:severe,total:minor+major+severe};
+}
+function __discActionKinds(){return ["Note added","Verbal warning","Written warning","Parent called","Parent meeting held","Counselling session","Detention","Suspension","Escalated to Director"];}
+// Does incident doc `d` belong to the student (name, admNo)? admNo is decisive both ways; name-only legacy docs
+// match by bracket-adm first, then loose name equality with the Student-360's same-name-pair guard.
+function __discMatchesStu(d,name,admNo){
+  if(!d||!d.student)return false;
+  var adm=String(admNo||"").trim();
+  if(d.admNo)return adm?String(d.admNo)===adm:false;
+  var b=(typeof __admInBrack==="function"?__admInBrack(String(d.student||"")):"");
+  if(b)return adm?String(b)===adm:false;
+  if(/\(/.test(String(name||""))||/\(/.test(String(d.student||"")))return false;
+  var me=nmKey(String(name||""));
+  return !!me&&nmKey(String(d.student||""))===me;
+}
+// Discreet WhatsApp opener — never puts incident details in a chat message.
+function _discMsg(name,cls){return "Dear Parent, Greetings from "+SCHOOL_NAME+". We would like to discuss a matter concerning "+(name||"your ward")+(cls?" ("+cls+")":"")+" with you. Kindly contact the class teacher or the school office at your earliest convenience. Thank you.";}
+// Printable letters — same CBSE letterhead as the TC/certificates. kinds: warning | meeting | suspension.
+function __printDiscLetter(kind,d,x){
+  x=x||{};
+  var TT={warning:"DISCIPLINARY WARNING LETTER",meeting:"PARENT MEETING — CALL LETTER",suspension:"SUSPENSION NOTICE"};
+  var title=TT[kind];if(!title)return;
+  var nm=esc(d.student||""),cls=esc(String(d.cls||"")+(d.section?" "+d.section:"")),adm=esc(d.admNo||"");
+  var fmt=function(v){if(!v)return "";try{return new Date(v).toLocaleDateString("en-GB",{day:"2-digit",month:"long",year:"numeric"});}catch(e){return String(v);}};
+  var idt=fmt(today())||today(), incDate=fmt(d.date);
+  var ref="SSIC/DISC/"+(String(d.id||"").replace(/^disc_/,"").slice(-6).toUpperCase()||"&mdash;");
+  var bl="<span class='bl'>&nbsp;</span>";
+  var incLine="<p><b>Incident on record:</b> "+esc(d.type||"Behaviour incident")+(incDate?(" dated <b>"+incDate+"</b>"):"")+(d.severity?(" &middot; severity: <b>"+esc(d.severity)+"</b>"):"")+(d.note?(".<br/><i>"+esc(d.note)+"</i>"):".")+"</p>";
+  var lvl=Number(x.level||2);
+  var body="<p>To,<br/>The Parent / Guardian of <b>"+nm+"</b>"+(cls?(",<br/>Class <b>"+cls+"</b>"):"")+(adm?(" &middot; Admission No. <b>"+adm+"</b>"):"")+"</p>";
+  if(kind==="warning"){
+    body+=incLine
+      +"<p>The above conduct is against the school's code of discipline. This letter is a <b>formal written warning</b>"+(x.repeat?" issued in continuation of earlier incidents on record":"")+". You are requested to counsel your ward so that such behaviour is not repeated.</p>"
+      +"<p>Kindly note that a repetition may require a parent meeting"+(lvl>=3?" and, if it continues, suspension or further action as per school policy":"")+". Please sign and return a copy of this letter to the class teacher as acknowledgment.</p>";
+  } else if(kind==="meeting"){
+    body+=incLine
+      +"<p>To discuss this matter and agree on the way forward, you are requested to attend a meeting at the school office:</p>"
+      +"<p style='margin-left:14px'><b>Date:</b> "+(x.meetDate?("<b>"+fmt(x.meetDate)+"</b>"):bl)+" &nbsp;&nbsp; <b>Time:</b> "+(x.meetTime?("<b>"+esc(x.meetTime)+"</b>"):bl)+"<br/><b>To meet:</b> "+(x.meetWith?esc(x.meetWith):"Vice-Principal / Principal")+"</p>"
+      +"<p>Your presence is important — the school and the family need to act together in the interest of the child. If the given time is not convenient, kindly inform the school office in advance.</p>";
+  } else if(kind==="suspension"){
+    body+=incLine
+      +"<p>In view of the seriousness of the matter"+(x.repeat?" and earlier incidents on record":"")+", <b>"+nm+"</b> is placed under <b>suspension</b> from attending classes:</p>"
+      +"<p style='margin-left:14px'><b>From:</b> "+(x.from?("<b>"+fmt(x.from)+"</b>"):bl)+" &nbsp;&nbsp; <b>To:</b> "+(x.to?("<b>"+fmt(x.to)+"</b>"):bl)+"</p>"
+      +"<p>Re-admission to class will require the parent / guardian to meet the Principal along with the student and give a written undertaking of good conduct. The period of suspension will be treated as per school policy.</p>";
+  }
+  body+="<p>This communication is issued in the interest of the student's growth and the discipline of the institution.</p>";
+  var css="*{box-sizing:border-box}body{font-family:Georgia,'Times New Roman',serif;color:#1a1a1a;margin:0;padding:30px 38px}"
+    +".sheet{max-width:760px;margin:0 auto;border:2px solid #0b3a82;padding:24px 34px}"
+    +".hd{text-align:center;border-bottom:2px solid #0b3a82;padding-bottom:12px}"
+    +".hd h1{margin:0;font-size:26px;letter-spacing:.5px;color:#0b3a82}.hd .sub{font-size:12px;color:#444;margin-top:3px}"
+    +".crow{display:flex;justify-content:space-between;font-size:12px;margin:12px 2px 2px}"
+    +".title{text-align:center;font-size:17px;font-weight:bold;text-decoration:underline;letter-spacing:2px;margin:16px 0 18px}"
+    +".body{font-size:14px;line-height:1.9;text-align:justify}.body p{margin:0 0 13px}"
+    +".bl{display:inline-block;min-width:150px;border-bottom:1px dotted #777}"
+    +".ft{display:flex;justify-content:space-between;margin-top:58px;font-size:12px}.ft div{text-align:center;border-top:1px solid #333;padding-top:5px;min-width:150px}"
+    +".note{font-size:10.5px;color:#888;margin-top:22px;text-align:center}@media print{body{padding:0}}";
+  var h="<!doctype html><html><head><meta charset='utf-8'><title>"+title+" — "+nm+"</title><style>"+css+"</style></head><body>"
+    +"<div class='sheet'>"
+    +"<div class='hd'><h1>Stepping Stone Inter College</h1><div class='sub'>(Affiliated to the Central Board of Secondary Education, New Delhi)</div></div>"
+    +"<div class='crow'><span><b>Ref. No.:</b> "+ref+"</span><span><b>Date:</b> "+esc(idt)+"</span></div>"
+    +"<div class='title'>"+title+"</div>"
+    +"<div class='body'>"+body+"</div>"
+    +"<div class='ft'><div>Class Teacher</div><div>Vice-Principal</div><div>Principal / Director</div></div>"
+    +"<div class='note'>Computer-generated from the school's discipline records. Valid only with the school seal and an authorised signature.</div>"
+    +"</div></body></html>";
+  var w=window.open("","_blank");if(w){w.document.write(h);w.document.close();setTimeout(function(){w.print();},300);}else{if(window.__toast)window.__toast("Allow pop-ups to print the letter","err");}
+}
+// ── Case detail — the working surface of the channel: status, action trail, parent notice, letters ──
+function DisciplineCaseModal({user,id,db,noticesDB,history,phone,ident,canManage,canNotify,canAssign,staffList,onOpenStudent,onClose}){
+  var raw=(db&&db.data&&db.data[id])||null;
+  var d=raw?Object.assign({id:id},raw):null;
+  // legacy docs carry no admNo/section — borrow the roster-resolved identity the panel already computed
+  if(d&&ident){if(!d.admNo&&ident.admNo)d.admNo=ident.admNo;if(!d.cls&&ident.cls)d.cls=ident.cls;if(!d.section&&ident.section)d.section=ident.section;}
+  const[kind,setKind]=useState("Note added");const[aNote,setANote]=useState("");const[aDate,setADate]=useState(today());
+  const[resNote,setResNote]=useState("");const[busy,setBusy]=useState(false);
+  const[letter,setLetter]=useState("warning");const[lx,setLx]=useState({});
+  const[npOpen,setNpOpen]=useState(false);const[npTitle,setNpTitle]=useState("");const[npBody,setNpBody]=useState("");
+  if(!d)return null;
+  var st=__discStatusMeta(d.status),sev=__discSevMeta(d.severity);
+  var ladder=__discLadder(history||[]);
+  var resolved=d.status==="resolved";
+  var clsSec=String(d.cls||"")+(d.section?" "+d.section:"");
+  var notice=(d.parentNoticeId&&noticesDB&&noticesDB.data)?noticesDB.data[safeId(d.parentNoticeId)]:null;
+  var ackTimes=notice?Object.values(notice.ackAt||{}):[];
+  var patchCase=async function(fields,okMsg){
+    if(busy)return;setBusy(true);
+    try{await db.patch(d.id,Object.assign({},fields,{updatedAt:new Date().toISOString(),updatedBy:user.name}));if(okMsg&&window.__toast)window.__toast(okMsg,"ok");}
+    catch(e){window.__toast&&window.__toast("Could not save — "+((e&&e.message)||"check the discipline rule is published in Roles & Security"),"err");}
+    setBusy(false);
+  };
+  var addAction=async function(){
+    if(!String(aNote||"").trim()&&kind==="Note added"){window.__toast&&window.__toast("Write the note first","err");return;}
+    var a={kind:kind,note:String(aNote||"").trim(),date:aDate||today(),by:user.name,at:new Date().toISOString()};
+    var f={actions:window.__fbArrayUnion?window.__fbArrayUnion(a):(d.actions||[]).concat([a])};
+    if(!resolved&&(d.status==="open"||!d.status||d.status==="review"))f.status="action";
+    await patchCase(f,"Action recorded");
+    setANote("");setKind("Note added");
+  };
+  var setStatus=function(s){if(resolved||s===d.status)return;patchCase({status:s},null);};
+  var resolveCase=async function(){
+    var ok=true;try{if(window.__confirm)ok=await window.__confirm({title:"Mark this case resolved?",body:"It moves out of the open queue. The full trail stays on the student's record.",confirmText:"Mark resolved"});else ok=window.confirm("Mark this case resolved?");}catch(e){}
+    if(!ok)return;
+    await patchCase({status:"resolved",resolvedBy:user.name,resolvedAt:new Date().toISOString(),resolution:String(resNote||"").trim()},"Case resolved");
+  };
+  var reopenCase=function(){
+    var a={kind:"Note added",note:"Case reopened",date:today(),by:user.name,at:new Date().toISOString()};
+    patchCase({status:"review",actions:window.__fbArrayUnion?window.__fbArrayUnion(a):(d.actions||[]).concat([a])},"Case reopened");
+  };
+  var openNotify=function(){
+    setNpTitle("Message regarding your ward "+(d.student||""));
+    setNpBody("Dear Parent, this concerns your ward "+(d.student||"")+(clsSec?" ("+clsSec+")":"")+". A discipline matter dated "+(d.date?fmtDate(d.date):"recently")+" requires your attention. Kindly acknowledge this notice and contact the class teacher / school office at the earliest. — "+SCHOOL_NAME);
+    setNpOpen(true);
+  };
+  var sendNotify=async function(){
+    if(!d.admNo){window.__toast&&window.__toast("No admission no. on this case — cannot target the parent","err");return;}
+    if(!String(npBody||"").trim()){window.__toast&&window.__toast("Write the notice body first","err");return;}
+    if(busy)return;setBusy(true);
+    var key="dn_"+Date.now().toString(36)+"_"+Math.floor(Math.random()*1e4);
+    try{
+      await noticesDB.set(key,{id:key,title:String(npTitle||"").trim()||("Message regarding your ward "+(d.student||"")),body:String(npBody||"").trim(),type:"Urgent",audience:"Parents",cls:clsSec,admNo:String(d.admNo),expiresAt:"",pinned:false,postedBy:user.name,postedAt:new Date().toISOString(),readBy:[],ackAt:{},active:true});
+      var a={kind:"Parent notified (app)",note:"In-app notice published — awaiting acknowledgment (the parent needs an app login to see it)",date:today(),by:user.name,at:new Date().toISOString()};
+      var f={parentNoticeId:key,actions:window.__fbArrayUnion?window.__fbArrayUnion(a):(d.actions||[]).concat([a])};
+      if(d.status==="open"||!d.status)f.status="action";
+      await db.patch(d.id,Object.assign({},f,{updatedAt:new Date().toISOString(),updatedBy:user.name}));
+      window.__toast&&window.__toast("Notice published — the parent sees it on next app open","ok");setNpOpen(false);
+    }catch(e){window.__toast&&window.__toast("Could not send — "+((e&&e.message)||"try again"),"err");}
+    setBusy(false);
+  };
+  var delCase=async function(){
+    var ok=true;try{if(window.__confirm)ok=await window.__confirm({title:"Delete this case?",body:"It moves to Recently Deleted. Prefer resolving cases so the record stays complete.",danger:true,confirmText:"Delete"});else ok=window.confirm("Delete this case?");}catch(e){}
+    if(!ok)return;
+    if(await softDelete(db,d.id,user)){onClose&&onClose();}
+  };
+  // Trail = created + each action + parent-ack + resolution, one sorted thread.
+  var trail=[{kind:"Reported",note:d.note||"",date:d.date||String(d.at||"").slice(0,10),by:d.by||"",at:d.at||""}]
+    .concat((d.actions||[]).slice().sort(function(a,b){return String(a.at||"").localeCompare(String(b.at||""));}));
+  if(resolved)trail=trail.concat([{kind:"Resolved",note:d.resolution||"",date:String(d.resolvedAt||"").slice(0,10),by:d.resolvedBy||"",at:d.resolvedAt||""}]);
+  var lbl={fontSize:11,fontWeight:700,letterSpacing:.4,textTransform:"uppercase",color:"var(--ap-muted)",marginBottom:6};
+  var inp={border:"1px solid var(--ap-line2)",borderRadius:10,padding:"9px 12px",fontSize:13,fontFamily:"var(--ss-font)",background:"var(--c-fff)",color:"var(--ap-ink)"};
+  var chip=function(t,bg,fg){return <span style={{background:bg,color:fg,borderRadius:20,padding:"3px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>{t}</span>;};
+  var hon=function(n){return n?((typeof honorific==="function")?honorific(n):n):"—";};
+  return(
+    <div onClick={e=>{if(e.target===e.currentTarget)onClose();}} style={{position:"fixed",inset:0,zIndex:9000,background:"rgba(8,12,20,.55)",display:"flex",alignItems:"flex-start",justifyContent:"center",padding:"4vh 16px",overflowY:"auto"}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:680,background:"var(--c-fff)",borderRadius:18,border:"1px solid var(--ap-line)",boxShadow:"0 24px 64px rgba(0,0,0,.4)",overflow:"hidden",marginBottom:"6vh"}}>
+        <div style={{padding:"16px 20px",borderBottom:"1px solid var(--ap-line)",display:"flex",alignItems:"flex-start",gap:12}}>
+          <div style={{width:38,height:38,borderRadius:11,background:sev[0],color:sev[1],display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontWeight:800,fontSize:15}}>{(d.severity||"M").charAt(0)}</div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+              <span style={{fontWeight:800,fontSize:15.5,color:"var(--ap-ink)"}}>{d.student||"—"}</span>
+              {chip(d.severity||"Minor",sev[0],sev[1])}
+              {chip(st[0],st[1],st[2])}
+            </div>
+            <div style={{fontSize:12,color:"var(--ap-muted)",marginTop:3}}>{clsSec||"class not recorded"}{d.admNo?" · #"+d.admNo:""} · {d.type||"Incident"} · {d.date?fmtDate(d.date):""} · reported by {hon(d.by)}{d.assignedTo?" · handling: "+hon(d.assignedTo):""}</div>
+          </div>
+          <button onClick={onClose} aria-label="Close" title="Close" style={{background:"none",border:"none",fontSize:22,lineHeight:1,color:"var(--ap-muted)",cursor:"pointer",width:36,height:36,display:"grid",placeItems:"center",flexShrink:0}}>×</button>
+        </div>
+        <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:15}}>
+          {/* escalation ladder — where this student stands */}
+          <div style={{display:"flex",alignItems:"center",gap:10,background:"var(--c-f7)",borderRadius:12,padding:"10px 14px",flexWrap:"wrap"}}>
+            <div style={{flex:"1 1 240px",minWidth:0}}>
+              <div style={{fontSize:11,fontWeight:700,letterSpacing:.4,textTransform:"uppercase",color:"var(--ap-muted)"}}>Escalation ladder · last 180 days</div>
+              <div style={{fontSize:13,fontWeight:700,color:ladder.level>=3?"var(--tx-red)":ladder.level===2?"var(--tx-org2)":"var(--ap-ink)",marginTop:2}}>{ladder.label}</div>
+              <div style={{fontSize:11.5,color:"var(--ap-muted)",marginTop:1}}>{ladder.total} incident{ladder.total===1?"":"s"} on file{ladder.minor?" · "+ladder.minor+" minor":""}{ladder.major?" · "+ladder.major+" major":""}{ladder.severe?" · "+ladder.severe+" severe":""}</div>
+            </div>
+            {phone?<CallWAButtons phone={phone} msg={_discMsg(d.student,clsSec)}/>:<span style={{fontSize:11.5,color:"var(--ap-faint)"}}>no parent number on file</span>}
+            {onOpenStudent&&d.admNo&&<button onClick={function(){onClose&&onClose();onOpenStudent(d.admNo);}} style={{background:"none",border:"1px solid var(--ap-line2)",borderRadius:9,padding:"7px 12px",fontSize:11.5,fontWeight:700,color:"var(--ap-accent)",cursor:"pointer",fontFamily:"var(--ss-font)"}}>Student 360 →</button>}
+          </div>
+          {/* status stepper */}
+          {canManage&&<div>
+            <div style={lbl}>Case status</div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {[["open","Reported"],["review","Under review"],["action","Action taken"]].map(function(p){
+                var on=(d.status||"open")===p[0];
+                return <button key={p[0]} disabled={resolved||busy} onClick={function(){setStatus(p[0]);}} style={{flex:"1 1 100px",border:"1px solid "+(on?"var(--ap-accent)":"var(--ap-line2)"),background:on?"rgba(0,113,227,.10)":"var(--c-fff)",color:on?"var(--ap-accent)":"var(--ap-ink2)",borderRadius:9,padding:"8px 0",fontSize:12.5,fontWeight:700,cursor:resolved?"default":"pointer",fontFamily:"var(--ss-font)",opacity:resolved?.5:1}}>{p[1]}</button>;
+              })}
+              {resolved
+                ?<button disabled={busy} onClick={reopenCase} style={{flex:"1 1 100px",border:"1px solid var(--bd-grn)",background:"var(--bg-grn)",color:"var(--tx-grn2)",borderRadius:9,padding:"8px 0",fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Resolved ✓ · Reopen</button>
+                :<span style={{flex:"1 1 100px"}}/>}
+            </div>
+          </div>}
+          {/* action trail */}
+          <div>
+            <div style={lbl}>Action trail</div>
+            <div style={{border:"1px solid var(--ap-line)",borderRadius:12,overflow:"hidden"}}>
+              {trail.map(function(a,i){
+                var isRep=a.kind==="Reported",isRes=a.kind==="Resolved";
+                return <div key={i} style={{display:"flex",gap:10,padding:"10px 14px",borderTop:i?"1px solid var(--c-f0)":"none",background:isRes?"var(--bg-grn)":"var(--c-fff)"}}>
+                  <span style={{width:8,height:8,borderRadius:99,marginTop:5,flexShrink:0,background:isRep?sev[1]:isRes?"var(--tx-grn2)":"var(--ap-accent)"}}/>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:12.5,fontWeight:700,color:"var(--ap-ink)"}}>{a.kind}{a.date?<span style={{fontWeight:500,color:"var(--ap-muted)"}}> · {fmtDate(a.date)}</span>:null}{a.by?<span style={{fontWeight:500,color:"var(--ap-muted)"}}> · {hon(a.by)}</span>:null}</div>
+                    {a.note?<div style={{fontSize:12.5,color:"var(--ap-ink2)",marginTop:2,lineHeight:1.45}}>{a.note}</div>:null}
+                  </div>
+                </div>;
+              })}
+            </div>
+            {d.parentNoticeId&&<div style={{marginTop:8,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+              {notice
+                ?(ackTimes.length>0
+                  ?chip("Parent acknowledged · "+new Date(ackTimes[0]).toLocaleString("en-IN",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}),"var(--bg-grn)","var(--tx-grn2)")
+                  :chip("Parent notified — awaiting acknowledgment","var(--bg-amb)","var(--tx-org2)"))
+                :chip("Parent notice no longer available","var(--c-f7)","var(--c-64)")}
+            </div>}
+          </div>
+          {/* add an action */}
+          {canManage&&!resolved&&<div>
+            <div style={lbl}>Record an action</div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              <select value={kind} onChange={e=>setKind(e.target.value)} style={Object.assign({},inp,{flex:"1 1 170px"})}>{__discActionKinds().map(function(k){return <option key={k}>{k}</option>;})}</select>
+              <input type="date" value={aDate} max={today()} onChange={e=>setADate(e.target.value||today())} style={Object.assign({},inp,{flex:"0 0 auto"})}/>
+            </div>
+            <div style={{display:"flex",gap:8,marginTop:8,alignItems:"flex-start"}}>
+              <textarea value={aNote} onChange={e=>setANote(e.target.value)} rows={2} placeholder="What was done / decided…" style={Object.assign({},inp,{flex:1,resize:"vertical",boxSizing:"border-box"})}/>
+              <button onClick={addAction} disabled={busy} className="ss-press" style={{background:"var(--btn-pri-bg)",color:"#fff",border:"none",borderRadius:10,padding:"10px 16px",fontSize:12.5,fontWeight:700,cursor:busy?"default":"pointer",opacity:busy?.6:1,fontFamily:"var(--ss-font)",flexShrink:0}}>Add</button>
+            </div>
+          </div>}
+          {/* assign + notify + letters */}
+          {canManage&&!resolved&&<div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
+            {canAssign&&<div style={{flex:"1 1 200px"}}>
+              <div style={lbl}>Case owner</div>
+              <select value={d.assignedTo||""} disabled={busy} onChange={e=>patchCase({assignedTo:e.target.value},e.target.value?("Assigned to "+e.target.value):"Unassigned")} style={Object.assign({},inp,{width:"100%"})}>
+                <option value="">Unassigned</option>
+                {(staffList||[]).map(function(n){return <option key={n} value={n}>{n}</option>;})}
+              </select>
+            </div>}
+            <div style={{flex:"1 1 200px"}}>
+              <div style={lbl}>Parent communication</div>
+              {canNotify
+                ?<button onClick={openNotify} disabled={busy||!d.admNo} title={d.admNo?"Send an in-app notice the parent must acknowledge":"No admission no. on this case"} style={{width:"100%",border:"1px solid var(--bd-amb)",background:"var(--bg-amb)",color:"var(--tx-org2)",borderRadius:10,padding:"9px 12px",fontSize:12.5,fontWeight:700,cursor:d.admNo?"pointer":"default",opacity:d.admNo?1:.5,fontFamily:"var(--ss-font)"}}>{d.parentNoticeId?"Send another notice":"Notify parent (in-app + ack)"}</button>
+                :<div style={{fontSize:12,color:"var(--ap-muted)",lineHeight:1.5}}>Parent notices are sent by the office / principal — record your action above and they take it forward.</div>}
+            </div>
+          </div>}
+          {/* parent notice composer */}
+          {npOpen&&<div style={{border:"1px solid var(--bd-amb)",background:"var(--bg-amb)",borderRadius:12,padding:"12px 14px"}}>
+            <div style={Object.assign({},lbl,{color:"var(--tx-org2)"})}>In-app notice to the parent of {d.student} · they must tap “acknowledge”</div>
+            <input value={npTitle} onChange={e=>setNpTitle(e.target.value)} style={Object.assign({},inp,{width:"100%",boxSizing:"border-box",marginBottom:8})}/>
+            <textarea value={npBody} onChange={e=>setNpBody(e.target.value)} rows={4} style={Object.assign({},inp,{width:"100%",resize:"vertical",boxSizing:"border-box"})}/>
+            <div style={{fontSize:11,color:"var(--tx-org2)",margin:"6px 0 10px"}}>Keep it discreet — details stay in this case file, not in the notice.</div>
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+              <button onClick={function(){setNpOpen(false);}} style={{background:"none",border:"1px solid var(--ap-line2)",borderRadius:9,padding:"8px 14px",fontSize:12.5,fontWeight:600,cursor:"pointer",color:"var(--ap-ink2)",fontFamily:"var(--ss-font)"}}>Cancel</button>
+              <button onClick={sendNotify} disabled={busy} className="ss-press" style={{background:"var(--btn-pri-bg)",color:"#fff",border:"none",borderRadius:9,padding:"8px 16px",fontSize:12.5,fontWeight:700,cursor:busy?"default":"pointer",opacity:busy?.6:1,fontFamily:"var(--ss-font)"}}>{busy?"Sending…":"Send notice"}</button>
+            </div>
+          </div>}
+          {/* printable letters */}
+          {canManage&&<div>
+            <div style={lbl}>Printable letter</div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+              <select value={letter} onChange={e=>setLetter(e.target.value)} style={Object.assign({},inp,{flex:"0 1 220px"})}>
+                <option value="warning">Warning letter</option>
+                <option value="meeting">Parent-meeting call letter</option>
+                <option value="suspension">Suspension notice</option>
+              </select>
+              {letter==="meeting"&&<>
+                <input type="date" value={lx.meetDate||""} onChange={e=>setLx(Object.assign({},lx,{meetDate:e.target.value}))} title="Meeting date" style={inp}/>
+                <input value={lx.meetTime||""} onChange={e=>setLx(Object.assign({},lx,{meetTime:e.target.value}))} placeholder="Time (e.g. 9:30 AM)" style={Object.assign({},inp,{width:130})}/>
+              </>}
+              {letter==="suspension"&&<>
+                <input type="date" value={lx.from||""} onChange={e=>setLx(Object.assign({},lx,{from:e.target.value}))} title="Suspended from" style={inp}/>
+                <input type="date" value={lx.to||""} onChange={e=>setLx(Object.assign({},lx,{to:e.target.value}))} title="Suspended till" style={inp}/>
+              </>}
+              <button onClick={function(){__printDiscLetter(letter,d,Object.assign({level:ladder.level,repeat:ladder.total>1},lx));}} className="ss-press" style={{border:"1px solid var(--ap-line2)",background:"var(--c-fff)",color:"var(--ap-ink)",borderRadius:9,padding:"9px 16px",fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)",display:"inline-flex",alignItems:"center",gap:6}}><Icon name="print" size={14}/>Print</button>
+            </div>
+            <div style={{fontSize:11,color:"var(--ap-faint)",marginTop:5}}>Blank date fields print as dotted lines to fill by hand. Letters carry the case reference no.</div>
+          </div>}
+          {/* resolve */}
+          {canManage&&!resolved&&<div style={{borderTop:"1px solid var(--ap-line)",paddingTop:14,display:"flex",gap:8,alignItems:"flex-start",flexWrap:"wrap"}}>
+            <textarea value={resNote} onChange={e=>setResNote(e.target.value)} rows={1} placeholder="Closing note — how was it settled? (optional)" style={Object.assign({},inp,{flex:"1 1 260px",resize:"vertical",boxSizing:"border-box"})}/>
+            <button onClick={resolveCase} disabled={busy} className="ss-press" style={{background:"var(--tx-grn2)",color:"#fff",border:"none",borderRadius:10,padding:"10px 18px",fontSize:13,fontWeight:700,cursor:busy?"default":"pointer",opacity:busy?.6:1,fontFamily:"var(--ss-font)"}}>Mark resolved</button>
+            {user.role==="admin"&&<button onClick={delCase} disabled={busy} className="ap-mini danger" title="Delete case" style={{border:"1px solid var(--ap-line2)",background:"var(--c-fff)",borderRadius:10,cursor:"pointer"}}><Icon name="trash" size={15}/></button>}
+          </div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+// ── The Discipline screen — find the issues (cases, watchlist, insights) and run the channel ──
+function DisciplinePanel({user,disciplineDB,noticesDB,academicRosterDB,dirDB,usersDB,jumpStudent,mobile}){
+  const canManage=["admin","vp","teacher","office"].indexOf(user.role)>=0;
+  const canAssign=["admin","vp","office"].indexOf(user.role)>=0;
+  const canNotify=["admin","vp","office"].indexOf(user.role)>=0;
+  const[dtab,setDtab]=useState(function(){try{var j=window.__discJump;if(j&&j.dtab)return j.dtab;}catch(_){}return "cases";});
+  const[q,setQ]=useState(function(){try{var j=window.__discJump;if(j&&j.q)return j.q;}catch(_){}return "";});
+  const[fStatus,setFStatus]=useState(function(){try{var j=window.__discJump;window.__discJump=null;if(j&&j.status)return j.status;}catch(_){}return "active";});
+  const[fSev,setFSev]=useState("");const[fCls,setFCls]=useState("");
+  const[selId,setSelId]=useState(null);const[logOpen,setLogOpen]=useState(false);
+  // roster (academicRoster — the roster every staff role can read) for the quick-log + name→identity enrichment
+  const _allStudents=useMemo(()=>{const out=[];Object.values((academicRosterDB&&academicRosterDB.data)||{}).forEach(d=>{
+    var cls=(d&&d.cls)||("Class "+((d&&d.clsNum)||""));
+    ((d&&d.students)||[]).forEach(s=>{if(s&&s.name)out.push({name:s.name,cls:cls,section:s.section||"",admNo:s.admNo||""});});
+  });return out;},[academicRosterDB&&academicRosterDB.data]);
+  const rosterIdx=useMemo(()=>{var byAdm={},byName={};_allStudents.forEach(function(s){if(s.admNo)byAdm[String(s.admNo)]=s;var k=nmKey(s.name);(byName[k]=byName[k]||[]).push(s);});return {byAdm:byAdm,byName:byName};},[_allStudents]);
+  // phone per admission no. — academicRoster contact first, directory best-contact overwrites (house pattern)
+  const phones=useMemo(()=>{var m={};Object.values((academicRosterDB&&academicRosterDB.data)||{}).forEach(function(d){((d&&d.students)||[]).forEach(function(s){if(s&&s.admNo&&s.contact)m[String(s.admNo)]=String(s.contact);});});Object.values((dirDB&&dirDB.data)||{}).forEach(function(d){((d&&d.students)||[]).forEach(function(s){if(s&&s.admNo){var p=_attPhone(s);if(p)m[String(s.admNo)]=p;}});});return m;},[academicRosterDB&&academicRosterDB.data,dirDB&&dirDB.data]);
+  const staffList=useMemo(()=>{var merged=_branchUsers((usersDB&&usersDB.data)||{},(typeof window!=="undefined"&&window.__currentBranch)||"greencity");var out=[];Object.keys(merged).forEach(function(k){if(k.indexOf("__")===0)return;var v=merged[k]||{};if(v.left===true||v.removed===true)return;if(["teacher","vp","office","admin"].indexOf(v.role)<0)return;out.push(v.name||k);});return out.sort();},[usersDB&&usersDB.data]);
+  // all cases, enriched with roster identity where the writer didn't record it (old Principal-modal docs)
+  const list=useMemo(()=>{
+    return Object.keys((disciplineDB&&disciplineDB.data)||{}).filter(k=>!k.startsWith("__")).map(function(k){
+      var d=Object.assign({id:k},disciplineDB.data[k]);
+      if(!d.admNo){
+        // resolve identity only when it is UNAMBIGUOUS: bracket-adm wins; a bare name must match exactly one
+        // roster student (two same-name students must stay unresolved rather than risk the wrong parent).
+        var b=(typeof __admInBrack==="function"?__admInBrack(String(d.student||"")):"");
+        var hit=b?(rosterIdx.byAdm[String(b)]||null):null;
+        if(!hit&&!/\(/.test(String(d.student||""))){var arr=rosterIdx.byName[nmKey(String(d.student||""))]||[];if(arr.length===1)hit=arr[0];}
+        if(hit){d.admNo=hit.admNo;if(!d.cls)d.cls=hit.cls;if(!d.section)d.section=hit.section;}
+      }
+      return d;
+    }).filter(d=>d&&d.student).sort((a,b)=>String(b.date||b.at||"").localeCompare(String(a.date||a.at||"")));
+  },[disciplineDB&&disciplineDB.data,rosterIdx]);
+  const byStu=useMemo(()=>{var m={};list.forEach(function(d){var k=__discStuKey(d.student,d.admNo);(m[k]=m[k]||[]).push(d);});return m;},[list]);
+  const openList=list.filter(d=>String(d.status||"open")!=="resolved");
+  const inProg=openList.filter(d=>d.status==="review"||d.status==="action");
+  const d30=new Date(Date.now()-30*864e5).toISOString().slice(0,10);
+  const resolved30=list.filter(d=>d.status==="resolved"&&String(d.resolvedAt||d.date||"").slice(0,10)>=d30);
+  const awaitingAck=useMemo(()=>list.filter(function(d){if(!d.parentNoticeId||!noticesDB||!noticesDB.data)return false;var n=noticesDB.data[safeId(d.parentNoticeId)];return n&&Object.keys(n.ackAt||{}).length===0;}),[list,noticesDB&&noticesDB.data]);
+  const watch=useMemo(()=>{
+    return Object.keys(byStu).map(function(k){
+      var incs=byStu[k],lad=__discLadder(incs),last=incs[0]||{};
+      return {key:k,name:last.student,cls:String(last.cls||"")+(last.section?" "+last.section:""),admNo:last.admNo||"",lad:lad,last:last,open:incs.filter(function(d){return String(d.status||"open")!=="resolved";}).length};
+    }).filter(function(w){return w.lad.total>0;}).sort(function(a,b){return b.lad.score-a.lad.score||b.lad.total-a.lad.total;});
+  },[byStu]);
+  const repeat=watch.filter(w=>w.lad.total>=3);
+  const clsOpts=useMemo(()=>{var s={};list.forEach(function(d){var c=String(d.cls||"").trim();if(c)s[c]=1;});return Object.keys(s).sort(function(a,b){return String(__clsNum(a)).localeCompare(String(__clsNum(b)),undefined,{numeric:true});});},[list]);
+  const shown=useMemo(()=>{
+    var qq=nmKey(q||"");
+    return list.filter(function(d){
+      var st=String(d.status||"open");
+      if(fStatus==="active"&&st==="resolved")return false;
+      if(fStatus==="handling"&&st!=="review"&&st!=="action")return false;
+      if(fStatus!=="active"&&fStatus!=="all"&&fStatus!=="handling"&&st!==fStatus)return false;
+      if(fSev&&String(d.severity||"Minor")!==fSev)return false;
+      if(fCls&&String(d.cls||"").trim()!==fCls)return false;
+      if(qq&&nmKey(String(d.student||"")).indexOf(qq)<0&&String(d.admNo||"").indexOf(String(q).trim())<0)return false;
+      return true;
+    });
+  },[list,fStatus,fSev,fCls,q]);
+  const selInc=selId?list.find(function(d){return d.id===selId;}):null;
+  const selHistory=selInc?(byStu[__discStuKey(selInc.student,selInc.admNo)]||[]):[];
+  // insights aggregates
+  const ins=useMemo(()=>{
+    var types={},cls={},months={},resDays=[],openAges=[];
+    var now=Date.now();
+    list.forEach(function(d){
+      var t=String(d.type||"Other");types[t]=(types[t]||0)+1;
+      var c=String(d.cls||"—").trim()||"—";cls[c]=(cls[c]||0)+1;
+      var m=String(d.date||d.at||"").slice(0,7);if(m)months[m]=(months[m]||0)+1;
+      var start=new Date(d.date||d.at||0).getTime();
+      if(d.status==="resolved"&&d.resolvedAt&&start){resDays.push(Math.max(0,Math.round((new Date(d.resolvedAt).getTime()-start)/864e5)));}
+      else if(String(d.status||"open")!=="resolved"&&start){openAges.push(Math.max(0,Math.round((now-start)/864e5)));}
+    });
+    var avgRes=resDays.length?Math.round(resDays.reduce(function(a,b){return a+b;},0)/resDays.length):null;
+    var stale=openAges.filter(function(a){return a>14;}).length;
+    return {types:types,cls:cls,months:months,avgRes:avgRes,stale:stale};
+  },[list]);
+  const bar=function(label,n,max,color){return(
+    <div key={label} style={{display:"grid",gridTemplateColumns:"150px 1fr 40px",alignItems:"center",gap:10}}>
+      <span style={{fontSize:12.5,fontWeight:600,color:"var(--ap-ink)",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{label}</span>
+      <span style={{height:7,borderRadius:99,background:"var(--c-f0)",overflow:"hidden",display:"block"}}><span style={{display:"block",width:Math.max(2,Math.round(n/Math.max(1,max)*100))+"%",height:"100%",background:color||"var(--ap-accent)"}}/></span>
+      <span style={{textAlign:"right",fontSize:12.5,fontWeight:700,color:"var(--ap-ink)",fontFamily:"var(--ss-font)"}}>{n}</span>
+    </div>);};
+  const chip=function(t,bg,fg){return <span style={{background:bg,color:fg,borderRadius:20,padding:"2px 9px",fontSize:10.5,fontWeight:700,whiteSpace:"nowrap"}}>{t}</span>;};
+  if(disciplineDB.loading)return <div style={{maxWidth:1100,margin:"0 auto"}}><SkeletonRows n={6}/></div>;
+  const inp={border:"1px solid var(--ap-line2)",borderRadius:10,padding:"9px 12px",fontSize:13,fontFamily:"var(--ss-font)",background:"var(--c-fff)",color:"var(--ap-ink)"};
+  return(
+    <div className="fi" style={{maxWidth:1100,margin:"0 auto"}}>
+      <div style={{display:"flex",alignItems:"flex-end",gap:12,flexWrap:"wrap",marginBottom:4}}>
+        <div style={{flex:1,minWidth:220}}>
+          <h1 className="ap-hi" style={{margin:0}}>Discipline</h1>
+          <div style={{fontSize:12.5,color:"var(--ap-muted)",marginTop:3}}>Report → review → action → parent informed → resolved. Every step stays on the student's record.</div>
+        </div>
+        <button onClick={()=>setLogOpen(true)} className="ss-press" style={{background:"var(--btn-pri-bg)",color:"#fff",border:"none",borderRadius:10,padding:"10px 18px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>+ Log incident</button>
+      </div>
+      <div className="ap-subnav" style={{margin:"12px 0 14px"}}>
+        {[["cases","Cases"],["watch","Watchlist"],["insights","Insights"]].map(t=><button key={t[0]} onClick={()=>setDtab(t[0])} className={"ap-pill"+(dtab===t[0]?" on":"")}>{t[1]}{t[0]==="watch"&&repeat.length>0&&<span style={{background:"var(--tx-red)",color:"#fff",borderRadius:99,minWidth:16,height:16,padding:"0 5px",fontSize:10,fontWeight:800,display:"inline-flex",alignItems:"center",justifyContent:"center",marginLeft:5}}>{repeat.length}</span>}</button>)}
+      </div>
+      <div className="m2col" style={{display:"grid",gap:13,gridTemplateColumns:"repeat(auto-fit,minmax(158px,1fr))",marginBottom:16}}>
+        <StatCard label="Open cases" val={openList.length} icon="📋" color={openList.length?"var(--tx-org)":"var(--tx-grn2)"} sub={openList.length?"need closure":"queue is clear"} onClick={()=>{setDtab("cases");setFStatus("active");}}/>
+        <StatCard label="Being handled" val={inProg.length} icon="⏳" color="var(--tx-pur)" sub="in review / action" onClick={()=>{setDtab("cases");setFStatus("handling");}}/>
+        <StatCard label="Repeat offenders" val={repeat.length} icon="⚠️" color={repeat.length?"var(--tx-red)":"var(--tx-grn2)"} sub="3+ incidents · 180 days" onClick={()=>setDtab("watch")}/>
+        <StatCard label="Awaiting parent ack" val={awaitingAck.length} icon="📢" color={awaitingAck.length?"var(--tx-org2)":"var(--tx-grn2)"} sub="notices sent, unread" onClick={()=>{setDtab("cases");setFStatus("active");}}/>
+        <StatCard label="Resolved · 30 days" val={resolved30.length} icon="✅" color="var(--tx-grn2)" sub={ins.avgRes!=null?("avg "+ins.avgRes+" day"+(ins.avgRes===1?"":"s")+" to close"):"—"} onClick={()=>{setDtab("cases");setFStatus("resolved");}}/>
+      </div>
+      {dtab==="cases"&&<InsPanel title="Case file" sub={shown.length+" of "+list.length+" case"+(list.length===1?"":"s")} pad={0} right={
+        <div className="mwrap" style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
+          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search name / adm no…" style={Object.assign({},inp,{width:150,padding:"7px 10px",fontSize:12.5})}/>
+          <select value={fStatus} onChange={e=>setFStatus(e.target.value)} style={Object.assign({},inp,{padding:"7px 8px",fontSize:12.5})}>
+            <option value="active">Open (all)</option><option value="open">Reported</option><option value="handling">Being handled</option><option value="review">Under review</option><option value="action">Action taken</option><option value="resolved">Resolved</option><option value="all">Everything</option>
+          </select>
+          <select value={fSev} onChange={e=>setFSev(e.target.value)} style={Object.assign({},inp,{padding:"7px 8px",fontSize:12.5})}>
+            <option value="">Any severity</option><option>Minor</option><option>Major</option><option>Severe</option>
+          </select>
+          <select value={fCls} onChange={e=>setFCls(e.target.value)} style={Object.assign({},inp,{padding:"7px 8px",fontSize:12.5})}>
+            <option value="">All classes</option>{clsOpts.map(c=><option key={c}>{c}</option>)}
+          </select>
+        </div>}>
+        {shown.length===0
+          ?<div style={{padding:18}}><Empty icon="📋" title={list.length===0?"No incidents logged yet":"Nothing matches these filters"} sub={list.length===0?"Log the first incident with the button above — it opens a case that runs the full channel.":"Clear the search or widen the status filter."}/></div>
+          :<div>{shown.slice(0,80).map(function(d,i){
+            var st=__discStatusMeta(d.status),sev=__discSevMeta(d.severity);
+            var lad=__discLadder(byStu[__discStuKey(d.student,d.admNo)]||[]);
+            var nAct=(d.actions||[]).length;
+            var n=(d.parentNoticeId&&noticesDB&&noticesDB.data)?noticesDB.data[safeId(d.parentNoticeId)]:null;
+            var acked=n&&Object.keys(n.ackAt||{}).length>0;
+            return <div key={d.id} onClick={()=>setSelId(d.id)} role="button" tabIndex={0} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelId(d.id);}}} className="ap-lrow" style={{display:"flex",gap:12,padding:"12px 16px",borderTop:i?"1px solid var(--c-f0)":"none",cursor:"pointer",alignItems:"flex-start"}}>
+              <div style={{width:34,height:34,borderRadius:10,background:sev[0],color:sev[1],display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontWeight:800,fontSize:13.5}}>{(d.severity||"M").charAt(0)}</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                  <span style={{fontSize:13.5,fontWeight:700,color:"var(--ap-ink)"}}>{d.student}</span>
+                  <span style={{fontSize:11.5,color:"var(--ap-muted)"}}>{String(d.cls||"").replace("Class ","Cl ")}{d.section?" "+d.section:""}{d.admNo?" · #"+d.admNo:""}</span>
+                  {lad.level>=3&&chip("L"+lad.level,"var(--bg-red)","var(--tx-red)")}
+                </div>
+                <div style={{fontSize:12.5,color:"var(--ap-ink2)",marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.type||"Incident"}{d.note?" — "+d.note:""}</div>
+                <div style={{fontSize:11,color:"var(--c-94)",marginTop:3}}>{d.date?fmtDate(d.date):""} · by {(d.by&&typeof honorific==="function")?honorific(d.by):(d.by||"—")}{d.assignedTo?" · owner: "+((typeof honorific==="function")?honorific(d.assignedTo):d.assignedTo):""}{nAct?" · "+nAct+" action"+(nAct===1?"":"s"):""}</div>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:5,alignItems:"flex-end",flexShrink:0}}>
+                {chip(st[0],st[1],st[2])}
+                {d.parentNoticeId&&(acked?chip("ack ✓","var(--bg-grn)","var(--tx-grn2)"):chip("awaiting ack","var(--bg-amb)","var(--tx-org2)"))}
+              </div>
+            </div>;})}
+            {shown.length>80&&<div style={{padding:"10px 16px",fontSize:12,color:"var(--ap-muted)"}}>Showing the latest 80 — narrow the filters to see older cases.</div>}
+          </div>}
+      </InsPanel>}
+      {dtab==="watch"&&<InsPanel title="Watchlist · repeat patterns" sub="ranked by 180-day weighted score (Minor 1 · Major 3 · Severe 6) — the ladder says what should happen next" pad={0}>
+        {watch.length===0
+          ?<div style={{padding:18}}><Empty icon="✅" title="No repeat patterns" sub="No student has incidents on file in the last 180 days."/></div>
+          :<div>{watch.slice(0,40).map(function(w,i){
+            return <div key={w.key} style={{display:"flex",gap:12,padding:"12px 16px",borderTop:i?"1px solid var(--c-f0)":"none",alignItems:"center",flexWrap:"wrap"}}>
+              <div style={{width:34,height:34,borderRadius:10,background:w.lad.level>=3?"var(--bg-red)":w.lad.level===2?"var(--bg-amb)":"var(--c-f7)",color:w.lad.level>=3?"var(--tx-red)":w.lad.level===2?"var(--tx-org2)":"var(--c-64)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontWeight:800,fontSize:13}}>L{w.lad.level}</div>
+              <div style={{flex:"1 1 220px",minWidth:0}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                  <span style={{fontSize:13.5,fontWeight:700,color:"var(--ap-ink)"}}>{w.name}</span>
+                  <span style={{fontSize:11.5,color:"var(--ap-muted)"}}>{w.cls.replace("Class ","Cl ")}{w.admNo?" · #"+w.admNo:""}</span>
+                </div>
+                <div style={{fontSize:12,color:w.lad.level>=3?"var(--tx-red)":"var(--ap-ink2)",fontWeight:600,marginTop:2}}>{w.lad.label}</div>
+                <div style={{fontSize:11,color:"var(--c-94)",marginTop:2}}>{w.lad.total} incident{w.lad.total===1?"":"s"}{w.lad.major?" · "+w.lad.major+" major":""}{w.lad.severe?" · "+w.lad.severe+" severe":""}{w.open?" · "+w.open+" open":""} · last: {w.last.type||"—"}{w.last.date?" on "+fmtDate(w.last.date):""}</div>
+              </div>
+              <div style={{display:"flex",gap:7,alignItems:"center",flexShrink:0,flexWrap:"wrap"}}>
+                <CallWAButtons phone={phones[String(w.admNo)]||""} msg={_discMsg(w.name,w.cls)}/>
+                <button onClick={function(){setDtab("cases");setQ(w.admNo||w.name);setFStatus("all");}} style={{background:"none",border:"1px solid var(--ap-line2)",borderRadius:9,padding:"8px 12px",fontSize:11.5,fontWeight:700,color:"var(--ap-accent)",cursor:"pointer",fontFamily:"var(--ss-font)"}}>Cases →</button>
+              </div>
+            </div>;})}
+          </div>}
+      </InsPanel>}
+      {dtab==="insights"&&<div style={{display:"grid",gap:16,gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))"}} >
+        <InsPanel title="What is happening" sub="incidents by type · all time">
+          <div style={{display:"flex",flexDirection:"column",gap:9}}>
+            {Object.keys(ins.types).sort(function(a,b){return ins.types[b]-ins.types[a];}).slice(0,8).map(function(t){return bar(t,ins.types[t],Math.max.apply(null,Object.values(ins.types)),"var(--tx-org)");})}
+            {Object.keys(ins.types).length===0&&<div style={{fontSize:12.5,color:"var(--c-94)"}}>Nothing logged yet.</div>}
+          </div>
+        </InsPanel>
+        <InsPanel title="Where it is happening" sub="incidents by class · all time">
+          <div style={{display:"flex",flexDirection:"column",gap:9}}>
+            {Object.keys(ins.cls).sort(function(a,b){return ins.cls[b]-ins.cls[a];}).slice(0,8).map(function(c){return bar(c.replace("Class ","Cl "),ins.cls[c],Math.max.apply(null,Object.values(ins.cls)),"var(--tx-pur)");})}
+            {Object.keys(ins.cls).length===0&&<div style={{fontSize:12.5,color:"var(--c-94)"}}>Nothing logged yet.</div>}
+          </div>
+        </InsPanel>
+        <InsPanel title="Trend" sub="incidents per month · last 6 months">
+          <div style={{display:"flex",flexDirection:"column",gap:9}}>
+            {(function(){var out=[],now=new Date();for(var i=5;i>=0;i--){var dt=new Date(now.getFullYear(),now.getMonth()-i,1);var k=dt.getFullYear()+"-"+("0"+(dt.getMonth()+1)).slice(-2);out.push([dt.toLocaleDateString("en-IN",{month:"short",year:"2-digit"}),ins.months[k]||0]);}var mx=Math.max.apply(null,out.map(function(x){return x[1];}).concat([1]));return out.map(function(x){return bar(x[0],x[1],mx,"var(--ap-accent)");});})()}
+          </div>
+        </InsPanel>
+        <InsPanel title="Channel health" sub="is the process closing cases?">
+          <div style={{display:"flex",flexDirection:"column",gap:10,fontSize:13,color:"var(--ap-ink2)"}}>
+            <div><b style={{color:"var(--ap-ink)",fontFamily:"var(--ss-font)"}}>{list.filter(function(d){return d.status==="resolved";}).length}</b> of <b style={{color:"var(--ap-ink)",fontFamily:"var(--ss-font)"}}>{list.length}</b> cases resolved{ins.avgRes!=null?<> · average <b style={{color:"var(--ap-ink)"}}>{ins.avgRes} day{ins.avgRes===1?"":"s"}</b> to close</>:null}.</div>
+            <div>{ins.stale?<span style={{color:"var(--tx-red)",fontWeight:700}}>{ins.stale} open case{ins.stale===1?"":"s"} older than 14 days — chase the owners.</span>:<span style={{color:"var(--tx-grn2)",fontWeight:600}}>No open case is older than 14 days.</span>}</div>
+            <div>{awaitingAck.length?<span style={{color:"var(--tx-org2)",fontWeight:600}}>{awaitingAck.length} parent notice{awaitingAck.length===1?"":"s"} still unacknowledged — follow up by phone.</span>:<span style={{color:"var(--tx-grn2)",fontWeight:600}}>Every parent notice sent has been acknowledged.</span>}</div>
+          </div>
+        </InsPanel>
+      </div>}
+      {logOpen&&<DisciplineQuickLog user={user} students={_allStudents} onClose={()=>setLogOpen(false)}/>}
+      {selInc&&<DisciplineCaseModal user={user} id={selInc.id} db={disciplineDB} noticesDB={noticesDB} history={selHistory} ident={selInc} phone={phones[String(selInc.admNo)]||""} canManage={canManage} canAssign={canAssign} canNotify={canNotify} staffList={staffList} onOpenStudent={jumpStudent?function(adm){try{window.__dirProfileTab="Discipline";}catch(_){}jumpStudent(String(adm));}:null} onClose={()=>setSelId(null)}/>}
     </div>
   );
 }
@@ -4933,7 +5443,26 @@ function ManageStudents({user,usersDB,studentsDB,testsDB,academicRosterDB,studen
   // MERGE over the current class doc — a plain set() would drop the name→admission-no. map, blanking it for
   // the whole class (breaks the student/parent portal, fees & attendance until the next directory sync heals it).
   const save=async(list,newSections)=>{const cur=data[safeId(cls)]||{};await set(cls,Object.assign({},cur,{cls,list,sections:newSections||sections,updatedAt:new Date().toISOString()}));};
-  const assignSection=async(name,sec)=>{const cur=data[safeId(cls)]||{};const ns=Object.assign({},cur.sections||sections,{[name]:sec});await set(cls,Object.assign({},cur,{cls,list:students,sections:ns,updatedAt:new Date().toISOString()}));};
+  // Assign/change a student's SECTION. Section is a display/grouping attribute (marks, fees & attendance are
+  // keyed by admission no.), so this only rewrites the section — BUT it must write to the Student Records
+  // DIRECTORY (the source of truth), because "Sync roster" rebuilds these caches FROM the directory, so a
+  // cache-only write silently reverts on the next sync. Real records → write the directory + rebuild caches
+  // (mirrors DirectoryProfile.changeSection). Ghost/tracker-only names with no record → cache write only.
+  const assignSection=async(name,sec)=>{
+    const ddoc=(dirDB&&dirDB.data&&dirDB.data[_dirKeyMS()])||null;
+    const adm=String(admMap[name]||"");
+    const inDir=(ddoc&&Array.isArray(ddoc.students))?ddoc.students.find(x=>x&&String(x.status||"").toLowerCase()!=="left"&&((adm&&String(x.admNo)===adm)||x.name===name)):null;
+    if(inDir){
+      const cn=__clsNum(cls);
+      const students2=ddoc.students.map(s=>(s&&((adm&&String(s.admNo)===adm&&s.name===inDir.name)||(!adm&&s.name===name)))?Object.assign({},s,{section:sec,updatedBy:user.name,updatedAt:new Date().toISOString()}):s);
+      await dirDB.set(_dirKeyMS(),{cls:ddoc.cls,clsNum:ddoc.clsNum||cn,students:students2,updatedAt:new Date().toISOString()});
+      await syncCachesForClass(studentsDB,academicRosterDB,cls,students2);
+      try{logAudit("change-section","studentDirectory",String(adm||name),{section:(inDir.section||"—")},{section:sec});}catch(e){}
+    }else{
+      const cur=data[safeId(cls)]||{};const ns=Object.assign({},cur.sections||sections,{[name]:sec});
+      await set(cls,Object.assign({},cur,{cls,list:students,sections:ns,updatedAt:new Date().toISOString()}));
+    }
+  };
   // Students are CREATED in the directory (Student Records) and the roster is rebuilt from it — one
   // write path, so the roster and records can never hold two different spellings of the same child.
   const _dirKeyMS=()=>"dir_"+String(__clsNum(cls));
@@ -5237,6 +5766,156 @@ function ManageTopics({user,usersDB,topicsDB}){
           </>
         )}
       </Card>
+    </div>
+  );
+}
+
+// Official NCERT/CBSE chapter lists (current post-2023 rationalised editions) — the Syllabus Tracker pre-fills chapters from here.
+const NCERT_SYLLABUS={
+"Class 10|English":["A Letter to God","Dust of Snow","Fire and Ice","Nelson Mandela: Long Walk to Freedom","A Tiger in the Zoo","Two Stories about Flying","How to Tell Wild Animals","The Ball Poem","From the Diary of Anne Frank","Amanda!","Glimpses of India","The Trees","Mijbil the Otter","Fog","Madam Rides the Bus","The Tale of Custard the Dragon","The Sermon at Benares","For Anne Gregory","The Proposal","A Triumph of Surgery","The Thief's Story","The Midnight Visitor","A Question of Trust","Footprints without Feet","The Making of a Scientist","The Necklace","Bholi","The Book That Saved the Earth"],
+"Class 10|Mathematics":["Real Numbers","Polynomials","Pair of Linear Equations in Two Variables","Quadratic Equations","Arithmetic Progressions","Triangles","Coordinate Geometry","Introduction to Trigonometry","Some Applications of Trigonometry","Circles","Areas Related to Circles","Surface Areas and Volumes","Statistics","Probability"],
+"Class 10|Science":["Chemical Reactions and Equations","Acids, Bases and Salts","Metals and Non-metals","Carbon and its Compounds","Life Processes","Control and Coordination","How do Organisms Reproduce?","Heredity","Light – Reflection and Refraction","The Human Eye and the Colourful World","Electricity","Magnetic Effects of Electric Current","Our Environment"],
+"Class 10|Social Science":["The Rise of Nationalism in Europe","Nationalism in India","The Making of a Global World","The Age of Industrialisation","Print Culture and the Modern World","Resources and Development","Forest and Wildlife Resources","Water Resources","Agriculture","Minerals and Energy Resources","Manufacturing Industries","Lifelines of National Economy","Power Sharing","Federalism","Gender, Religion and Caste","Political Parties","Outcomes of Democracy","Development","Sectors of the Indian Economy","Money and Credit","Globalisation and the Indian Economy","Consumer Rights"],
+"Class 11|Accountancy":["Introduction to Accounting","Theory Base of Accounting","Recording of Transactions - I","Recording of Transactions - II","Bank Reconciliation Statement","Trial Balance and Rectification of Errors","Depreciation, Provisions and Reserves","Bill of Exchange","Financial Statements - I","Financial Statements - II","Accounts from Incomplete Records","Applications of Computers in Accounting","Computerised Accounting System"],
+"Class 11|Biology":["The Living World","Biological Classification","Plant Kingdom","Animal Kingdom","Morphology of Flowering Plants","Anatomy of Flowering Plants","Structural Organisation in Animals","Cell: The Unit of Life","Biomolecules","Cell Cycle and Cell Division","Photosynthesis in Higher Plants","Respiration in Plants","Plant Growth and Development","Breathing and Exchange of Gases","Body Fluids and Circulation","Excretory Products and their Elimination","Locomotion and Movement","Neural Control and Coordination","Chemical Coordination and Integration"],
+"Class 11|Business Studies":["Business, Trade and Commerce","Forms of Business Organisation","Private, Public and Global Enterprises","Business Services","Emerging Modes of Business","Social Responsibilities of Business and Business Ethics","Formation of a Company","Sources of Business Finance","MSME and Business Entrepreneurship","Internal Trade","International Business"],
+"Class 11|Chemistry":["Some Basic Concepts of Chemistry","Structure of Atom","Classification of Elements and Periodicity in Properties","Chemical Bonding and Molecular Structure","Thermodynamics","Equilibrium","Redox Reactions","Organic Chemistry – Some Basic Principles and Techniques","Hydrocarbons"],
+"Class 11|Computer Science":["Computer System and Organisation","Software and Operating System","Number System and Data Representation","Boolean Logic","Introduction to Problem Solving","Getting Started with Python","Python Fundamentals (Data Types, Operators, Expressions)","Data Handling and Input/Output","Flow of Control (Conditional and Iterative Statements)","Strings","Lists","Tuples and Dictionaries","Societal Impact (Society, Law and Ethics)"],
+"Class 11|Economics":["Introduction","Collection of Data","Organisation of Data","Presentation of Data","Measures of Central Tendency","Correlation","Index Numbers","Use of Statistical Tools","Indian Economy on the Eve of Independence","Indian Economy 1950-1990","Liberalisation, Privatisation and Globalisation: An Appraisal","Human Capital Formation in India","Rural Development","Employment: Growth, Informalisation and Other Issues","Environment and Sustainable Development","Comparative Development Experiences of India and its Neighbours"],
+"Class 11|English":["The Portrait of a Lady","We're Not Afraid to Die... if We Can All Be Together","Discovering Tut: the Saga Continues","The Adventure","Silk Road","A Photograph","The Laburnum Top","The Voice of the Rain","Childhood","Father to Son","The Summer of the Beautiful White Horse","The Address","Mother's Day","Birth","The Tale of Melon City"],
+"Class 11|Geography":["Geography as a Discipline","The Origin and Evolution of the Earth","Interior of the Earth","Distribution of Oceans and Continents","Minerals and Rocks","Geomorphic Processes","Landforms and their Evolution","Composition and Structure of Atmosphere","Solar Radiation, Heat Balance and Temperature","Atmospheric Circulation and Weather Systems","Water in the Atmosphere","World Climate and Climate Change","Water (Oceans)","Movements of Ocean Water","Life on the Earth","Biodiversity and Conservation","India: Location","Structure and Physiography","Drainage System","Climate","Natural Vegetation","Soils","Natural Hazards and Disasters"],
+"Class 11|History":["Writing and City Life","An Empire Across Three Continents","Nomadic Empires","The Three Orders","Changing Cultural Traditions","Displacing Indigenous Peoples","Paths to Modernisation"],
+"Class 11|Mathematics":["Sets","Relations and Functions","Trigonometric Functions","Complex Numbers and Quadratic Equations","Linear Inequalities","Permutations and Combinations","Binomial Theorem","Sequences and Series","Straight Lines","Conic Sections","Introduction to Three Dimensional Geometry","Limits and Derivatives","Statistics","Probability"],
+"Class 11|Physics":["Units and Measurements","Motion in a Straight Line","Motion in a Plane","Laws of Motion","Work, Energy and Power","System of Particles and Rotational Motion","Gravitation","Mechanical Properties of Solids","Mechanical Properties of Fluids","Thermal Properties of Matter","Thermodynamics","Kinetic Theory","Oscillations","Waves"],
+"Class 11|Political Science":["Constitution: Why and How?","Rights in the Indian Constitution","Election and Representation","Executive","Legislature","Judiciary","Federalism","Local Governments","Constitution as a Living Document","The Philosophy of the Constitution","Political Theory: An Introduction","Freedom","Equality","Social Justice","Rights","Citizenship","Nationalism","Secularism"],
+"Class 11|Psychology":["What is Psychology?","Methods of Enquiry in Psychology","Human Development","Sensory, Attentional and Perceptual Processes","Learning","Human Memory","Thinking","Motivation and Emotion"],
+"Class 11|Sociology":["Sociology and Society","Terms, Concepts and their Use in Sociology","Understanding Social Institutions","Culture and Socialisation","Doing Sociology: Research Methods","Social Structure, Stratification and Social Processes in Society","Social Change and Social Order in Rural and Urban Society","Environment and Society","Introducing Western Sociologists","Indian Sociologists"],
+"Class 12|Accountancy":["Accounting for Not-for-Profit Organisation","Accounting for Partnership: Basic Concepts","Reconstitution of a Partnership Firm - Admission of a Partner","Reconstitution of a Partnership Firm - Retirement/Death of a Partner","Dissolution of Partnership Firm","Accounting for Share Capital","Issue and Redemption of Debentures","Financial Statements of a Company","Analysis of Financial Statements","Accounting Ratios","Cash Flow Statement"],
+"Class 12|Biology":["Sexual Reproduction in Flowering Plants","Human Reproduction","Reproductive Health","Principles of Inheritance and Variation","Molecular Basis of Inheritance","Evolution","Human Health and Disease","Microbes in Human Welfare","Biotechnology: Principles and Processes","Biotechnology and its Applications","Organisms and Populations","Ecosystem","Biodiversity and Conservation"],
+"Class 12|Business Studies":["Nature and Significance of Management","Principles of Management","Business Environment","Planning","Organising","Staffing","Directing","Controlling","Financial Management","Financial Markets","Marketing","Consumer Protection"],
+"Class 12|Chemistry":["Solutions","Electrochemistry","Chemical Kinetics","The d- and f-Block Elements","Coordination Compounds","Haloalkanes and Haloarenes","Alcohols, Phenols and Ethers","Aldehydes, Ketones and Carboxylic Acids","Amines","Biomolecules"],
+"Class 12|Computer Science":["Python Revision Tour","Functions","Exception Handling","File Handling - Text Files","File Handling - Binary Files","File Handling - CSV Files","Data Structure - Stack","Computer Networks","Database Concepts","Structured Query Language (SQL)","Interface Python with MySQL"],
+"Class 12|Economics":["Introduction","Theory of Consumer Behaviour","Production and Costs","The Theory of the Firm under Perfect Competition","Market Equilibrium","Introduction to Macroeconomics","National Income Accounting","Money and Banking","Determination of Income and Employment","Government Budget and the Economy","Open Economy Macroeconomics"],
+"Class 12|English":["The Last Lesson","Lost Spring","Deep Water","The Rattrap","Indigo","Poets and Pancakes","The Interview","Going Places","My Mother at Sixty-Six","An Elementary School Classroom in a Slum","Keeping Quiet","A Thing of Beauty","A Roadside Stand","Aunt Jennifer's Tigers","The Third Level","The Tiger King","Journey to the End of the Earth","The Enemy","Should Wizard Hit Mommy","On the Face of It","Evans Tries an O-level","Memories of Childhood"],
+"Class 12|Geography":["Human Geography: Nature and Scope","The World Population: Distribution, Density and Growth","Population Composition","Human Development","Primary Activities","Secondary Activities","Tertiary and Quaternary Activities","Transport and Communication","International Trade","Human Settlements","Population: Distribution, Density, Growth and Composition","Migration: Types, Causes and Consequences","Human Development (India)","Human Settlements (India)","Land Resources and Agriculture","Water Resources","Mineral and Energy Resources","Manufacturing Industries","Planning and Sustainable Development in the Indian Context","Transport and Communication (India)","International Trade (India)","Geographical Perspective on Selected Issues and Problems"],
+"Class 12|History":["Bricks, Beads and Bones: The Harappan Civilisation","Kings, Farmers and Towns: Early States and Economies","Kinship, Caste and Class: Early Societies","Thinkers, Beliefs and Buildings: Cultural Developments","Through the Eyes of Travellers: Perceptions of Society","Bhakti-Sufi Traditions: Changes in Religious Beliefs and Devotional Texts","An Imperial Capital: Vijayanagara","Peasants, Zamindars and the State: Agrarian Society and the Mughal Empire","Kings and Chronicles: The Mughal Courts","Colonialism and the Countryside: Exploring Official Archives","Rebels and the Raj: The Revolt of 1857 and its Representations","Colonial Cities: Urbanisation, Planning and Architecture","Mahatma Gandhi and the Nationalist Movement: Civil Disobedience and Beyond","Understanding Partition: Politics, Memories, Experiences","Framing the Constitution: The Beginning of a New Era"],
+"Class 12|Mathematics":["Relations and Functions","Inverse Trigonometric Functions","Matrices","Determinants","Continuity and Differentiability","Application of Derivatives","Integrals","Application of Integrals","Differential Equations","Vector Algebra","Three Dimensional Geometry","Linear Programming","Probability"],
+"Class 12|Physics":["Electric Charges and Fields","Electrostatic Potential and Capacitance","Current Electricity","Moving Charges and Magnetism","Magnetism and Matter","Electromagnetic Induction","Alternating Current","Electromagnetic Waves","Ray Optics and Optical Instruments","Wave Optics","Dual Nature of Radiation and Matter","Atoms","Nuclei","Semiconductor Electronics: Materials, Devices and Simple Circuits"],
+"Class 12|Political Science":["The End of Bipolarity","Contemporary Centres of Power","Contemporary South Asia","International Organisations","Security in the Contemporary World","Environment and Natural Resources","Globalisation","Challenges of Nation Building","Era of One-party Dominance","Politics of Planned Development","India's External Relations","Challenges to and Restoration of the Congress System","The Crisis of Democratic Order","Regional Aspirations","Recent Developments in Indian Politics"],
+"Class 12|Psychology":["Variations in Psychological Attributes","Self and Personality","Meeting Life Challenges","Psychological Disorders","Therapeutic Approaches","Attitude and Social Cognition","Social Influence and Group Processes"],
+"Class 12|Sociology":["Introducing Indian Society","The Demographic Structure of the Indian Society","Social Institutions: Continuity and Change","The Market as a Social Institution","Patterns of Social Inequality and Exclusion","The Challenges of Cultural Diversity","Suggestions for Project Work","Structural Change","Cultural Change","The Constitution and Social Change","Change and Development in Rural Society","Change and Development in Industrial Society","Globalisation and Social Change","Mass Media and Communications","Social Movements"],
+"Class 6|Mathematics":["Patterns in Mathematics","Lines and Angles","Number Play","Data Handling and Presentation","Prime Time","Perimeter and Area","Fractions","Playing with Constructions","Symmetry","The Other Side of Zero"],
+"Class 6|Science":["The Wonderful World of Science","Diversity in the Living World","Mindful Eating: A Path to a Healthy Body","Exploring Magnets","Measurement of Length and Motion","Materials Around Us","Temperature and its Measurement","A Journey through States of Water","Methods of Separation in Everyday Life","Living Creatures: Exploring their Characteristics","Nature's Treasures","Beyond Earth"],
+"Class 6|Social Science":["Locating Places on the Earth","Oceans and Continents","Landforms and Life","Timeline and Sources of History","India, That Is Bharat","The Beginnings of Indian Civilisation","India's Cultural Roots","Unity in Diversity, or 'Many in the One'","Family and Community","Grassroots Democracy — Part 1: Governance","Grassroots Democracy — Part 2: Local Government in Rural Areas","Grassroots Democracy — Part 3: Local Government in Urban Areas","The Value of Work","Economic Activities Around Us"],
+"Class 7|Mathematics":["Large Numbers Around Us","Arithmetic Expressions","A Peek Beyond the Point","Expressions using Letter-Numbers","Parallel and Intersecting Lines","Number Play","A Tale of Three Intersecting Lines","Working with Fractions","Geometric Twins","Operations with Integers","Finding Common Ground","Another Peek Beyond the Point","Connecting the Dots","Constructions and Tilings","Finding the Unknown"],
+"Class 7|Science":["The Ever-Evolving World of Science","Exploring Substances: Acidic, Basic, and Neutral","Electricity: Circuits and their Components","The World of Metals and Non-metals","Changes Around Us: Physical and Chemical","Adolescence: A Stage of Growth and Change","Heat Transfer in Nature","Measurement of Time and Motion","Life Processes in Animals","Life Processes in Plants","Light: Shadows and Reflections","Earth, Moon, and the Sun"],
+"Class 7|Social Science":["Geographical Diversity of India","Understanding the Weather","Climates of India","New Beginnings: Cities and States","The Rise of Empires","The Age of Reorganisation","The Gupta Era: An Age of Tireless Creativity","How the Land Becomes Sacred","From the Rulers to the Ruled: Types of Governments","The Constitution of India — An Introduction","From Barter to Money","Understanding Markets"],
+"Class 8|Mathematics":["A Square and a Cube","Power Play","A Story of Numbers","Quadrilaterals","Number Play","We Distribute, yet Things Multiply","Proportional Reasoning – 1","Fractions in Disguise","The Baudhayana–Pythagoras Theorem","Proportional Reasoning – 2","Exploring Some Geometric Themes","Tales by Dots and Lines","Algebra Play","Area"],
+"Class 8|Science":["Exploring the Investigative World of Science","The Invisible Living World: Beyond Our Naked Eye","Health: The Ultimate Treasure","Electricity: Magnetic and Heating Effects","Exploring Forces","Pressure, Winds, Storms, and Cyclones","Particulate Nature of Matter","Nature of Matter: Elements, Compounds, and Mixtures","The Amazing World of Solutes, Solvents, and Solutions","Light: Mirrors and Lenses","Keeping Time with the Skies","How Nature Works in Harmony","Our Home: Earth, A Unique Life Sustaining Planet"],
+"Class 8|Social Science":["Natural Resources and Their Use","Reshaping India's Political Map","The Rise of the Marathas","The Colonial Era in India","Universal Franchise and India's Electoral System","The Parliamentary System: Legislature and Executive","Factors of Production"],
+"Class 9|English":["The Fun They Had","The Road Not Taken","The Sound of Music","Wind","The Little Girl","Rain on the Roof","A Truly Beautiful Mind","The Snake and the Mirror","A Legend of the Northland","My Childhood","No Men Are Foreign","Reach for the Top","On Killing a Tree","Kathmandu","A Slumber Did My Spirit Seal","If I Were You","The Lost Child","The Adventures of Toto","Iswaran the Storyteller","In the Kingdom of Fools","The Happy Prince","Weathering the Storm in Ersama","The Last Leaf","A House Is Not a Home","The Beggar"],
+"Class 9|Mathematics":["Number Systems","Polynomials","Coordinate Geometry","Linear Equations in Two Variables","Introduction to Euclid's Geometry","Lines and Angles","Triangles","Quadrilaterals","Circles","Heron's Formula","Surface Areas and Volumes","Statistics"],
+"Class 9|Science":["Matter in Our Surroundings","Is Matter Around Us Pure","Atoms and Molecules","Structure of the Atom","The Fundamental Unit of Life","Tissues","Motion","Force and Laws of Motion","Gravitation","Work and Energy","Sound","Improvement in Food Resources"],
+"Class 9|Social Science":["The French Revolution","Socialism in Europe and the Russian Revolution","Nazism and the Rise of Hitler","Forest Society and Colonialism","Pastoralists in the Modern World","India – Size and Location","Physical Features of India","Drainage","Climate","Natural Vegetation and Wildlife","Population","What is Democracy? Why Democracy?","Constitutional Design","Electoral Politics","Working of Institutions","Democratic Rights","The Story of Village Palampur","People as Resource","Poverty as a Challenge","Food Security in India"]
+};
+
+// ── SYLLABUS TRACKER ─────────────────────────────────────────────────────────────────
+// Chapters are the teacher-curated 'topics' list for a class+subject (pre-fillable from the Question Bank).
+// Per-chapter status (Not started / In progress / Completed) is stored in the branch-scoped 'syllabus' collection.
+function SyllabusTracker({user,topicsDB,syllabusDB}){
+  const isMob=useIsMobile();
+  const isMgr=user.role==="admin"||user.role==="vp";
+  const canEdit=isMgr||user.role==="teacher"; // teachers update their own subjects; managers all
+  const sCls=getTeacherClasses(user);
+  const[cls,setCls]=useState(sCls[0]||SCHOOL.classes[0]);
+  const[subj,setSubj]=useState(getTeacherSubjects(user,sCls[0]||SCHOOL.classes[0])[0]||"");
+  const[input,setInput]=useState("");
+  const[busy,setBusy]=useState(false);
+  useEffect(()=>{const s=getTeacherSubjects(user,cls);setSubj(s[0]||"");},[cls]);
+  const key=`${cls}__${subj}`;
+  const chapters=(topicsDB.data[safeId(key)]&&topicsDB.data[safeId(key)].list)||[];
+  const ncertList=(typeof NCERT_SYLLABUS!=="undefined"&&NCERT_SYLLABUS[cls+"|"+subj])||[];
+  const doc=syllabusDB.data[safeId(key)]||{};
+  const status=doc.status||{};
+  const stOf=(ch)=>{var v=status[ch];return v?(v.s||v):"todo";}; // supports {s,at,by} or a legacy plain string
+  const setCh=async(ch,st)=>{ if(!canEdit)return; const ns=Object.assign({},status); if(st==="todo")delete ns[ch]; else ns[ch]={s:st,at:new Date().toISOString(),by:user.name}; try{await syllabusDB.set(key,{cls,subj,status:ns,by:user.name,updatedAt:new Date().toISOString()});}catch(e){window.__toast&&window.__toast("Could not save — "+((e&&e.message)||"try again"),"err");} };
+  const addCh=async()=>{ const t=input.trim(); if(!t)return; const arr=[...new Set([...chapters,...t.split(",").map(x=>x.trim()).filter(Boolean)])]; try{await topicsDB.set(key,{key,list:arr});setInput("");}catch(e){window.__toast&&window.__toast("Could not add — "+((e&&e.message)||"try again"),"err");} };
+  const removeCh=async(ch)=>{ if(!(await window.__confirm({title:"Remove chapter?",body:'"'+ch+'" will be removed from this subject’s chapter list.',confirmText:"Remove",danger:true})))return; try{await topicsDB.set(key,{key,list:chapters.filter(x=>x!==ch)}); if(status[ch]!==undefined){const ns=Object.assign({},status);delete ns[ch];await syllabusDB.set(key,{cls,subj,status:ns,by:user.name,updatedAt:new Date().toISOString()});} }catch(e){window.__toast&&window.__toast("Could not remove — "+((e&&e.message)||"try again"),"err");} };
+  const pullNCERT=async()=>{ setBusy(true); try{ if(!ncertList.length){window.__toast&&window.__toast("No NCERT chapter list for "+cls+" · "+subj+" — add chapters manually below.","err");} else { var add=ncertList.filter(function(c){return chapters.indexOf(c)<0;}); if(!add.length){window.__toast&&window.__toast("All NCERT chapters already added.","ok");} else { await topicsDB.set(key,{key,list:[...chapters,...add]}); window.__toast&&window.__toast("Added "+add.length+" NCERT chapter"+(add.length===1?"":"s")+".","ok"); } } }catch(e){window.__toast&&window.__toast("Could not pre-fill — "+((e&&e.message)||"try again"),"err");} setBusy(false); };
+  const done=chapters.filter(c=>stOf(c)==="done").length, doing=chapters.filter(c=>stOf(c)==="doing").length;
+  const pct=chapters.length?Math.round(done/chapters.length*100):0;
+  const overview=isMgr?getTeacherSubjects(user,cls).map(function(sj){var k=safeId(cls+"__"+sj);var chs=(topicsDB.data[k]&&topicsDB.data[k].list)||[];var stt=(syllabusDB.data[k]&&syllabusDB.data[k].status)||{};var d=chs.filter(function(c){var v=stt[c];return (v&&(v.s||v))==="done";}).length;var g=chs.filter(function(c){var v=stt[c];return (v&&(v.s||v))==="doing";}).length;return {subj:sj,total:chs.length,done:d,doing:g,pct:chs.length?Math.round(d/chs.length*100):0};}):[];
+  if(topicsDB.loading||syllabusDB.loading)return<Spinner/>;
+  const ST={todo:["Not started","var(--c-64)","var(--c-f7)","var(--c-d2)"],doing:["In progress","var(--tx-org2)","var(--bg-amb)","var(--bd-amb)"],done:["Completed","var(--tx-grn2)","var(--bg-grn)","var(--bd-grn)"]};
+  const pc=pct>=80?["var(--tx-grn2)","var(--bg-grn)"]:pct>=40?["var(--tx-org2)","var(--bg-amb)"]:["var(--tx-red)","var(--bg-red)"];
+  return(
+    <div className="fi" style={{display:"flex",flexDirection:"column",gap:16}}>
+      <div style={{display:"flex",alignItems:"center",gap:18,background:"linear-gradient(110deg,#0d1726,#16294a,#1f3a63)",borderRadius:16,padding:isMob?"16px 16px":"20px 24px",color:"#fff",boxShadow:"0 10px 30px rgba(13,23,38,.2)",flexWrap:"wrap"}}>
+        <div style={{flex:"1 1 200px",minWidth:0}}>
+          <div style={{fontSize:12,fontWeight:600,color:"#e8cf86"}}>Syllabus Tracker · {BRANCH_LABEL}</div>
+          <div style={{fontSize:isMob?18:21,fontWeight:750,letterSpacing:"-.02em",margin:"4px 0 5px"}}>{cls} · {subj||"—"}</div>
+          <div style={{fontSize:12.5,color:"#c4cee0"}}>{chapters.length?(done+" of "+chapters.length+" chapters completed"+(doing?" · "+doing+" in progress":"")):"No chapters yet — add them below or pull from the Question Bank."}</div>
+        </div>
+        {chapters.length>0&&<div style={{flex:"none",textAlign:"center"}}><div style={{fontSize:30,fontWeight:800,letterSpacing:"-.03em",lineHeight:1}}>{pct}%</div><div style={{fontSize:9.5,color:"#9fb0c9",marginTop:2}}>complete</div></div>}
+      </div>
+
+      <Card style={{padding:isMob?16:22}}>
+        <div className="m1col" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,alignItems:"end"}}>
+          <div><Lbl c="Class"/><Sel value={cls} onChange={setCls} options={sCls}/></div>
+          <div><Lbl c="Subject"/><Sel value={subj} onChange={setSubj} options={getTeacherSubjects(user,cls)}/></div>
+          {canEdit&&ncertList.length>0&&<button onClick={pullNCERT} disabled={busy} className="ss-press" style={{padding:"10px 12px",borderRadius:9,border:"1px solid var(--c-d2)",background:"var(--c-fff)",color:"var(--ap-ink2)",fontSize:12.5,fontWeight:600,cursor:busy?"default":"pointer",fontFamily:"var(--ss-font)",whiteSpace:"nowrap"}}>{busy?"Loading…":"↧ Pre-fill "+ncertList.length+" NCERT chapters"}</button>}
+        </div>
+      </Card>
+
+      {chapters.length>0&&<div style={{height:9,borderRadius:99,background:"var(--c-f0)",overflow:"hidden",display:"flex"}}>
+        <div style={{width:pct+"%",background:"var(--tx-grn2)",transition:"width .3s"}}/>
+        <div style={{width:(chapters.length?Math.round(doing/chapters.length*100):0)+"%",background:"var(--bd-amb)",transition:"width .3s"}}/>
+      </div>}
+
+      {chapters.length===0?(
+        <div style={{background:"var(--c-f7)",border:"2px dashed var(--c-e6)",borderRadius:12,padding:"26px 18px",textAlign:"center",color:"var(--c-94)",fontSize:13.5}}><div>No chapters set for <b style={{color:"var(--ap-ink2)"}}>{cls} · {subj}</b> yet.</div>{canEdit&&ncertList.length>0?<Btn onClick={pullNCERT} disabled={busy} style={{marginTop:12}}>{busy?"Loading…":"↧ Pre-fill "+ncertList.length+" NCERT chapters"}</Btn>:canEdit?<div style={{marginTop:6,fontSize:12.5}}>Add the chapters below.</div>:<div style={{marginTop:6,fontSize:12.5}}>Ask the subject teacher or admin to set the chapter list.</div>}</div>
+      ):(
+        <Card style={{padding:0}}>
+          {chapters.map((ch,i)=>{const st=stOf(ch);const meta=status[ch];return(
+            <div key={ch} style={{display:"flex",flexDirection:isMob?"column":"row",alignItems:isMob?"stretch":"center",gap:isMob?8:12,padding:isMob?"12px 14px":"12px 18px",borderTop:i?"1px solid var(--ap-line)":"none"}}>
+              <div style={{flex:1,minWidth:0,display:"flex",alignItems:"center",gap:10}}>
+                <span style={{width:22,height:22,borderRadius:6,flexShrink:0,display:"grid",placeItems:"center",fontSize:11,fontWeight:700,background:ST[st][2],color:ST[st][1],border:"1px solid "+ST[st][3]}}>{st==="done"?"✓":st==="doing"?"◍":i+1}</span>
+                <div style={{minWidth:0}}>
+                  <div style={{fontSize:14,fontWeight:600,color:"var(--ap-ink)",wordBreak:"break-word"}}>{ch}</div>
+                  {meta&&meta.at&&<div style={{fontSize:10.5,color:"var(--ap-faint)",marginTop:1}}>{ST[st][0]} · {fmtDate(String(meta.at).slice(0,10))}{meta.by?" · "+honorific(meta.by):""}</div>}
+                </div>
+              </div>
+              <div style={{display:"flex",gap:5,flexShrink:0}}>
+                {[["todo","Not started"],["doing","Doing"],["done","Done"]].map(([sv,sl])=>{const on=st===sv;return(
+                  <button key={sv} onClick={()=>canEdit&&setCh(ch,sv)} disabled={!canEdit} title={canEdit?ST[sv][0]:"View only"} style={{flex:isMob?1:"none",minHeight:34,padding:"6px 12px",borderRadius:8,fontSize:12,fontWeight:on?800:600,cursor:canEdit?"pointer":"default",fontFamily:"var(--ss-font)",transition:".12s",border:"1px solid "+(on?ST[sv][3]:"var(--ap-line2)"),background:on?ST[sv][2]:"var(--c-f7)",color:on?ST[sv][1]:"var(--ap-muted)"}}>{sl}</button>);})}
+                {canEdit&&<button onClick={()=>removeCh(ch)} title="Remove chapter" className="ap-mini" style={{flexShrink:0}}><Icon name="trash" size={14}/></button>}
+              </div>
+            </div>);})}
+        </Card>
+      )}
+
+      {canEdit&&<Card style={{padding:isMob?14:18}}>
+        <Lbl c="Add chapters (comma-separated)"/>
+        <div style={{display:"flex",gap:10,marginTop:6}}>
+          <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addCh()} placeholder="e.g. Real Numbers, Polynomials, Trigonometry" style={{flex:1,minWidth:0,padding:"10px 14px",borderRadius:9,border:"1px solid var(--c-e6)",fontSize:13,outline:"none",background:"var(--c-fff)",color:"var(--ap-ink)"}}/>
+          <Btn onClick={addCh}>+ Add</Btn>
+        </div>
+        <div style={{fontSize:11.5,color:"var(--ap-faint)",marginTop:8}}>Chapters are shared with the Topics list used by Enter Marks &amp; the Test Tracker.</div>
+      </Card>}
+
+      {isMgr&&overview.some(o=>o.total>0)&&<Card style={{padding:isMob?14:18}}>
+        <div style={{fontSize:13.5,fontWeight:700,color:"var(--ap-ink)",marginBottom:10}}>{cls} — all subjects at a glance</div>
+        <div style={{display:"flex",flexDirection:"column",gap:9}}>
+          {overview.filter(o=>o.total>0).map(o=>{const oc=o.pct>=80?"var(--tx-grn2)":o.pct>=40?"var(--tx-org2)":"var(--tx-red)";return(
+            <div key={o.subj} style={{display:"grid",gridTemplateColumns:"1fr 46px",gap:10,alignItems:"center",cursor:"pointer"}} onClick={()=>setSubj(o.subj)}>
+              <div style={{minWidth:0}}>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,marginBottom:3}}><span style={{fontWeight:600,color:"var(--ap-ink)",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{o.subj}</span><span style={{color:"var(--ap-muted)"}}>{o.done}/{o.total}{o.doing?" · "+o.doing+" doing":""}</span></div>
+                <div style={{height:6,borderRadius:99,background:"var(--c-f0)",overflow:"hidden"}}><div style={{width:o.pct+"%",height:"100%",background:oc}}/></div>
+              </div>
+              <div style={{textAlign:"right",fontSize:13,fontWeight:800,color:oc,fontFamily:"var(--ss-font)"}}>{o.pct}%</div>
+            </div>);})}
+        </div>
+      </Card>}
     </div>
   );
 }
@@ -7574,7 +8253,7 @@ function ParentView({user,testsDB,studentsDB,attendanceDB,noticesDB}){
       {(()=>{
         const _td=today();
         const anns=Object.values((noticesDB&&noticesDB.data)||{})
-          .filter(n=>n&&n.title&&n.active!==false&&n.audience==="Parents"&&(!n.expiresAt||n.expiresAt>=_td)&&(!n.cls||__bcastClsMatch(n.cls,cls,_mySec)))
+          .filter(n=>n&&n.title&&n.active!==false&&n.audience==="Parents"&&(!n.expiresAt||n.expiresAt>=_td)&&(n.admNo?String(n.admNo)===padm:(!n.cls||__bcastClsMatch(n.cls,cls,_mySec))))
           .sort((a,b)=>String(b.postedAt||"").localeCompare(String(a.postedAt||""))).slice(0,6);
         if(!anns.length)return null;
         return <div style={card}>
@@ -10350,6 +11029,7 @@ function DirectoryProfile({stu, testsDB, examsDB, studentsDB, attendanceDB, wron
     const me=k(aName);if(!me)return[];
     return Object.values(disciplineDB.data||{}).filter(d=>{
       if(!d||d.deleted||!d.student)return false;
+      if(adm&&d.admNo)return String(d.admNo)===String(adm); // admission no. decides both ways — a same-name doc pinned to another student's admNo never leaks in
       if(d.student===aName||d.student===stu.name)return true;
       if(adm&&__admInBrack(d.student)===adm)return true;
       // loose only when neither side is bracket-disambiguated — nmKey strips "(…)", so a renamed
@@ -10544,10 +11224,12 @@ function DirectoryProfile({stu, testsDB, examsDB, studentsDB, attendanceDB, wron
                         <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                           <span style={{fontSize:13.5,fontWeight:700,color:"var(--ap-ink)"}}>{d.type||"Incident"}</span>
                           <span style={{background:sev[0],color:sev[1],borderRadius:20,padding:"2px 9px",fontSize:10.5,fontWeight:700}}>{d.severity||"Minor"}</span>
-                          {resolved&&<span style={{background:"var(--bg-grn)",color:"var(--tx-grn2)",borderRadius:20,padding:"2px 9px",fontSize:10.5,fontWeight:700}}>Resolved</span>}
+                          {(function(){var st=__discStatusMeta(d.status);return (d.status&&d.status!=="open")?<span style={{background:st[1],color:st[2],borderRadius:20,padding:"2px 9px",fontSize:10.5,fontWeight:700}}>{st[0]}</span>:null;})()}
                         </div>
                         {d.note&&<div style={{fontSize:12.5,color:"var(--ap-ink2)",marginTop:4,lineHeight:1.45}}>{d.note}</div>}
                         <div style={{fontSize:11,color:"var(--c-94)",marginTop:4}}>{d.date?fmtDate(d.date):""}{d.by?" · logged by "+(typeof honorific==="function"?honorific(d.by):d.by):""}{d.cls?" · "+d.cls:""}</div>
+                        {(d.actions||[]).length>0&&(function(){var la=(d.actions||[]).slice().sort(function(a,b){return String(a.at||"").localeCompare(String(b.at||""));}).pop();return <div style={{fontSize:11,color:"var(--ap-muted)",marginTop:3}}>{(d.actions||[]).length} action{(d.actions||[]).length===1?"":"s"} on the case · last: {la.kind}{la.date?" ("+fmtDate(la.date)+")":""}</div>;})()}
+                        {resolved&&d.resolution&&<div style={{fontSize:11.5,color:"var(--tx-grn2)",marginTop:3}}>Settled: {d.resolution}</div>}
                       </div>
                     </div>;
                   })}
@@ -10994,7 +11676,8 @@ service cloud.firestore {
     match /admissions/{id} { allow read, write: if isAny(['admin','office']) && inGreencity(); }
 
     // Discipline incidents (per-student behaviour log) — all staff read; admin/VP/teacher log them.
-    match /discipline/{id} { allow read: if isAny(['admin','vp','office','teacher']); allow write: if isAny(['admin','vp','teacher']); }
+    // Discipline cases are evidentiary — staff create/update (incl. the {deleted:true} soft-delete flag), only the Director hard-deletes.
+    match /discipline/{id} { allow read: if isAny(['admin','vp','office','teacher']); allow create, update: if isAny(['admin','vp','office','teacher']); allow delete: if isAny(['admin']); }
     // Parent complaints / grievances — Director + VP + Office.
     match /complaints/{id} { allow read, write: if isAny(['admin','vp','office']); }
 
@@ -11015,6 +11698,7 @@ service cloud.firestore {
     // Academic data — any signed-in user reads; only staff write
     match /tests/{id}             { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
     match /topics/{id}            { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
+    match /syllabus/{id}          { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
     match /attendance/{id}        { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
     match /students/{id}          { allow read: if signedIn(); allow write: if isAny(['admin','vp','office','teacher']); }
 
@@ -11181,11 +11865,17 @@ service cloud.firestore {
     // Academic / operational / workflow for a branch — that branch's staff read; appropriate roles write
     match /{bc2}/{id2} {
       allow read: if signedIn() && inBranch(bc2)
-        && ((baseOf(bc2) in ['students','academicRoster','attendance','tests','topics','studentLinks','studentPhotos','timetables','timetableSettings','notices','lessonPlans','teacherLogs','leaves','wrongAnswers'])
+        && ((baseOf(bc2) in ['students','academicRoster','attendance','tests','topics','syllabus','studentLinks','studentPhotos','timetables','timetableSettings','notices','lessonPlans','teacherLogs','leaves','wrongAnswers'])
           || ((baseOf(bc2) in ['exams','discipline','complaints','registrations','admissions']) && isAny(['admin','vp','office','teacher'])));
       allow write: if signedIn() && inBranch(bc2)
-        && (baseOf(bc2) in ['students','academicRoster','attendance','exams','tests','topics','studentLinks','studentPhotos','timetables','timetableSettings','notices','lessonPlans','teacherLogs','leaves','complaints','discipline','registrations','admissions'])
+        && (baseOf(bc2) in ['students','academicRoster','attendance','exams','tests','topics','syllabus','studentLinks','studentPhotos','timetables','timetableSettings','notices','lessonPlans','teacherLogs','leaves','complaints','registrations','admissions'])
         && isAny(['admin','vp','office','teacher']);
+    }
+    // Branch discipline cases are evidentiary: staff create/update (incl. the {deleted:true} soft-delete flag);
+    // hard delete is Director-only. Reads stay staff-gated via the academic block above.
+    match /{bcdc}/{iddc} {
+      allow create, update: if signedIn() && inBranch(bcdc) && baseOf(bcdc) == 'discipline' && isAny(['admin','vp','office','teacher']);
+      allow delete: if signedIn() && inBranch(bcdc) && baseOf(bcdc) == 'discipline' && isAny(['admin']);
     }
     // A branch parent/student may only ACKNOWLEDGE a notice — an update touching nothing but readBy/ackAt
     // (mirrors the unprefixed /notices rule; staff writes are covered by the academic block above).
@@ -15182,6 +15872,7 @@ const NAV_PATHS={
   "tlog-grp":<><path d="M5 4h11a2 2 0 0 1 2 2v13H7a2 2 0 0 0-2 2z"/><path d="M14 4l4 4M9 12l6-6 .7.7M9 12v2h2"/></>,
   "attendance-grp":<><path d="M4 5h16v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M4 9h16M8 3v4M16 3v4"/><path d="m9.5 14.5 1.8 1.8 3.5-3.6"/></>,
   "calendar-grp":<><rect x="3" y="4.5" width="18" height="16.5" rx="2"/><path d="M3 9h18M8 2.5v4M16 2.5v4"/><circle cx="8" cy="13.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="13.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="16" cy="13.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="8" cy="17.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="17.5" r="1.2" fill="currentColor" stroke="none"/></>,
+  "discipline-grp":<><path d="M12 2.5 4.5 5.4v5.1c0 4.9 3.2 8.7 7.5 10.5 4.3-1.8 7.5-5.6 7.5-10.5V5.4z"/><path d="M9.1 11.9l2 2 3.8-4"/></>,
   "assign-grp":<><path d="M14.5 6.5a3 3 0 1 0 3.9 3.9L21 13l-2 2-2.6-2.6"/><path d="m13 9-8 8-2 3 3-2 8-8"/></>,
   "timetable-grp":<><path d="M4 5h16v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M4 9h16M8 3v4M16 3v4"/><circle cx="12" cy="14.5" r="2.6"/><path d="M12 13v1.6l1 .7"/></>,
   "mytimetable-grp":<><path d="M4 5h16v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M4 9h16M8 3v4M16 3v4"/><circle cx="12" cy="14.5" r="2.6"/><path d="M12 13v1.6l1 .7"/></>,
@@ -16454,6 +17145,7 @@ function App(){
   const doLogout=()=>{ setUser(null); setTab("dashboard"); try{window.__authSignOut&&window.__authSignOut();}catch(e){} };
   const testsDBraw=useFirestore("tests");
   const topicsDB=useFirestore("topics");
+  const syllabusDB=useFirestore("syllabus", !!user&&user.role!=="parent"&&user.role!=="student");
   const studentsDB=useFirestore("students");
   const attendanceDBraw=useFirestore("attendance");
   const usersDB=useFirestore("users");
@@ -16550,6 +17242,7 @@ function App(){
     {id:"exams-grp",     label:"Examination", sec:"MAIN",     single:"exams"},
     {id:"attendance-grp",label:"Attendance",  sec:"MAIN",     single:"attendance"},
     {id:"calendar-grp",  label:"Calendar",    sec:"MAIN",     single:"calendar"},
+    {id:"discipline-grp",label:"Discipline",  sec:"MAIN",     single:"discipline"},
     // ═══ MANAGE ═══
     {id:"leave-grp",     label:"Leave",       sec:"MANAGE",   single:"leave"},
     // ═══ SETTINGS ═══
@@ -16573,6 +17266,7 @@ function App(){
       {id:"students",      label:"Class Roster"},
       {id:"testschedule",  label:"Test Schedule"},
     ]},
+    {id:"discipline-grp",  label:"Discipline",  sec:"MAIN", single:"discipline"},
     {id:"cnotes-grp",      label:"Concept Notes", sec:"MAIN", single:"cnotes"},
     ...(user.qbank===true?[{id:"qbank-grp", label:"Question Bank", sec:"MAIN", single:"qbank"}]:[]),
     // ═══ MANAGE ═══
@@ -16602,6 +17296,7 @@ function App(){
       {id:"student",       label:"Report"},
       {id:"profile",       label:"Profile 360°"},
       {id:"topics",        label:"Topics"},
+      {id:"syllabus",      label:"Syllabus"},
       {id:"testschedule",  label:"Test Schedule"},
       ...(isAdmin?[{id:"focusgroup", label:"Focus Group"}]:[]),
       ...(isAdmin?[{id:"tracker", label:"Monthly Tracker"}]:[]),
@@ -16611,6 +17306,7 @@ function App(){
     {id:"exams-grp", label:"Examination", sec:"MAIN", single:"exams"},
     {id:"attendance-grp", label:"Attendance", sec:"MAIN", single:"attendance"},
     {id:"calendar-grp", label:"Calendar", sec:"MAIN", single:"calendar"},
+    {id:"discipline-grp", label:"Discipline", sec:"MAIN", single:"discipline"},
     {id:"resources-grp", label:"Resources", sec:"MAIN", children:[
       {id:"students",  label:"Class Roster"},
       ...((isAdmin||isTeacher)?[{id:"cnotes", label:"Concept Notes"}]:[]),
@@ -16781,6 +17477,7 @@ function App(){
         {tab==="students"&&!isParent&&<ManageStudents user={user} usersDB={usersDB} studentsDB={studentsDB} testsDB={testsDB} academicRosterDB={academicRosterDB} studentLinksDB={studentLinksDB} dirDB={dirDB}/>}
         {tab==="datacenter"&&isDirector&&<DataCenter user={user} dirDB={dirDB} studentsDB={studentsDB} testsDB={testsDB} usersDB={usersDB} feesDB={feesDB} examsDB={examsDB} noticesDB={noticesDB} registrationsDB={registrationsDB} academicRosterDB={academicRosterDB} metaDB={metaDB} attendanceDB={attendanceDB} curSession={curSession} viewSession={viewSession} setViewSession={setViewSession} allSessions={allSessions}/>}
         {tab==="topics"&&!isParent&&<ManageTopics user={user} usersDB={usersDB} topicsDB={topicsDB}/>}
+        {tab==="syllabus"&&!isParent&&!isStudent&&<SyllabusTracker user={user} topicsDB={topicsDB} syllabusDB={syllabusDB}/>}
         {tab==="tracker"&&!isParent&&<TestTracker user={user} testsDB={testsDB} studentsDB={studentsDB} usersDB={usersDB} dirDB={dirDB} academicRosterDB={academicRosterDB}/>}
         {tab==="participation"&&!isParent&&<TestParticipation user={user} testsDB={testsDB} studentsDB={studentsDB} dirDB={dirDB} academicRosterDB={academicRosterDB}/>}
         {tab==="enter"&&!isParent&&<EnterMarks user={user} testsDB={testsDB} topicsDB={topicsDB} studentsDB={studentsDB} dirDB={dirDB} ttSetDB={ttSetDB} academicRosterDB={academicRosterDB}/>}
@@ -16817,6 +17514,7 @@ function App(){
         {tab==="notices"&&isParent&&<div className="fi" style={{maxWidth:760,margin:"0 auto"}}><div className="ap-hi" style={{fontSize:25,marginBottom:4}}>Notices</div><div className="ap-hisub" style={{marginBottom:16}}>Announcements from the school</div><NoticeBoardView user={user} noticesDB={noticesDB} usersDB={usersDB} isAdmin={false}/></div>}
         {tab==="calendar"&&<AcademicCalendar user={user} calendarDB={calendarDB}/>}
         {tab==="leave"&&!isParent&&<LeavePanel user={user}/>}
+        {tab==="discipline"&&(isAdmin||user.role==="vp"||isTeacher||isOffice)&&<DisciplinePanel user={user} disciplineDB={disciplineDB} noticesDB={noticesDB} academicRosterDB={academicRosterDB} dirDB={dirDB} usersDB={usersDB} jumpStudent={(isAdmin||isOffice||user.role==="vp")?jumpStudent:undefined} mobile={viewMode==="mobile"}/>}
         {tab==="mytimetable"&&!canTimetable&&!isParent&&<MyTimetablePanel user={user}/>}
         </div>{/* /ap-content */}
         {/* Footer */}
@@ -19613,7 +20311,8 @@ function _noticeRecipients(usersDB,notice){
     if(v.left===true)return;
     if(toParents){
       if(v.role!=="parent")return;
-      if(notice.cls&&!__bcastClsMatch(notice.cls,v.cls,v.section))return;
+      if(notice.admNo){if(String(v.admNo||v.childAdmNo||"")!==String(notice.admNo))return;} // per-student notice → exactly that child's parent (admission no. decides, class ignored)
+      else if(notice.cls&&!__bcastClsMatch(notice.cls,v.cls,v.section))return;
     }else{
       if(["teacher","office"].indexOf(v.role)<0)return; // acknowledge-capable staff only — exclude admin/vp (admin dashboard, no ack UI)/parent/student
       if(!_noticeVisible(notice,{role:v.role}))return;
@@ -20321,7 +21020,9 @@ function NoticeBoardView(props) {
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10,borderTop:"1px solid var(--ap-line)",paddingTop:12}}>
                 <div style={{fontSize:11.5,color:"var(--ap-muted)"}}>Posted by {honorific(n.postedBy)} · {date}{n.audience&&n.audience!=="All"?" · For "+n.audience:""}{n.expiresAt?" · Expires "+n.expiresAt:""}</div>
                 <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                  <button style={miniBtn} onClick={function(){onEdit&&onEdit(n.id);}}>Edit</button>
+                  {n.admNo
+                    ?<span style={Object.assign({},miniBtn,{cursor:"default",opacity:.75})} title="Per-student discipline notice — the composer would drop its admission-no. targeting, so manage it from the Discipline module">Case notice</span>
+                    :<button style={miniBtn} onClick={function(){onEdit&&onEdit(n.id);}}>Edit</button>}
                   <button style={miniBtn} onClick={function(){setField(n,{pinned:!n.pinned});}}>{n.pinned?"Unpin":"Pin"}</button>
                   <button style={miniBtn} onClick={function(){setField(n,{active:false});}}>Archive</button>
                   <button style={Object.assign({},miniBtn,{background:"var(--bg-red)",color:"var(--tx-red)",border:"1px solid transparent"})} onClick={function(){del(n);}}>Delete</button>
