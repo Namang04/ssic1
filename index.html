@@ -5321,6 +5321,26 @@ function SyncTrackerFromRecords({user, studentsDB, studentLinksDB, dirDB, testsD
     }catch(e){setMsg(""+((e&&e.message)||"error")+". Safe to retry.");}
     setRemoving("");
   }
+  // "These are two DIFFERENT students" — the variant/split row can be a FALSE pairing left by an old fuzzy tool
+  // that saved a wrong legacy link (e.g. #2383 AYUSHI SINGH -> the marks typed under "AYUSH PRATAP SINGH", a
+  // separate child #1845). The current tool honours saved links (claim-step 0), so it keeps resurfacing the
+  // mistake and even offers to MERGE — which would move one child's marks onto the other. This removes ONLY the
+  // stale link (so the pairing stops) and touches NO marks: each name keeps its own marks; on refresh the real
+  // record re-claims its own tracker entry by exact name. Also un-stamps the wrong admNo from the tracker map so
+  // the leaderboard doesn't aggregate the marks under the other student in the meantime (self-heals next Sync).
+  async function unlinkVariant(cls,tracker,admNo){
+    if(removing||!admNo)return;
+    if(!window.confirm('Mark "'+tracker+'" and #'+admNo+' as DIFFERENT students?\n\nThis removes only the old (wrong) link. NO marks are moved or deleted — "'+tracker+'"’s marks stay with "'+tracker+'", and #'+admNo+' becomes their own separate entry. Use this ONLY when the two are not the same child.'))return;
+    setRemoving(cls+"§"+tracker);
+    try{
+      await studentLinksDB.del(String(admNo));   // remove the stale legacy link honoured at claim-step 0
+      var sk=safeId(cls),td=studentsDB.data[sk];
+      if(td&&td.admNo&&String(td.admNo[tracker])===String(admNo)){var na=Object.assign({},td.admNo);delete na[tracker];await studentsDB.set(cls,{cls:cls,list:(td.list||[]).slice(),sections:Object.assign({},td.sections||{}),admNo:na,updatedAt:new Date().toISOString()});}
+      try{logAudit("unlink-different-students","studentLinks",String(admNo),{testName:tracker,cls:cls},null);}catch(e){}
+      setMsg('✓ Unlinked — "'+tracker+'" and #'+admNo+' are now separate students. No marks were changed. Refresh to see it clear.');
+    }catch(e){setMsg(""+((e&&e.message)||"error")+". Safe to retry.");}
+    setRemoving("");
+  }
   async function apply(){
     if(busy)return;
     // collect chosen manual links (admNo → {tracker,cls,record}) so we can both write them and not re-add as blanks
@@ -5383,8 +5403,9 @@ function SyncTrackerFromRecords({user, studentsDB, studentLinksDB, dirDB, testsD
                 </div>);})}
               {(p.variants||[]).map(function(v,i){var rk=p.cls+"§"+v.from;return(
                 <div key={"v"+i} style={{fontSize:12.5,color:"var(--tx-blu)",padding:"4px 0",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                  <span>"{v.from}" has {v.marks} mark{v.marks===1?"":"s"} but is the same student as <b>{v.to}</b> (#{v.admNo}) — fix the split:</span>
-                  <button onClick={function(){mergeStray(p.cls,v.from,v.admNo,v.to);}} disabled={!!removing} style={{background:removing===rk?"#9aa7b5":"var(--tx-grn2)",color:"#fff",border:"none",borderRadius:7,padding:"3px 12px",fontSize:11.5,fontWeight:700,cursor:removing?"default":"pointer",fontFamily:"var(--ss-font)"}}>{removing===rk?"Merging…":"↳ Merge into "+v.to}</button>
+                  <span>"{v.from}" has {v.marks} mark{v.marks===1?"":"s"} linked to <b>{v.to}</b> (#{v.admNo}). Same child? Merge. Different children? Unlink:</span>
+                  <button onClick={function(){mergeStray(p.cls,v.from,v.admNo,v.to);}} disabled={!!removing} title="Same student, two spellings — move the marks onto the real name" style={{background:removing===rk?"#9aa7b5":"var(--tx-grn2)",color:"#fff",border:"none",borderRadius:7,padding:"3px 12px",fontSize:11.5,fontWeight:700,cursor:removing?"default":"pointer",fontFamily:"var(--ss-font)"}}>{removing===rk?"Merging…":"↳ Merge into "+v.to}</button>
+                  <button onClick={function(){unlinkVariant(p.cls,v.from,v.admNo);}} disabled={!!removing} title="Two DIFFERENT students wrongly linked by an old tool — remove the link only, no marks change" style={{background:"none",color:"var(--tx-red)",border:"1px solid var(--bd-red)",borderRadius:7,padding:"3px 10px",fontSize:11,fontWeight:700,cursor:removing?"default":"pointer",fontFamily:"var(--ss-font)"}}>{removing===rk?"…":"Different students — unlink"}</button>
                 </div>);})}
               {(p.strays||[]).map(function(o,i){var rk=p.cls+"§"+o.nm;var sv=smerge[rk]!==undefined?smerge[rk]:"";var tgt=o.cands.filter(function(c){return String(c.admNo)===String(sv);})[0];return(
                 <div key={"st"+i} style={{fontSize:12.5,color:"var(--tx-org2)",padding:"4px 0",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
