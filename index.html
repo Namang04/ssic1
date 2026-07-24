@@ -14149,10 +14149,18 @@ function __ttUncoveredCount(timetables, l, dateObj){
 // True only if an approved leave still has an uncovered SCHEDULED period on some day from todayStr onward.
 // Falls back to the old "no substitute set" check when no timetable exists, so alerts aren't silently lost.
 function __ttLeaveNeedsSub(timetables, l, todayStr){
-  if(!l||l.status!=="approved"||String(l.to)<todayStr)return false;
+  // Not approved, or the teacher was marked RETURNED early (director ended the leave) → no substitute needed.
+  if(!l||l.status!=="approved"||l.returned)return false;
+  // Robust end-date guard: a leave still needs a substitute ONLY if its last day is today or later. Validate a
+  // real YYYY-MM-DD (tolerating an ISO datetime via slice) instead of a raw string compare — a missing/malformed
+  // `to` (legacy/imported records) used to sort ABOVE the date and nag forever. Fall back to from/date so single-
+  // day or legacy-shaped records still resolve to a real day; an unparseable end date is treated as past (no nag).
+  var _to=String(l.to||l.from||l.date||"").slice(0,10);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(_to)||_to<todayStr)return false;
+  var _from=String(l.from||l.date||l.to||"").slice(0,10);if(!/^\d{4}-\d{2}-\d{2}$/.test(_from))_from=_to;
   var hasTT=timetables&&Object.keys(timetables).length>0;
   if(!hasTT)return !l.periodSubstitutes||Object.keys(l.periodSubstitutes).length===0;
-  var t0=new Date(todayStr+"T00:00:00"),from=new Date(String(l.from)+"T00:00:00"),to=new Date(String(l.to)+"T00:00:00");
+  var t0=new Date(todayStr+"T00:00:00"),from=new Date(_from+"T00:00:00"),to=new Date(_to+"T00:00:00");
   var cur=from>t0?from:t0,cap=0;
   while(cur<=to&&cap<60){if(__ttUncoveredCount(timetables,l,cur)>0)return true;cur.setDate(cur.getDate()+1);cap++;}
   return false;
@@ -14268,7 +14276,7 @@ function TimetablePanel({user}){
     const today=new Date().toLocaleDateString("en-CA",{timeZone:"Asia/Kolkata"});
     const dShort=new Date().toLocaleDateString("en-US",{weekday:"short",timeZone:"Asia/Kolkata"});
     const dLong=new Date().toLocaleDateString("en-US",{weekday:"long",timeZone:"Asia/Kolkata"});
-    return Object.values(leaves||{}).filter(l=>l&&l.status==="approved"&&String(l.from||"")<=today&&String(l.to||"")>=today).map(l=>{
+    return Object.values(leaves||{}).filter(l=>l&&l.status==="approved"&&!l.returned&&String(l.from||"")<=today&&String(l.to||"")>=today).map(l=>{
       const ps=(l.periodSubstitutes&&(l.periodSubstitutes[dShort]||l.periodSubstitutes[dLong]))||{};
       const covers=Object.keys(ps).filter(p=>ps[p]).map(p=>({period:p,sub:ps[p]})).sort((a,b)=>Number(a.period)-Number(b.period));
       return {teacher:l.teacherName,type:l.type||"Leave",covers};
@@ -19990,6 +19998,23 @@ function AllLeaves(props){
       .catch(function(e){setSaving("");alert("Could not save substitutes — "+((e&&e.message)?e.message:"please try again.")+" Your selections are still on screen; press Save again.");});
   }
   function hasUnsavedSubs(l){try{return JSON.stringify(pps[l.id]||l.periodSubstitutes||{})!==JSON.stringify(l.periodSubstitutes||{});}catch(e){return false;}}
+  // Teacher came back before the leave's end date → mark the leave RETURNED. This clears the "assign a substitute"
+  // reminder immediately (all consumers read `returned` via __ttLeaveNeedsSub) WITHOUT deleting the record — the
+  // dates and any substitutes already assigned stay for history. Reversible via reopenLeave.
+  function endLeaveEarly(l){
+    if(saving===l.id)return;
+    if(!window.confirm(l.teacherName+" has returned — end this leave now?\n\nThis clears the “assign a substitute” reminder. The leave stays in the record (its dates and any substitutes already assigned are kept) — it just stops being treated as active. Nothing is deleted."))return;
+    setSaving(l.id);
+    leaveDB.set(l.id,Object.assign({},l,{returned:true,returnedAt:new Date().toISOString(),returnedBy:user.name}))
+      .then(function(){setSaving("");})
+      .catch(function(e){setSaving("");alert("Could not update — "+((e&&e.message)||"try again."));});
+  }
+  function reopenLeave(l){
+    if(saving===l.id)return;
+    setSaving(l.id);
+    var n=Object.assign({},l);delete n.returned;delete n.returnedAt;delete n.returnedBy;
+    leaveDB.set(l.id,n).then(function(){setSaving("");}).catch(function(e){setSaving("");alert("Could not update — "+((e&&e.message)||"try again."));});
+  }
 
   // ── Print today's substitution plan (office handout) ──
   function printTodayPlan(){
@@ -19997,7 +20022,7 @@ function AllLeaves(props){
     var dShort=new Date().toLocaleDateString("en-US",{weekday:"short",timeZone:"Asia/Kolkata"});
     var dLong=new Date().toLocaleDateString("en-US",{weekday:"long",timeZone:"Asia/Kolkata"});
     var dateNice=new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric",timeZone:"Asia/Kolkata"});
-    var absent=Object.values(leaveDB.data||{}).filter(function(l){return l.status==="approved"&&l.from<=today&&l.to>=today;});
+    var absent=Object.values(leaveDB.data||{}).filter(function(l){return l.status==="approved"&&!l.returned&&l.from<=today&&l.to>=today;});
     var anyUnassigned=false; var blocks="";
     absent.forEach(function(l){
       var ap=getAbsentPeriods(l.teacherName,today,today);
@@ -20111,6 +20136,12 @@ function AllLeaves(props){
 
               {l.status==="approved"&&(
                 <div>
+                  <div style={{display:"flex",justifyContent:"flex-end",marginBottom:10}}>
+                    {l.returned
+                      ?<span style={{display:"inline-flex",alignItems:"center",gap:8,fontSize:11.5,fontWeight:700,color:"var(--tx-grn2)"}}>✓ Ended early{l.returnedBy?" · "+l.returnedBy:""}<button onClick={function(){reopenLeave(l);}} disabled={saving===l.id} className="ss-press" style={{background:"none",border:"1px solid var(--ap-line2)",borderRadius:7,padding:"3px 10px",fontSize:11,fontWeight:700,color:"var(--ap-ink2)",cursor:"pointer",fontFamily:"var(--ss-font)"}}>Reopen</button></span>
+                      :<button onClick={function(){endLeaveEarly(l);}} disabled={saving===l.id} className="ss-press" title="The teacher is back — end this leave and clear the substitute reminder" style={{display:"inline-flex",alignItems:"center",gap:6,background:"var(--c-fff)",color:"var(--tx-grn2)",border:"1px solid var(--tx-grn2)",borderRadius:8,padding:"6px 12px",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>✓ Teacher returned — end leave</button>}
+                  </div>
+                  {l.returned&&<div style={{fontSize:12,color:"var(--ap-muted)",marginBottom:8}}>This leave was ended early — no substitute is needed. Reopen it above if the teacher is still away.</div>}
                   {!isTTL&&<div style={{fontSize:12,color:"var(--ap-muted)",marginBottom:8}}>Loading timetable…</div>}
                   {isTTL&&!hasPeriods&&(function(){var sug=_ttTeacherSuggest(l.teacherName);return <div style={{fontSize:12,color:"var(--ap-ink2)"}}>No periods found for <b>{l.teacherName}</b> in the timetable. {sug.length>0?<span>The timetable may spell the name differently — did you mean <b style={{color:"var(--ap-accent)"}}>{sug.join(", ")}</b>? Update the timetable cells (or the teacher's account name) to match, then the periods + auto-assign appear.</span>:<span style={{fontStyle:"italic"}}>Make sure the timetable cells name the teacher exactly as "{l.teacherName}".</span>}</div>;})()}
                   {isTTL&&hasPeriods&&(
@@ -20207,7 +20238,7 @@ function TodayAbsences(props){
   var leaveDB=props.leaveDB;
   var today=new Date().toLocaleDateString("en-CA",{timeZone:"Asia/Kolkata"});
   if(leaveDB.loading)return <Spinner/>;
-  var absent=Object.values(leaveDB.data||{}).filter(function(l){return l.status==="approved"&&l.from<=today&&l.to>=today;});
+  var absent=Object.values(leaveDB.data||{}).filter(function(l){return l.status==="approved"&&!l.returned&&l.from<=today&&l.to>=today;});
   return(
     <div className="ap-panel">
       <div className="ap-panelh">
