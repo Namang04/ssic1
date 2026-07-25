@@ -1439,6 +1439,23 @@ function rosterForCls(dirDB,studentsDB,cls,academicRosterDB){
 }
 // Name→admNo and name→section maps for a class, sourced from the record (for legacy code that keys by name).
 function admNoMapForCls(dirDB,studentsDB,cls){var m={};rosterForCls(dirDB,studentsDB,cls).forEach(function(s){if(s.name)m[s.name]=s.admNo;});return m;}
+// Turn a roster [{admNo,name,section}] into display rows where TWO SAME-NAME students are made DISTINCT by
+// appending their admission no. — so name-keyed screens (Enter Marks, Participation, Class Progress) never
+// collapse two same-name students onto one grid cell/row (which silently shared one student's marks with the
+// other). Returns [{key,name,realName,admNo,section}]: `key` is unique + display-friendly ("ANITA (1845)" for a
+// twin, plain "ANITA" otherwise) and doubles as the React key + state key; `realName` is the bare name for the
+// _markOf name-fallback. A unique student (no name clash) is unchanged, so existing screens behave identically.
+function __uniqRosterRows(roster){
+  var cnt={};(roster||[]).forEach(function(s){if(s&&s.name)cnt[nmKey(s.name)]=(cnt[nmKey(s.name)]||0)+1;});
+  var seq={};
+  return (roster||[]).filter(function(s){return s&&s.name;}).map(function(s){
+    var n=String(s.name),k=nmKey(n),dup=cnt[k]>1,adm=String(s.admNo||"").trim();
+    seq[k]=(seq[k]||0)+1;
+    var tag=adm||("#"+seq[k]);                          // admission no. is the natural disambiguator; ordinal only if a twin somehow has none
+    var key=dup?(n+" ("+tag+")"):n;
+    return {key:key,name:key,realName:n,admNo:adm,section:s.section||""};
+  });
+}
 // Next school-wide admission number = max existing numeric admNo + 1 (1 for a brand-new branch).
 function nextAdmNo(dirDB){var mx=0;if(dirDB&&dirDB.data){for(var k in dirDB.data){if(k.indexOf("dir_")!==0)continue;var st=(dirDB.data[k]||{}).students||[];st.forEach(function(s){var n=parseInt(String((s&&s.admNo)||"").replace(/[^0-9]/g,""),10);if(!isNaN(n)&&n>mx)mx=n;});}}return String(mx+1);}
 // Senior (Class 11-12) STREAM → section letter, so the academic roster matches how teachers are assigned
@@ -5183,14 +5200,26 @@ function SyncTrackerFromRecords({user, studentsDB, studentLinksDB, dirDB, testsD
   function tok(a,b){var ta=nmKey(a).split(" ").filter(Boolean),tb=nmKey(b).split(" ").filter(Boolean);if(!ta.length||!tb.length)return 0;var u={},m=0;ta.forEach(function(t){for(var j=0;j<tb.length;j++){if(!u[j]&&ratio(t,tb[j])>=0.8){u[j]=1;m++;break;}}});if(!m)return 0;var p=m/ta.length,r=m/tb.length;return 2*p*r/(p+r);}
   function sim(a,b){return Math.max(ratio(a,b),tok(a,b));}
   // Which tracker names already carry marks, per class label — so we only flag *marked* leftovers.
+  // Names UNIQUE in the whole directory -> admNo. A shared name can't be resolved by name alone, so it is
+  // excluded (those rows fall through fail-open below). Lets marksByCls recognise a mark that is ALREADY
+  // correctly filed under its admission number (rowsByAdm) and therefore is NOT a name-only leftover to nag about.
+  const _uniqNameAdm=useMemo(function(){
+    var cnt={},adm={};
+    Object.keys((dirDB&&dirDB.data)||{}).forEach(function(dk){if(dk.indexOf("dir_")!==0)return;(((dirDB.data[dk]||{}).students)||[]).forEach(function(s){if(s&&s.name){var k=nmKey(s.name);cnt[k]=(cnt[k]||0)+1;adm[k]=String(s.admNo||"");}});});
+    var out={};Object.keys(cnt).forEach(function(k){if(cnt[k]===1&&adm[k])out[k]=adm[k];});return out;
+  },[dirDB&&dirDB.data]);
   const marksByCls=useMemo(function(){
     var m={};
     Object.values((testsDB&&testsDB.data)||{}).forEach(function(t){
       if(!t||!t.rows)return;var c=t.cls||"";m[c]=m[c]||{};
-      Object.keys(t.rows).forEach(function(nm){var v=t.rows[nm];if(v!==undefined&&v!==null&&v!==""){var k=nmKey(nm);if(!m[c][k])m[c][k]={n:0,name:nm};m[c][k].n++;}});
+      Object.keys(t.rows).forEach(function(nm){var v=t.rows[nm];if(v===undefined||v===null||v==="")return;
+        // Already filed under an admission number (exact bracket tag, or a directory-UNIQUE name) -> not a leftover.
+        var _ad=__admInBrack(nm)||_uniqNameAdm[nmKey(nm)];
+        if(_ad&&t.rowsByAdm&&t.rowsByAdm[_ad]!==undefined)return;
+        var k=nmKey(nm);if(!m[c][k])m[c][k]={n:0,name:nm};m[c][k].n++;});
     });
     return m;
-  },[testsDB&&testsDB.data]);
+  },[testsDB&&testsDB.data,_uniqNameAdm]);
   const plan=useMemo(function(){
     var per=[],tAdd=0,tLink=0,tDup=0,tOrph=0,tStray=0,tMap=0,tVar=0;
     for(var n=6;n<=12;n++){
@@ -5256,7 +5285,12 @@ function SyncTrackerFromRecords({user, studentsDB, studentLinksDB, dirDB, testsD
       // matched tracker student to their registration number, even in a class with no other changes.
       var adm0=(tdoc&&tdoc.admNo)||{};
       var mapCount=0;Object.keys(claimedBy).forEach(function(i){var nm=list[i];if(nm&&claimedBy[i]&&String(adm0[nm]||"")!==String(claimedBy[i]))mapCount++;});
-      if(adds.length||links.length||dupRen||orphans.length||strays.length||variants.length||mapCount){per.push({cls:cls,n:n,adds:adds,links:links,dupGroups:dupGroups,claimedBy:claimedBy,orphans:orphans,strays:strays,variants:variants,mapCount:mapCount});tAdd+=adds.length;tLink+=links.length;tDup+=dupRen;tOrph+=orphans.length;tStray+=strays.length;tVar+=variants.length;tMap+=mapCount;}
+      // AUTO-SHOW only for GENUINELY orphaned marks — a mark typed under a name that is NOT yet filed under any
+      // admission number (orphans/strays/variants, after marksByCls excludes admNo-filed marks). Marks now live in
+      // rowsByAdm and read admNo-first, so blank adds, name-differs links, same-name dup-splits and reg-no restamps
+      // are cosmetic tracker-cache tidiness and no longer worth nagging — they still render if the panel is open for
+      // a real reason. This is why the panel kept showing even though every mark was already correct on admission no.
+      if(orphans.length||strays.length||variants.length){per.push({cls:cls,n:n,adds:adds,links:links,dupGroups:dupGroups,claimedBy:claimedBy,orphans:orphans,strays:strays,variants:variants,mapCount:mapCount});tAdd+=adds.length;tLink+=links.length;tDup+=dupRen;tOrph+=orphans.length;tStray+=strays.length;tVar+=variants.length;tMap+=mapCount;}
     }
     return {per:per,tAdd:tAdd,tLink:tLink,tDup:tDup,tOrph:tOrph,tStray:tStray,tMap:tMap,tVar:tVar};
   },[dirDB.data,studentsDB.data,studentLinksDB.data,marksByCls]);
@@ -6436,6 +6470,99 @@ function Attendance({user,attendanceDB,studentsDB,usersDB,academicRosterDB,dirDB
 }
 
 // ── SCHOOL-WIDE TEST TRACKER (biweekly: 2 tests / subject / month) ──
+/* ── TEST CENTER — the director's one-stop test hub: who's testing (per-teacher counts), every saved test in
+   one clean list, and one-tap Delete (soft — goes to Recently Deleted, restorable). Built because the test
+   tooling had scattered across 6 screens and the old "how many tests has each teacher taken + delete" view
+   was buried under Resources → Admin → Tests where the director couldn't find it. Admin/VP-legacy only. */
+function TestCenter({user,testsDB,usersDB}){
+  const isDir=user.role==="admin"&&user.fees!==false;
+  const ymNow=today().slice(0,7);
+  const[month,setMonth]=useState(ymNow);
+  const[fCls,setFCls]=useState("");
+  const[fTeacher,setFTeacher]=useState("");
+  const[busy,setBusy]=useState("");
+  const all=useMemo(()=>Object.entries(testsDB.data||{}).filter(([id,t])=>id.indexOf("__")!==0&&t&&t.cls).map(([id,t])=>Object.assign({id:id},t)),[testsDB.data]);
+  const months=useMemo(()=>{const s=new Set([ymNow]);all.forEach(t=>{if(t.testDate)s.add(String(t.testDate).slice(0,7));});return[...s].sort().reverse();},[all]);
+  const monthLabel=m=>{try{const[y,mm]=m.split("-");return new Date(Number(y),Number(mm)-1,1).toLocaleDateString("en-IN",{month:"long",year:"numeric"});}catch(e){return m;}};
+  const inMonth=useMemo(()=>month?all.filter(t=>String(t.testDate||"").slice(0,7)===month):all,[all,month]);
+  const nMarked=t=>Math.max(Object.keys(t.rowsByAdm||{}).length,Object.keys(t.rows||{}).length);
+  /* every branch teacher gets a row — INCLUDING those with zero tests (that's who the director needs to see) */
+  const __brTC=useBranch();
+  const teachers=useMemo(()=>Object.values(_branchUsers((usersDB&&usersDB.data)||{},__brTC)).filter(u=>u&&u.role==="teacher"&&u.name),[usersDB&&usersDB.data,__brTC]);
+  const byTeacher=useMemo(()=>{
+    const m={};
+    teachers.forEach(u=>{m[u.name]={name:u.name,n:0,last:"",cls:new Set()};});
+    inMonth.forEach(t=>{const k=t.by||"—";if(!m[k])m[k]={name:k,n:0,last:"",cls:new Set()};m[k].n++;if(String(t.testDate||"")>m[k].last)m[k].last=String(t.testDate||"");if(t.cls)m[k].cls.add(String(t.cls).replace(/^Class\s*/i,"")+" "+(t.subj||""));});
+    return Object.values(m).sort((a,b)=>b.n-a.n||String(a.name).localeCompare(String(b.name)));
+  },[teachers,inMonth]);
+  const activeTeachers=byTeacher.filter(x=>x.n>0).length;
+  const silentTeachers=byTeacher.filter(x=>x.n===0).length;
+  const classesInScope=useMemo(()=>[...new Set(all.map(t=>t.cls).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true})),[all]);
+  const teacherNames=useMemo(()=>[...new Set(inMonth.map(t=>t.by||"—"))].sort(),[inMonth]);
+  const list=useMemo(()=>inMonth.filter(t=>(!fCls||t.cls===fCls)&&(!fTeacher||(t.by||"—")===fTeacher)).sort((a,b)=>String(b.testDate||"").localeCompare(String(a.testDate||""))||String(b.at||"").localeCompare(String(a.at||""))),[inMonth,fCls,fTeacher]);
+  const del=async(t)=>{
+    if(!isDir||busy)return;
+    if(!(await window.__confirm({title:"Delete this test?",body:(t.cls||"")+" · "+(t.subj||"")+" · "+(t.testDate?fmtDate(t.testDate):"no date")+" by "+(honorific(t.by)||"—")+". It moves to Recently Deleted (Settings) and can be restored — nothing is lost for good.",danger:true,confirmText:"Delete test"})))return;
+    setBusy(t.id);
+    /* softDelete NEVER throws — it returns false and shows its own error toast on failure. Success only on true. */
+    const ok=await softDelete(testsDB,t.id);
+    if(ok&&window.__toast)window.__toast("Test deleted — restorable under Recently Deleted","ok");
+    setBusy("");
+  };
+  if(testsDB.loading)return<Spinner/>;
+  const pill={fontSize:11,fontWeight:700,borderRadius:20,padding:"3px 10px"};
+  return(
+    <div className="fi" style={{display:"flex",flexDirection:"column",gap:18}}>
+      <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:16,flexWrap:"wrap"}}>
+        <div><div className="ap-hi">Test Center</div><div className="ap-hisub">Every class test in one place — who's testing, who isn't, and one-tap delete.</div></div>
+      </div>
+      {/* Filters */}
+      <div className="ap-panel" style={{padding:16,display:"flex",gap:14,alignItems:"flex-end",flexWrap:"wrap"}}>
+        <div style={{flex:1,minWidth:150}}><Lbl c="Month"/><Sel value={month} onChange={setMonth} options={[{v:"",l:"All time"},...months.map(m=>({v:m,l:monthLabel(m)}))]}/></div>
+        <div style={{flex:1,minWidth:140}}><Lbl c="Class"/><Sel value={fCls} onChange={setFCls} options={[{v:"",l:"All classes"},...classesInScope.map(c=>({v:c,l:c}))]}/></div>
+        <div style={{flex:1,minWidth:170}}><Lbl c="Teacher"/><Sel value={fTeacher} onChange={setFTeacher} options={[{v:"",l:"All teachers"},...teacherNames.map(n=>({v:n,l:honorific(n)||n}))]}/></div>
+      </div>
+      {/* KPIs */}
+      <div className="grid4 m2col" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14}}>
+        <StatCard label="Tests recorded" val={inMonth.length} icon="📋" color="var(--brand)" sub={month?monthLabel(month):"All time"}/>
+        <StatCard label="Teachers testing" val={activeTeachers} icon="✅" color="var(--tx-grn2)" sub={"of "+byTeacher.length+" on the board"}/>
+        <StatCard label="Not testing yet" val={silentTeachers} icon="⚠️" color={silentTeachers?"var(--tx-red)":"var(--tx-grn2)"} sub={silentTeachers?"0 tests this period":"everyone has tested"}/>
+        <StatCard label="Classes covered" val={[...new Set(inMonth.map(t=>t.cls))].length} icon="🏫" color="#7c3aed" sub={[...new Set(inMonth.map(t=>t.subj))].length+" subjects"}/>
+      </div>
+      {/* Tests by teacher */}
+      <div className="ap-panel" style={{overflow:"hidden"}}>
+        <div className="ap-panelh"><div className="ttl">Tests by teacher{month?" · "+monthLabel(month):""}</div><span style={{fontSize:11.5,color:"var(--ap-muted)"}}>tap a row to see their tests below</span></div>
+        <div style={{padding:"4px 0 8px"}}>
+          {byTeacher.length===0&&<div style={{padding:"14px 20px",fontSize:13,color:"var(--ap-muted)"}}>No teachers on this branch yet.</div>}
+          {byTeacher.map((x,i)=>{const on=fTeacher===x.name;return(
+            <div key={x.name+i} onClick={()=>setFTeacher(on?"":x.name)} title={on?"Clear the teacher filter":"Show only "+x.name+"'s tests"} style={{display:"flex",alignItems:"center",gap:12,padding:"9px 20px",cursor:"pointer",background:on?"var(--ap-accent-soft)":(i%2?"var(--c-f7)":"transparent"),borderLeft:on?"3px solid var(--ap-accent)":"3px solid transparent",flexWrap:"wrap"}}>
+              <div style={{flex:1,minWidth:140,fontSize:13.5,fontWeight:600,color:"var(--ap-ink)",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{honorific(x.name)||x.name}</div>
+              <div style={{fontSize:11.5,color:"var(--ap-muted)",minWidth:0,flex:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{[...x.cls].slice(0,4).join(" · ")||"—"}{x.cls.size>4?" +"+(x.cls.size-4):""}</div>
+              <div style={{fontSize:11.5,color:"var(--ap-muted)",whiteSpace:"nowrap"}}>{x.last?"last "+fmtDate(x.last):""}</div>
+              <span style={{...pill,background:x.n>0?"var(--bg-grn)":"var(--bg-red)",color:x.n>0?"var(--tx-grn2)":"var(--tx-red2)",minWidth:52,textAlign:"center"}}>{x.n} test{x.n===1?"":"s"}</span>
+            </div>);})}
+        </div>
+      </div>
+      {/* All tests */}
+      <div className="ap-panel" style={{overflow:"hidden"}}>
+        <div className="ap-panelh"><div className="ttl">All tests{fTeacher?" · "+(honorific(fTeacher)||fTeacher):""}{fCls?" · "+fCls:""}</div><span style={{fontSize:11.5,color:"var(--ap-muted)"}}>{list.length} test{list.length===1?"":"s"}</span></div>
+        {list.length===0?<div style={{padding:"18px 20px 26px",fontSize:13,color:"var(--ap-muted)"}}>No tests match these filters{month?" in "+monthLabel(month):""}.</div>:
+          list.map((t,i)=>(
+            <div key={t.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 20px",borderTop:i?"1px solid var(--c-f0)":"none",flexWrap:"wrap"}}>
+              <div style={{flex:2,minWidth:170}}>
+                <div style={{fontSize:13.5,fontWeight:650,color:"var(--ap-ink)"}}>{t.cls} · {t.subj}</div>
+                <div style={{fontSize:11.5,color:"var(--ap-muted)",marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:420}}>{(t.topics&&t.topics.length)?t.topics.join(", "):(t.name||"Test")}</div>
+              </div>
+              <div style={{fontSize:12,color:"var(--ap-ink2)",whiteSpace:"nowrap"}}>{t.testDate?fmtDate(t.testDate):"no date"}</div>
+              <div style={{fontSize:12,color:"var(--ap-muted)",flex:1,minWidth:110,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{honorific(t.by)||"—"}</div>
+              <span style={{...pill,background:"var(--c-f0)",color:"var(--ap-ink2)"}}>{nMarked(t)} marked · /{t.total||"—"}</span>
+              {isDir&&<button onClick={()=>del(t)} disabled={!!busy} className="ss-press" style={{background:"var(--bg-red)",color:"var(--tx-red)",border:"1px solid var(--bd-red)",borderRadius:8,padding:"6px 13px",fontSize:11.5,fontWeight:700,cursor:busy?"default":"pointer",fontFamily:"var(--ss-font)",opacity:busy===t.id?.6:1}}>{busy===t.id?"Deleting…":"Delete"}</button>}
+            </div>))}
+      </div>
+      <div style={{fontSize:11.5,color:"var(--ap-muted)",padding:"0 4px 20px"}}>Deleted tests go to <b>Settings → Recently Deleted</b> and can be restored. Marks entry stays under <b>Tests → Enter Marks</b>.</div>
+    </div>
+  );
+}
 function TestTracker({user,testsDB,studentsDB,usersDB,dirDB,academicRosterDB}){
   const ymNow=today().slice(0,7);
   const[month,setMonth]=useState(ymNow);
@@ -6655,13 +6782,15 @@ function TestParticipation({user,testsDB,studentsDB,dirDB,academicRosterDB}){
   useEffect(()=>{setSubj(aS[0]||"");setFilterSec("");},[cls]);
   // Roster, sections and admission-no. map from the student record (directory), legacy fallback.
   const _roster=rosterForCls(dirDB,studentsDB,cls,academicRosterDB);
-  const allStudents=_roster.map(s=>s.name);
-  const classSections=(()=>{var m={};_roster.forEach(s=>{if(s.name)m[s.name]=s.section;});return m;})();
-  const admOf=(()=>{var m={};_roster.forEach(s=>{if(s.name)m[s.name]=s.admNo;});return m;})();
+  const _rrows=__uniqRosterRows(_roster);                 // same-name students get a distinct admission-tagged key
+  const allStudents=_rrows.map(r=>r.key);
+  const classSections=(()=>{var m={};_rrows.forEach(r=>{m[r.key]=r.section;});return m;})();
+  const admOf=(()=>{var m={};_rrows.forEach(r=>{m[r.key]=r.admNo;});return m;})();
+  const _realOf=(()=>{var m={};_rrows.forEach(r=>{m[r.key]=r.realName;});return m;})();
   const availSections=[...new Set(Object.values(classSections).filter(Boolean))].sort();
   const[filterSec,setFilterSec]=useState("");
   const students=filterSec?allStudents.filter(s=>classSections[s]===filterSec):allStudents;
-  const _has=(t,s)=>{var v=_markOf(t,admOf[s],s);return v!==undefined&&v!=="";};
+  const _has=(t,s)=>{var v=_markOf(t,admOf[s],_realOf[s]||s);return v!==undefined&&v!=="";};
   // All tests for this class+subject, sorted by week
   const rTests=useMemo(()=>Object.values(testsDB.data).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week),[testsDB.data,cls,subj]);
   // Per-student participation stats
@@ -7087,7 +7216,7 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB,academicRost
       // Load saved marks, but also pull each current roster student's score by admission no. (rowsByAdm) so a
       // student renamed in the record keeps their mark instead of showing blank and being re-zeroed on save.
       const _r=Object.assign({},editing.rows||{});
-      (emRoster||[]).forEach(s=>{if(s.name&&_r[s.name]===undefined){var v=_markOf(editing,s.admNo,s.name);if(v!==undefined&&v!=="")_r[s.name]=v;}});
+      (_emRows||[]).forEach(r=>{if(_r[r.key]===undefined){var v=_markOf(editing,r.admNo,r.realName);if(v!==undefined&&v!=="")_r[r.key]=v;}});
       if(testChanged){dirtyRef.current={};setRows(_r);}
       // SAME test re-syncing (e.g. a co-teacher just saved another section) — keep THIS teacher's unsaved edits on
       // top of the fresh server data so a background sync never wipes marks that haven't been saved yet.
@@ -7097,9 +7226,11 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB,academicRost
   },[testSel,editing&&editing.at]);
   // Roster + sections + admission-no. map all come from the student record (directory), legacy fallback.
   const emRoster=rosterForCls(dirDB,studentsDB,cls,academicRosterDB);
-  const allStudentsEM=emRoster.map(s=>s.name);
-  const emSections=(()=>{var m={};emRoster.forEach(s=>{if(s.name)m[s.name]=s.section;});return m;})();
-  const emAdmOf=(()=>{var m={};emRoster.forEach(s=>{if(s.name)m[s.name]=s.admNo;});return m;})();
+  const _emRows=__uniqRosterRows(emRoster);               // two same-name students -> two distinct admission-tagged rows (no shared cell)
+  const allStudentsEM=_emRows.map(r=>r.key);
+  const emSections=(()=>{var m={};_emRows.forEach(r=>{m[r.key]=r.section;});return m;})();
+  const emAdmOf=(()=>{var m={};_emRows.forEach(r=>{m[r.key]=r.admNo;});return m;})();
+  const _emRealOf=(()=>{var m={};_emRows.forEach(r=>{m[r.key]=r.realName;});return m;})();
   const emPresentSecs=[...new Set(Object.values(emSections).filter(Boolean))].sort();
   // Section scope: director/VP can pick any (or "All"); a teacher is locked to the section(s) they are assigned.
   const emAvailSecs=canViewAllSec?(emPresentSecs.length?emPresentSecs:["A","B","C","D"]):getTeacherSections(user,cls);
@@ -7181,7 +7312,7 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB,academicRost
         <div style={{marginTop:14,display:"flex",gap:14,flexWrap:"wrap",alignItems:"flex-end"}}>
           <div style={{flex:1,minWidth:260}}>
             <Lbl c="Test (pick one to edit, or start a new one)"/>
-            <Sel value={testSel} onChange={setTestSel} options={[{v:"new",l:"New test"},...myTests.map(t=>({v:t.id,l:((t.topics&&t.topics.length)?t.topics.join(", "):(t.name||"Test"))+" · "+(fmtDate(t.testDate)||"no date")}))]}/>
+            <Sel value={testSel} onChange={setTestSel} options={[{v:"new",l:"New test"},...myTests.map(t=>({v:t.id,l:((t.topics&&t.topics.length)?t.topics.join(", "):(t.name||"Test"))+" · "+(t.testDate?fmtDate(t.testDate):"no date")}))]}/>
           </div>
           <div style={{minWidth:170}}>
             <Lbl c="Test Date"/>
@@ -7240,7 +7371,7 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB,academicRost
                 <div key={s} className="ap-lrow em-mgrid" style={{background:isOver?"var(--bg-red)":undefined}}>
                   <div className="ap-roll">{i+1}</div>
                   <div style={{display:"flex",alignItems:"center",gap:11,minWidth:0}}>
-                    <div className="ap-avt" style={{width:32,height:32,fontSize:12,background:"linear-gradient(140deg,"+grd[0]+","+grd[1]+")"}}>{initials(s)}</div>
+                    <div className="ap-avt" style={{width:32,height:32,fontSize:12,background:"linear-gradient(140deg,"+grd[0]+","+grd[1]+")"}}>{initials(_emRealOf[s]||s)}</div>
                     <div style={{fontSize:14,fontWeight:600,color:"var(--ap-ink)",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s}</div>
                   </div>
                   <div>
@@ -7531,10 +7662,12 @@ function ClassProgress({user,testsDB,studentsDB,dirDB,academicRosterDB,jumpStude
   useEffect(()=>{setSubj(aS[0]||"");setFilterSec("");},[cls]);
   // Roster, sections and admission-no. map from the student record (directory), legacy fallback.
   const _roster=rosterForCls(dirDB,studentsDB,cls,academicRosterDB);
-  const allStudents=_roster.map(s=>s.name);
-  const classSections=(()=>{var m={};_roster.forEach(s=>{if(s.name)m[s.name]=s.section;});return m;})();
-  const admOf=(()=>{var m={};_roster.forEach(s=>{if(s.name)m[s.name]=s.admNo;});return m;})();
-  const _val=(t,s)=>_markOf(t,admOf[s],s); // score for student s in test t, admission-no.-first
+  const _rrows=__uniqRosterRows(_roster);                 // same-name students get a distinct admission-tagged key
+  const allStudents=_rrows.map(r=>r.key);
+  const classSections=(()=>{var m={};_rrows.forEach(r=>{m[r.key]=r.section;});return m;})();
+  const admOf=(()=>{var m={};_rrows.forEach(r=>{m[r.key]=r.admNo;});return m;})();
+  const _realOf=(()=>{var m={};_rrows.forEach(r=>{m[r.key]=r.realName;});return m;})();
+  const _val=(t,s)=>_markOf(t,admOf[s],_realOf[s]||s); // score for student s in test t, admission-no.-first
   const availSections=["A","B","C","D"];
   const[filterSec,setFilterSec]=useState("");
   const students=filterSec?allStudents.filter(s=>classSections[s]===filterSec):allStudents;
@@ -15890,6 +16023,7 @@ function AllLessonPlans({tlStyle}){
 const NAV_PATHS={
   "home-grp":<><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5"/><path d="M9.5 21v-6h5v6"/></>,
   "tracker-grp":<><path d="M4 19V5M4 19h16"/><rect x="7" y="11" width="3" height="5" rx="1"/><rect x="12" y="8" width="3" height="8" rx="1"/><rect x="17" y="13" width="3" height="3" rx="1"/></>,
+  "tests-grp":<><rect x="5" y="3.5" width="14" height="17" rx="2"/><path d="M9 3.5h6M8.5 12.5l2.2 2.2 4.8-4.8"/><path d="M8.5 17h7"/></>,
   "insights-grp":<><path d="M4 19V5M4 19h16"/><path d="M7 15l3.5-4 3 2.5L20 7"/><circle cx="20" cy="7" r="1.4" fill="currentColor" stroke="none"/></>,
   "fees-grp":<><path d="M3 7h18a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z"/><circle cx="12" cy="12.5" r="2.5"/><path d="M5.5 10.5v4M18.5 10.5v4"/></>,
   "exams-grp":<><path d="M12 3 2 8l10 5 10-5z"/><path d="M6 10.5V15c0 1.5 2.7 3 6 3s6-1.5 6-3v-4.5"/><path d="M22 8v5"/></>,
@@ -17317,18 +17451,23 @@ function App(){
       {id:"directory", label:"Student Records"},
       ...(isAdmin?[{id:"admitcard", label:"Admit Cards"}]:[]),
     ]}]:[]),
-    {id:"tracker-grp", label:"Academics", sec:"MAIN", children:[
-      {id:"overview",      label:"Overview"},
+    /* Tests got their own group — the old 13-item "Academics" pile buried them and the director couldn't
+       find the per-teacher counts / delete (which sat under Resources → Admin). Test Center is the hub. */
+    {id:"tests-grp", label:"Tests", sec:"MAIN", children:[
+      ...(isAdmin?[{id:"testcenter", label:"Test Center"}]:[]),
       {id:"enter",         label:"Enter Marks"},
       {id:"participation", label:"Participation"},
+      ...(isAdmin?[{id:"tracker", label:"Monthly Tracker"}]:[]),
+      {id:"topics",        label:"Topics"},
+      {id:"testschedule",  label:"Test Schedule"},
+    ]},
+    {id:"tracker-grp", label:"Academics", sec:"MAIN", children:[
+      {id:"overview",      label:"Overview"},
       {id:"class",         label:"Progress"},
       {id:"student",       label:"Report"},
       {id:"profile",       label:"Profile 360°"},
-      {id:"topics",        label:"Topics"},
       {id:"syllabus",      label:"Syllabus"},
-      {id:"testschedule",  label:"Test Schedule"},
       ...(isAdmin?[{id:"focusgroup", label:"Focus Group"}]:[]),
-      ...(isAdmin?[{id:"tracker", label:"Monthly Tracker"}]:[]),
       ...(isDirector?[{id:"branchsetup", label:"Branch Setup"}]:[]),
       {id:"teacherlog",    label:"Teacher Log"},
     ]},
@@ -17507,6 +17646,7 @@ function App(){
         {tab==="datacenter"&&isDirector&&<DataCenter user={user} dirDB={dirDB} studentsDB={studentsDB} testsDB={testsDB} usersDB={usersDB} feesDB={feesDB} examsDB={examsDB} noticesDB={noticesDB} registrationsDB={registrationsDB} academicRosterDB={academicRosterDB} metaDB={metaDB} attendanceDB={attendanceDB} curSession={curSession} viewSession={viewSession} setViewSession={setViewSession} allSessions={allSessions}/>}
         {tab==="topics"&&!isParent&&<ManageTopics user={user} usersDB={usersDB} topicsDB={topicsDB}/>}
         {tab==="syllabus"&&!isParent&&!isStudent&&<SyllabusTracker user={user} topicsDB={topicsDB} syllabusDB={syllabusDB}/>}
+        {tab==="testcenter"&&isAdmin&&<TestCenter user={user} testsDB={testsDB} usersDB={usersDB}/>}
         {tab==="tracker"&&!isParent&&<TestTracker user={user} testsDB={testsDB} studentsDB={studentsDB} usersDB={usersDB} dirDB={dirDB} academicRosterDB={academicRosterDB}/>}
         {tab==="participation"&&!isParent&&<TestParticipation user={user} testsDB={testsDB} studentsDB={studentsDB} dirDB={dirDB} academicRosterDB={academicRosterDB}/>}
         {tab==="enter"&&!isParent&&<EnterMarks user={user} testsDB={testsDB} topicsDB={topicsDB} studentsDB={studentsDB} dirDB={dirDB} ttSetDB={ttSetDB} academicRosterDB={academicRosterDB}/>}
