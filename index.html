@@ -497,7 +497,7 @@ body,.ap-panel,.ap-content,.ap-nav,.ap-topbar{transition:background-color .25s e
 </head>
 <body>
 <script>/* lazy content loader */
-window.__ssEnsureContent=function(){if(window.__ssContentP)return window.__ssContentP;window.__ssContentP=new Promise(function(res){if(window.__ssContentReady)return res(true);var s=document.createElement("script");s.src="ssic-content.js?v=1";s.async=true;s.onload=function(){window.__ssContentReady=true;res(true);};s.onerror=function(){window.__ssContentP=null;res(false);};document.head.appendChild(s);});return window.__ssContentP;};
+window.__ssEnsureContent=function(){if(window.__ssContentP)return window.__ssContentP;window.__ssContentP=new Promise(function(res){if(window.__ssContentReady)return res(true);var s=document.createElement("script");s.src="ssic-content.js?v=5";s.async=true;s.onload=function(){window.__ssContentReady=true;res(true);};s.onerror=function(){window.__ssContentP=null;res(false);};document.head.appendChild(s);});return window.__ssContentP;};
 </script>
 <script>/* offline cache: makes repeat opens near-instant on any device. Safe for frequent deploys —
    the app shell is fetched network-first so a new GitHub→Vercel push always lands when online;
@@ -784,6 +784,17 @@ function __buildQB(){
   if(!src)return {}; // heavy content (ssic-content.js) not loaded yet — return empty, don't cache, don't throw
   __QB_CACHE=new Function(src+"\nreturn QB_DATA;")();
   try{var F=window.__QB_FIGURES||{};Object.keys(__QB_CACHE).forEach(function(k){(__QB_CACHE[k]||[]).forEach(function(q){if(q&&q.q&&!q.fig){var s=window.__qSig(q);if(F[s])q.fig=F[s];}});});}catch(e){}
+  /* ── Question corrections (additive overlay, like __QB_FIGURES) ── audit fixes are applied AT RUNTIME after the
+     bank is built, keyed by the same stable __qSig — the protected generated data is never edited (editing stems
+     in the file shifts its internal dedup keys and silently drops questions). A fix patches fields (r,a,o,c,q,m,d,
+     rev), {drop:true} removes an unsalvageable/duplicate question, and {sol:"…"} installs the corrected worked
+     solution students see (written into __SOLUTION_OVERRIDES under the PATCHED question's key). Figures attach
+     BEFORE fixes, so figure keys always use the original stem. */
+  try{var X=window.__QB_FIXES||{};if(Object.keys(X).length){Object.keys(__QB_CACHE).forEach(function(k){var arr=__QB_CACHE[k]||[];for(var i=arr.length-1;i>=0;i--){var q=arr[i];if(!q||!q.q)continue;var f=X[window.__qSig(q)];if(!f)continue;
+    if(f.drop){arr.splice(i,1);continue;}
+    Object.keys(f).forEach(function(fk){if(fk==="drop"||fk==="sol")return;q[fk]=f[fk];});
+    if(f.sol){try{window.__SOLUTION_OVERRIDES=window.__SOLUTION_OVERRIDES||{};window.__SOLUTION_OVERRIDES[solKey(q)]=f.sol;}catch(e){}}
+  }});}}catch(e){}
   return __QB_CACHE;
 }
 Object.defineProperty(window,"QB_DATA",{get:__buildQB,configurable:true});
@@ -1188,33 +1199,72 @@ function __uniqueNameIn(students,name,father,admNo){
 // means each photo is fetched ONCE and then shows on every list (records, roster, admit
 // cards, profile) for every role — teacher/VP/office/director all read (rules: signedIn).
 if(typeof window!=="undefined"){window.__photoCache=window.__photoCache||{};window.addEventListener("branchchange",function(){window.__photoCache={};});}
+function __photoReal(v){return typeof v==="string"&&v.slice(0,5)==="data:";} // a genuine photo, not a miss
+// ONE shared fetch per admission no., shared by lists AND detail screens. In-flight requests are tracked in a
+// separate map (NOT as a sentinel written into the cache — a sentinel that never resolved used to strand that
+// student's photo forever, so it silently stopped appearing). A confirmed miss caches null; a FAILED read caches
+// nothing, so a dropped mobile connection retries instead of blanking the photo permanently.
+if(typeof window!=="undefined"){window.__photoInflight=window.__photoInflight||{};
+  window.addEventListener("branchchange",function(){window.__photoInflight={};});}
+function __photoGet(adm){
+  adm=String(adm||""); if(!adm)return Promise.resolve(null);
+  var c=window.__photoCache[adm];
+  if(__photoReal(c))return Promise.resolve(c);
+  if(c===null)return Promise.resolve(null);
+  if(window.__photoInflight[adm])return window.__photoInflight[adm];
+  if(!window.__db||!window.__fbGetDoc)return Promise.resolve(null);
+  var bAt=window.__currentBranch;
+  var p=window.__fbGetDoc(window.__fbDoc(window.__db,"studentPhotos",adm)).then(function(snap){
+    var img=(snap&&snap.exists&&snap.exists()&&snap.data()&&snap.data().img)||null;
+    if(window.__currentBranch===bAt)window.__photoCache[adm]=img;
+    return img;
+  }).catch(function(){return null;})                       // not cached → retried on the next screen
+   .then(function(img){delete window.__photoInflight[adm];return img;});
+  window.__photoInflight[adm]=p; return p;
+}
+// Update every open screen after an upload/removal so the list and the profile never disagree.
+function __photoSet(adm,img){adm=String(adm||"");if(!adm)return;window.__photoCache[adm]=img||null;
+  try{window.dispatchEvent(new CustomEvent("photochange",{detail:{adm:adm,img:img||null}}));}catch(e){}}
 function useStudentPhotos(adms){
-  var __realImg=function(v){return typeof v==="string"&&v.slice(0,5)==="data:";}; // only a genuine photo URL — never the "__loading" sentinel or a null miss
-  var initial={};(adms||[]).forEach(function(a){a=String(a||"");if(a&&__realImg(window.__photoCache[a]))initial[a]=window.__photoCache[a];});
+  var initial={};(adms||[]).forEach(function(a){a=String(a||"");if(a&&__photoReal(window.__photoCache[a]))initial[a]=window.__photoCache[a];});
   const[map,setMap]=useState(initial);
-  useEffect(function(){var f=function(){setMap({});};window.addEventListener("branchchange",f);return function(){window.removeEventListener("branchchange",f);};},[]);
+  useEffect(function(){
+    var f=function(){setMap({});};
+    var g=function(e){var d=e&&e.detail;if(!d||!d.adm)return;setMap(function(m){var x=Object.assign({},m);if(d.img)x[d.adm]=d.img;else delete x[d.adm];return x;});};
+    window.addEventListener("branchchange",f);window.addEventListener("photochange",g);
+    return function(){window.removeEventListener("branchchange",f);window.removeEventListener("photochange",g);};
+  },[]);
   const key=(adms||[]).map(function(a){return String(a||"");}).filter(Boolean).join(",");
   useEffect(function(){
-    if(!window.__db||!window.__fbGetDoc)return;var live=true;
-    var list=key?key.split(","):[];
-    // pull cached hits into local state, and queue the not-yet-fetched ones
-    var patch={},need=[];
-    list.forEach(function(a){var c=window.__photoCache[a];if(__realImg(c))patch[a]=c;else if(c===undefined)need.push(a);});
+    var live=true;
+    var list=(key?key.split(","):[]).slice(0,800);
+    var patch={};
+    list.forEach(function(a){if(__photoReal(window.__photoCache[a]))patch[a]=window.__photoCache[a];});
     if(Object.keys(patch).length)setMap(function(m){return Object.assign({},m,patch);});
-    need=need.slice(0,800); // safety cap per pass
-    need.forEach(function(a){
-      var bAt=window.__currentBranch;
-      window.__photoCache[a]="__loading";
-      window.__fbGetDoc(window.__fbDoc(window.__db,"studentPhotos",a)).then(function(snap){
-        if(window.__currentBranch!==bAt)return;
-        var img=(snap&&snap.exists&&snap.exists()&&snap.data()&&snap.data().img)||null;
-        window.__photoCache[a]=img; // null caches the miss so we never re-query
-        if(live&&img)setMap(function(m){var x=Object.assign({},m);x[a]=img;return x;});
-      }).catch(function(){window.__photoCache[a]=undefined;}); // let a failed read retry next time
+    list.forEach(function(a){
+      if(__photoReal(window.__photoCache[a])||window.__photoCache[a]===null)return;
+      __photoGet(a).then(function(img){if(live&&img)setMap(function(m){var x=Object.assign({},m);x[a]=img;return x;});});
     });
     return function(){live=false;};
   },[key]);
   return map;
+}
+// Detail screens (profile, student report). Seeds SYNCHRONOUSLY from the shared cache so a photo already visible
+// in the list CANNOT blank out when the record is opened; the network read only ever adds to that.
+function useOnePhoto(adm){
+  adm=String(adm||"");
+  var seed=(typeof window!=="undefined"&&window.__photoCache&&window.__photoCache[adm])||null;
+  const[photo,setPhoto]=useState(__photoReal(seed)?seed:null);
+  useEffect(function(){
+    var live=true;
+    var c=(window.__photoCache||{})[adm];
+    setPhoto(__photoReal(c)?c:null);                        // keep a cached hit on screen; never blank it first
+    var g=function(e){var d=e&&e.detail;if(d&&d.adm===adm&&live)setPhoto(d.img||null);};
+    window.addEventListener("photochange",g);
+    if(adm)__photoGet(adm).then(function(img){if(live&&img)setPhoto(img);});
+    return function(){live=false;window.removeEventListener("photochange",g);};
+  },[adm]);
+  return [photo,setPhoto];
 }
 // Reusable avatar: real photo when we have one, else initials on a colour gradient.
 function PhotoAvatar(props){
@@ -3443,7 +3493,7 @@ function AdmitCard({user, dirDB, setTab}){
     // Pull each listed student's photo (its own Firestore doc) so the printed card shows the real photo when one exists.
     const photoMap={};
     if(window.__db&&window.__fbGetDoc){await Promise.all(list.filter(s=>s.admNo).map(async s=>{
-      try{const snap=await window.__fbGetDoc(window.__fbDoc(window.__db,"studentPhotos",String(s.admNo)));if(snap&&snap.exists&&snap.exists()){const d=snap.data();if(d&&d.img)photoMap[String(s.admNo)]=d.img;}}catch(e){}
+      try{const img=await __photoGet(String(s.admNo));if(img)photoMap[String(s.admNo)]=img;}catch(e){}   /* shared cache: no re-fetch, and a failed read retries */
     }));}
     const card=s=>`<div class="card"><div class="ch">${window.__LOGO?`<div class="lg"></div>`:""}<div class="cn">STEPPING STONE INTER COLLEGE</div><div class="cs">${BRANCH_LABEL}, ${BRANCH_ADDR}</div><div class="ct">ADMIT CARD${exam?" · "+exam:""}</div></div>
       <div class="cb">${photoMap[String(s.admNo)]?`<div class="photo has"><img src="${photoMap[String(s.admNo)]}" alt=""></div>`:`<div class="photo">Affix<br/>Photo</div>`}<div class="info">
@@ -8060,17 +8110,13 @@ function StudentProfile({user,testsDB,examsDB,studentsDB,attendanceDB,wrongDB,fe
 
   // Student photo (studentPhotos/{admNo}) — teachers can upload here too; shows on profile, admit card & report card.
   const canEditPhoto=!!user&&(user.role==="admin"||user.role==="office"||user.role==="vp"||user.role==="teacher");
-  const[photo,setPhoto]=useState(null);const[photoBusy,setPhotoBusy]=useState("");
-  useEffect(()=>{let live=true;setPhoto(null);setPhotoBusy("");
-    if(!padm||!window.__db||!window.__fbGetDoc)return;
-    window.__fbGetDoc(window.__fbDoc(window.__db,"studentPhotos",padm)).then(snap=>{if(live&&snap&&snap.exists&&snap.exists()){var d=snap.data();if(d&&d.img)setPhoto(d.img);}}).catch(()=>{});
-    return()=>{live=false;};},[padm]);
+  const[photo,setPhoto]=useOnePhoto(padm);const[photoBusy,setPhotoBusy]=useState("");
   const onPickPhoto=async(e)=>{const f=e.target.files&&e.target.files[0];e.target.value="";if(!f||!padm)return;
     if(!window.__db||!window.__fbSetDoc){setPhotoBusy("Not connected");return;}
     setPhotoBusy("Optimising…");
     try{const img=await __compressImg(f,256,0.62);setPhotoBusy("Saving…");
       await window.__fbSetDoc(window.__fbDoc(window.__db,"studentPhotos",padm),{admNo:padm,name:student,img:img,updatedAt:new Date().toISOString(),by:(user&&user.username)||""});
-      setPhoto(img);setPhotoBusy("✓ Saved");setTimeout(()=>setPhotoBusy(""),1600);
+      __photoSet(padm,img);setPhoto(img);setPhotoBusy("✓ Saved");setTimeout(()=>setPhotoBusy(""),1600);
     }catch(err){setPhotoBusy(""+((err&&err.message)||"Could not save"));}};
 
   const subjects=SCHOOL.subjects[cls]||[];
@@ -9147,7 +9193,9 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
   // Fetch the photo docs (studentPhotos/{admNo}) for the given students → {admNo:dataURL}. Lazy, parallel, best-effort.
   const fetchPhotos=async(cls,names)=>{const pm={};if(!window.__db||!window.__fbGetDoc)return pm;
     const adms=Array.from(new Set(names.map(n=>String(admOfExam(cls,n)||"")).filter(Boolean)));
-    await Promise.all(adms.map(async a=>{try{const snap=await window.__fbGetDoc(window.__fbDoc(window.__db,"studentPhotos",a));if(snap&&snap.exists&&snap.exists()){const d=snap.data();if(d&&d.img)pm[a]=d.img;}}catch(e){}}));
+    /* through the shared cache: a photo already seen on screen prints without another network read, and a
+       failed read is retried rather than silently printing a blank card. */
+    await Promise.all(adms.map(async a=>{try{const img=await __photoGet(a);if(img)pm[a]=img;}catch(e){}}));
     return pm;};
   // Term-mode cards display the weighted /100 composite, so their printed rank must be computed from it too —
   // re-rank the printed cohort by termScholasticTable overallPct (fallback: raw pct when no weighted rows).
@@ -10864,20 +10912,16 @@ function DirectoryProfile({stu, testsDB, examsDB, studentsDB, attendanceDB, wron
     ||((!/\(/.test(String(stu.name||""))&&rosterList.filter(r=>!/\(/.test(r)&&nmKey(r)===nmKey(stu.name)).length===1)?rosterList.find(r=>!/\(/.test(r)&&nmKey(r)===nmKey(stu.name)):null);
   const aName=rosterName||stu.name;
   // Student photo — its own Firestore doc (studentPhotos/{admNo}), loaded on demand so the class roster stays light.
-  const[photo,setPhoto]=useState(null);const[photoBusy,setPhotoBusy]=useState("");
-  useEffect(()=>{let live=true;setPhoto(null);setPhotoBusy("");
-    if(!adm||!window.__db||!window.__fbGetDoc)return;
-    window.__fbGetDoc(window.__fbDoc(window.__db,"studentPhotos",adm)).then(snap=>{if(live&&snap&&snap.exists&&snap.exists()){var d=snap.data();if(d&&d.img)setPhoto(d.img);}}).catch(()=>{});
-    return()=>{live=false;};},[adm]);
+  const[photo,setPhoto]=useOnePhoto(adm);const[photoBusy,setPhotoBusy]=useState("");
   const onPickPhoto=async(e)=>{const f=e.target.files&&e.target.files[0];e.target.value="";if(!f||!adm)return;
     if(!window.__db||!window.__fbSetDoc){setPhotoBusy("Not connected");return;}
     setPhotoBusy("Optimising…");
     try{const img=await __compressImg(f,256,0.62);setPhotoBusy("Saving…");
       await window.__fbSetDoc(window.__fbDoc(window.__db,"studentPhotos",adm),{admNo:adm,name:stu.name,img:img,updatedAt:new Date().toISOString(),by:(user&&user.username)||""});
-      setPhoto(img);setPhotoBusy("✓ Saved");setTimeout(()=>setPhotoBusy(""),1600);
+      __photoSet(adm,img);setPhoto(img);setPhotoBusy("✓ Saved");setTimeout(()=>setPhotoBusy(""),1600);
     }catch(err){setPhotoBusy(""+((err&&err.message)||"Could not save"));}};
   const onRemovePhoto=async()=>{if(!adm||!window.__fbDeleteDoc)return;if(!await window.__confirm({title:"Remove "+stu.name+"'s photo?",body:"It disappears from the profile, admit cards and report cards.",danger:true,confirmText:"Remove photo"}))return;
-    try{await window.__fbDeleteDoc(window.__fbDoc(window.__db,"studentPhotos",adm));setPhoto(null);setPhotoBusy("");}catch(e){setPhotoBusy("Could not remove");}};
+    try{await window.__fbDeleteDoc(window.__fbDoc(window.__db,"studentPhotos",adm));__photoSet(adm,null);setPhoto(null);setPhotoBusy("");}catch(e){setPhotoBusy("Could not remove");}};
   // Tests live under the Test-Tracker name; use an explicit link if set, else the matched roster name.
   const linkName=((studentLinksDB&&studentLinksDB.data&&studentLinksDB.data[adm])||{}).testName;
   const testName=linkName||aName;
@@ -13491,6 +13535,8 @@ function qbValidatePaper(items,meta){
   items.forEach(function(it,n){ var q=it.q||{};
     if(/\bM\d+\.Q\d+/.test(qbStripTags(q.q))||/^\s*(\[[^\]]*\]\s*)?Q\.?\d+\s*[:.]/i.test(qbStripTags(q.q)))errors.push("Q"+(n+1)+": an internal reference tag survived into the stem.");
     if(qbNeedsData(q.q,q.fig))dropped.push({n:n+1,q:qbStripTags(q.q).slice(0,80)});
+    /* Audited against CBSE's own 2026-27 curriculum: not board-examinable, so it never goes into a printed paper. */
+    else if(q.oos)dropped.push({n:n+1,q:qbStripTags(q.q).slice(0,80),oos:true});
   });
   return {errors:errors,dropped:dropped,grade:g};
 }
@@ -13498,6 +13544,11 @@ function qbValidatePaper(items,meta){
 var QB_COUNT_RX=/\b(mention|state|give|list|write|name|identify)\s+(any\s+)?(two|three|four|five|six)\b/i;
 function qbCountMismatch(q){ if(!q)return null; var Q=String(q.q||""); if(/Case Study|class=.csb|\(a\)/i.test(Q))return null; var m=Q.match(QB_COUNT_RX); if(!m)return null; var want={two:2,three:3,four:4,five:5,six:6}[m[3].toLowerCase()]; var A=String(q.a||""); var got=Math.max((A.match(/(?:^|[^0-9])([1-9])[).]\s/g)||[]).length,(A.match(/\((?:i{1,3}|iv|v|vi{0,3}|vii|viii|ix|x)\)/gi)||[]).length,(A.match(/[•▪‣]/g)||[]).length); return (got>0&&got!==want)?{want:want,got:got}:null; }
 function qbFlagged(q){ if(!q)return ""; if(q.rev)return "flagged for subject-expert review"; if(typeof window!=="undefined"&&window.__QB_REVIEW&&window.__QB_REVIEW[solKey(q)])return "flagged for subject-expert review"; if(qbNeedsData(q.q,q.fig))return "this question depends on a table/figure not shown"; return ""; }
+/* Out-of-syllabus (set by the audit overlay against CBSE's own 2026-27 curriculum). NOT a defect: the content is
+   sound, it simply cannot be asked in the board exam — so it shows an informational chip and the board-paper
+   generator leaves it out, while practice/revision screens keep it. */
+function qbOutOfSyllabus(q){ return !!(q&&q.oos); }
+function qbOosNote(q){ return (q&&q.oosNote)||"Not in the current CBSE syllabus — practice only."; }
 // Bank-health report — surfaces every question a subject expert should review before shipping. Nothing is auto-edited.
 function qbHealthReport(){
   var QB=(typeof QB_DATA!=="undefined")?QB_DATA:{}; var rows={ref:[],dep:[],count:[],rev:[]};
@@ -13951,6 +14002,7 @@ body{font-family:'Times New Roman',Georgia,serif;padding:30px 34px;color:#1a1a1a
                             <div style={{marginTop:11,padding:"10px 12px",background:"var(--bg-grn)",border:"1px solid var(--bg-grn)",borderRadius:10,fontSize:12.5,color:"var(--tx-grn3)",lineHeight:1.65}}>
                               <div style={{fontSize:9.5,fontWeight:700,letterSpacing:.8,textTransform:"uppercase",marginBottom:4,color:"var(--tx-grn2)"}}>Solution</div>
                               {qbFlagged(q)&&<div style={{marginBottom:6,fontSize:11,fontWeight:700,color:"var(--tx-org2)",background:"var(--bg-amb)",border:"1px solid var(--bd-amb)",borderRadius:7,padding:"5px 9px"}}>⚠ {qbFlagged(q)} — verify before use.</div>}
+                              {qbOutOfSyllabus(q)&&<div style={{marginBottom:6,fontSize:11,fontWeight:600,color:"var(--tx-blu)",background:"var(--bg-blu)",border:"1px solid var(--ap-line)",borderRadius:7,padding:"5px 9px"}}>ⓘ {qbOosNote(q)}</div>}
                               <TeX html={fmtSolution(getSolution(q))}/>
                             </div>
                           )}
