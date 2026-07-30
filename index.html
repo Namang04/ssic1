@@ -1409,6 +1409,11 @@ function _noticeVisible(n,user){var a=n&&n.audience;var r=(user&&user.role)||"";
   if(a==="Parents"){if(r==="admin")return true;if(r!=="parent"&&r!=="student")return false;
     if(n.admNo)return String(n.admNo)===String((user&&(user.admNo||user.childAdmNo))||""); // per-student notice (discipline etc.) — admission no. DECIDES; class is ignored so a stale cls stamp can never hide it from the one parent it targets
     return !n.cls||__bcastClsMatch(n.cls,user&&user.cls,user&&user.section);}
+  // Everything below is the STAFF notice board. Its composer offers only All / Teaching Staff / Senior Staff,
+  // so "All" there means all STAFF — but parents have a Notices tab of their own, and letting "All" through
+  // published every internal circular straight to them. A parent/student sees ONLY audience:"Parents" notices
+  // (the Parent Broadcast channel), which the branch above has already handled.
+  if(r==="parent"||r==="student")return false;
   if(!a||a==="All")return true;
   if(r==="admin")return true;
   if(a==="Senior Staff")return r==="vp"||r==="office";
@@ -8383,11 +8388,22 @@ th{background:#0d1b2a;color:#fff;font-weight:600}td.l{text-align:left;font-weigh
 }
 
 // ── PARENT VIEW ──
-function ParentView({user,testsDB,studentsDB,attendanceDB,noticesDB}){
+function ParentView({user,testsDB,examsDB,studentsDB,academicRosterDB,attendanceDB,noticesDB}){
   const{student,cls}=user;
   const[pvView,setPvView]=useState("home");   // parents had no route to ChangePassword — bulk logins need one
   const students=studentsDB.data[safeId(cls)]?.list||[];
-  const _secMap=((studentsDB.data[safeId(cls)]||{}).sections)||{},_mySec=_secMap[student]||""; // roll = A–Z within section
+  const _secMap=((studentsDB.data[safeId(cls)]||{}).sections)||{};
+  // Section by ADMISSION NO. from the roster first — the name-keyed cache is blank for many children and
+  // collapses same-name pairs, and a blank section made the homework feed fall back to showing EVERY section.
+  const _mySec=useMemo(function(){
+    var adm=String(user.admNo||user.childAdmNo||"");
+    var rd=academicRosterDB&&academicRosterDB.data&&academicRosterDB.data[safeId(cls)];
+    if(adm&&rd&&Array.isArray(rd.students)){
+      var hit=rd.students.find(function(s){return s&&String(s.admNo)===adm;});
+      if(hit&&hit.section)return String(hit.section).trim();
+    }
+    return String(_secMap[student]||"").trim();
+  },[user.admNo,user.childAdmNo,academicRosterDB&&academicRosterDB.data,cls,student,_secMap]);
   const rollNo=students.filter(n=>(_secMap[n]||"")===_mySec).sort((a,b)=>String(a).localeCompare(String(b))).indexOf(student)+1;
   const padm=String(user.admNo||user.childAdmNo||(studentsDB.data[safeId(cls)]?.admNo||{})[student]||""); // child's admission no.
   const subjects=SCHOOL.subjects[cls]||[];
@@ -8419,7 +8435,9 @@ function ParentView({user,testsDB,studentsDB,attendanceDB,noticesDB}){
       const mine=[];snap.forEach(dc=>{const l=dc.data();if(!l||!(l.topic||l.hw))return;
         if(String(__clsNum(l.class))!==String(__clsNum(cls)))return; // canonical token match — logs store "10", accounts store "Class 10"
         const sec=String(l.section||"").toUpperCase().trim(),ms=String(_mySec||"").toUpperCase().trim();
-        if(sec&&ms&&sec!==ms)return; // section-scoped when both sides know it; otherwise show
+        // Once we know the child's section, a log for ANOTHER section is not their homework. (Previously a blank
+        // section on either side fell through and showed every section's work, which read as "completely wrong".)
+        if(ms){if(sec&&sec!==ms)return;}else if(sec)return;   // section unknown ⇒ only class-wide (unsectioned) logs
         mine.push(l);});
       mine.sort((a,b)=>String(b.date).localeCompare(String(a.date))||String(a.period||"").localeCompare(String(b.period||"")));
       if(!cancel)setHwFeed(mine.slice(0,30));
@@ -8539,6 +8557,55 @@ function ParentView({user,testsDB,studentsDB,attendanceDB,noticesDB}){
       </div>}
       {/* results */}
       <div id="pv-results">
+      {/* ── TERM EXAMS ── separate from class tests: the portal used to show class tests only, because the exams
+           collection was staff-read-only. Marks resolve admission-no-first via the shared __examMarkOf helper. */}
+      {(()=>{
+        const rows=Object.values((examsDB&&examsDB.data)||{})
+          .filter(ex=>ex&&ex.cls===cls&&Array.isArray(ex.subjects)&&ex.subjects.length)
+          .map(ex=>{
+            let obt=0,max=0,any=false;const subs=[];
+            ex.subjects.forEach(s=>{
+              const v=__examMarkOf(ex,s.name,padm,student);
+              if(v===undefined||v==="")return;
+              any=true;
+              if(s.graded){subs.push({name:s.name,grade:String(v)});return;}
+              const mx=Number(s.max)||100,ab=/^a/i.test(String(v).trim());
+              if(ab){max+=mx;subs.push({name:s.name,marks:null,max:mx,ab:true});return;}
+              const m=Number(v);if(isNaN(m))return;
+              obt+=m;max+=mx;subs.push({name:s.name,marks:m,max:mx,pct:mx?Math.round(m/mx*100):0});
+            });
+            return any?{id:ex.id||ex.name,name:ex.name||"Examination",when:ex.date||ex.at||"",subs,obt,max,pct:max?Math.round(obt/max*100):null}:null;
+          }).filter(Boolean)
+          .sort((a,b)=>String(b.when).localeCompare(String(a.when)));
+        if(!rows.length)return null;
+        return <div style={{marginBottom:14}}>
+          <div style={{fontSize:11,fontWeight:700,letterSpacing:.6,textTransform:"uppercase",color:"var(--c-64)",marginBottom:6}}>Examinations</div>
+          {rows.map(r=>(
+            <Card key={r.id} style={{padding:18,marginBottom:10}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,flexWrap:"wrap",marginBottom:10}}>
+                <div><div style={{fontWeight:700,fontSize:15,color:"var(--ap-ink)"}}>{r.name}</div>
+                  <div style={{fontSize:11,color:"var(--c-64)",marginTop:2}}>{r.subs.length} subject{r.subs.length===1?"":"s"}{r.when?" · "+fmtDate(r.when):""}</div></div>
+                {r.pct!==null&&<div style={{textAlign:"right"}}><div style={{fontSize:20,fontWeight:800,fontFamily:"var(--ss-font)",color:"var(--ap-ink)"}}>{r.obt}<span style={{fontSize:12,color:"var(--c-64)"}}>/{r.max}</span></div><GBadge p={r.pct}/></div>}
+              </div>
+              {r.pct!==null&&<div style={{marginBottom:10}}><Bar p={r.pct}/></div>}
+              <div className="mscroll">
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:12.5}}>
+                  <tbody>
+                    {r.subs.map((s,i)=>(
+                      <tr key={s.name+i} style={{borderTop:i?"1px solid var(--ap-line)":"none"}}>
+                        <td style={{padding:"7px 0",color:"var(--ap-ink)"}}>{s.name}</td>
+                        <td style={{padding:"7px 0",textAlign:"right",fontFamily:"var(--ss-font)",fontWeight:700,color:s.ab?"var(--tx-red)":"var(--ap-ink)"}}>
+                          {s.grade!==undefined?s.grade:s.ab?"Absent":(s.marks+"/"+s.max)}
+                        </td>
+                        <td style={{padding:"7px 0",textAlign:"right",width:64}}>{s.pct!==undefined?<GBadge p={s.pct}/>:null}</td>
+                      </tr>))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>))}
+        </div>;
+      })()}
+      {sd.filter(s=>s.sc.length>0).length>0&&<div style={{fontSize:11,fontWeight:700,letterSpacing:.6,textTransform:"uppercase",color:"var(--c-64)",marginBottom:6}}>Class tests</div>}
       {sd.filter(s=>s.sc.length>0).length===0?<Empty icon="📋" title="No results yet" sub="Results appear once teachers enter marks."/>:(
         <div className="m1col" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
           {sd.filter(s=>s.sc.length>0).map(s=>(
@@ -11892,9 +11959,12 @@ service cloud.firestore {
     // Parent complaints / grievances — Director + VP + Office.
     match /complaints/{id} { allow read, write: if isAny(['admin','vp','office']); }
 
-    // Term-exam marks & report cards — staff read; only markers write
+    // Term-exam marks & report cards — only markers write.
+    // READ also allows parent/student so the portal can show EXAM results next to class tests (it previously
+    // showed class tests only, because the tests collection is signedIn()-readable and this one was not).
+    // Same posture the app already uses for tests/attendance; the portal renders only the child's own marks.
     match /exams/{id} {
-      allow read: if isAny(['admin','vp','teacher','office']);
+      allow read: if signedIn();
       // Office does post-exam mark corrections after teachers — same write access as a marker.
       allow write: if isAny(['admin','vp','teacher','office']);
     }
@@ -17967,7 +18037,7 @@ function App(){
         {tab==="exams"&&(isAdmin||isTeacher||isOffice||user.role==="vp")&&<Exams user={user} studentsDB={studentsDB} examsDB={examsDB} attendanceDB={attendanceDB} dirDB={dirDB} academicRosterDB={academicRosterDB} examClasses={(isOffice||isAdmin||user.role==="vp")?SCHOOL.classes:getTeacherClasses(user)} reportsOnly={false}/>}
         {tab==="ai"&&isDirector&&<AIPanel testsDB={testsDB} studentsDB={studentsDB} topicsDB={topicsDB} dirDB={dirDB} feesDB={feesDB} attendanceDB={attendanceDB} usersDB={usersDB} academicRosterDB={academicRosterDB} examsDB={examsDB} canFees={canFees}/>}
         {tab==="admin"&&isAdmin&&<AdminPanel testsDB={testsDB} studentsDB={studentsDB} usersDB={usersDB} wrongDB={wrongDB}/>}
-        {tab==="parent"&&isParent&&<ParentView user={user} testsDB={testsDB} studentsDB={studentsDB} attendanceDB={attendanceDB} noticesDB={noticesDB}/>}
+        {tab==="parent"&&isParent&&<ParentView user={user} testsDB={testsDB} examsDB={examsDB} studentsDB={studentsDB} academicRosterDB={academicRosterDB} attendanceDB={attendanceDB} noticesDB={noticesDB}/>}
         {tab==="account"&&<AccountSettings user={user} usersDB={usersDB} onUpdate={handleUpdateUser}/> }
         {tab==="teacherlog"&&!isParent&&<TeacherLogPanel user={user}/>}
         {tab==="attendance"&&!isParent&&<Attendance user={user} attendanceDB={attendanceDB} studentsDB={studentsDB} usersDB={usersDB} academicRosterDB={academicRosterDB} dirDB={dirDB} calendarDB={calendarDB}/>}
