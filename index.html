@@ -13085,15 +13085,37 @@ function SecurityPanel({user,usersDB}){
 // Siblings share a mobile, so the SECOND and later child on the same number get "<mobile>-2", "-3"… assigned by
 // ascending admission no. so the answer never changes between runs.
 function __ppPhone(s){var d=String(_attPhone(s)||"").replace(/\D/g,"");if(d.length>10)d=d.slice(-10);return d.length===10?d:"";}
-function __ppDob(s){
-  var t=String((s&&s.dob)||"").trim();if(!t)return "";
-  var d,m,y,iso=t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-  if(iso){y=iso[1];m=iso[2];d=iso[3];}
-  else{var dmy=t.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/);if(!dmy)return "";d=dmy[1];m=dmy[2];y=dmy[3];}
-  d=String(d).padStart(2,"0");m=String(m).padStart(2,"0");
-  if(+m<1||+m>12||+d<1||+d>31||+y<1900||+y>2100)return "";
-  return d+m+y;   // 8 digits — clears Firebase Auth's 6-character minimum
+// Date of birth → DDMMYYYY. The Excel importer stores whatever the SHEET displayed (sheet_to_json raw:false),
+// so real records hold "2011-08-14", "14/08/2011", "14-Aug-11", "Aug 14, 2011" or even a raw Excel serial — and
+// the profile prints the string unparsed, which is why every child LOOKS like it has a date of birth.
+// Indian convention: when both leading numbers are ≤12 the first is the DAY.
+var __PP_MON={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,sept:9,oct:10,nov:11,dec:12};
+function __ppY(y){y=+y;if(y<100)y=(y<=(new Date().getFullYear()%100))?2000+y:1900+y;return y;}
+function __ppDobRaw(v){
+  var t=String(v==null?"":v).trim();if(!t)return "";
+  var d,m,y,mm;
+  // Excel serial (days since 1899-12-30) — a plain number in a plausible DOB range
+  if(/^\d{4,5}(\.\d+)?$/.test(t)){
+    var n=Math.floor(+t);
+    if(n>=3653&&n<=73050){var dt=new Date(Date.UTC(1899,11,30)+n*864e5);d=dt.getUTCDate();m=dt.getUTCMonth()+1;y=dt.getUTCFullYear();}
+    else return "";
+  }
+  // 14-Aug-2011 / 14 August 11 / Aug 14, 2011
+  else if((mm=t.match(/^(\d{1,2})[\s\-\/.]*([A-Za-z]{3,9})[\s\-\/.,]*(\d{2,4})$/))){d=+mm[1];m=__PP_MON[mm[2].toLowerCase().slice(0,4).replace(/[^a-z]/g,"").slice(0,4)]||__PP_MON[mm[2].toLowerCase().slice(0,3)];y=__ppY(mm[3]);}
+  else if((mm=t.match(/^([A-Za-z]{3,9})[\s\-\/.]*(\d{1,2})[\s\-\/.,]+(\d{2,4})$/))){m=__PP_MON[mm[1].toLowerCase().slice(0,3)];d=+mm[2];y=__ppY(mm[3]);}
+  // 2011-08-14 / 2011/08/14
+  else if((mm=t.match(/^(\d{4})[\-\/.](\d{1,2})[\-\/.](\d{1,2})/))){y=+mm[1];m=+mm[2];d=+mm[3];}
+  // 14/08/2011 · 14-8-11 · 8/14/2011 (US) — decide by which part cannot be a month
+  else if((mm=t.match(/^(\d{1,2})[\-\/.](\d{1,2})[\-\/.](\d{2,4})$/))){
+    var a=+mm[1],b=+mm[2];y=__ppY(mm[3]);
+    if(a>12&&b<=12){d=a;m=b;} else if(b>12&&a<=12){m=a;d=b;} else {d=a;m=b;}   // ambiguous → Indian d/m
+  }
+  else return "";
+  if(!d||!m||!y)return "";
+  if(m<1||m>12||d<1||d>31||y<1900||y>2100)return "";
+  return String(d).padStart(2,"0")+String(m).padStart(2,"0")+String(y);  // 8 digits — clears Auth's 6-char minimum
 }
+function __ppDob(s){return __ppDobRaw(s&&(s.dob||s.DOB||s.dateOfBirth||s.birthDate));}
 function BulkParentAccounts({dirDB,usersDB,accountsDB}){
   const isMob=useIsMobile();
   const CLS=useMemo(()=>allClassesFromDir(dirDB),[dirDB&&dirDB.data]);
@@ -13130,7 +13152,7 @@ function BulkParentAccounts({dirDB,usersDB,accountsDB}){
         if(!s||!s.name)return;
         if(String(s.status||"").toLowerCase()==="left")return;
         all.push({cls:lbl,name:s.name,section:s.section||"",adm:String(s.admNo||"").trim(),
-                  phone:__ppPhone(s),dob:__ppDob(s),father:s.father||""});
+                  phone:__ppPhone(s),dob:__ppDob(s),dobRaw:String((s.dob||s.DOB||"")).trim(),father:s.father||""});
       });
     });
     // deterministic sibling suffix: lowest admission no. on a shared mobile keeps the plain number
@@ -13274,7 +13296,7 @@ function BulkParentAccounts({dirDB,usersDB,accountsDB}){
                   <td style={td}>{r.cls}{r.section?" "+r.section:""}</td>
                   <td style={Object.assign({},td,{fontFamily:"var(--ss-font)"})}>{r.adm||"—"}</td>
                   <td style={Object.assign({},td,{fontFamily:"var(--ss-font)",fontWeight:600})}>{r.username||"—"}{r.siblingOf>1?<span title={r.siblingOf+" children share this mobile"} style={{marginLeft:6,fontSize:9.5,fontWeight:700,color:"var(--tx-blu)",background:"var(--bg-blu)",borderRadius:20,padding:"1px 6px"}}>sibling</span>:null}</td>
-                  <td style={Object.assign({},td,{fontFamily:"var(--ss-font)"})}>{r.dob||<span style={{color:"var(--tx-org2)"}}>no DOB</span>}</td>
+                  <td style={Object.assign({},td,{fontFamily:"var(--ss-font)"})}>{r.dob||<span style={{color:"var(--tx-org2)"}} title={r.dobRaw?"Stored in the record as: "+r.dobRaw:"No date of birth in the record"}>{r.dobRaw?"can't read “"+r.dobRaw+"”":"no DOB"}</span>}</td>
                   <td style={td}><span style={{background:c.bg,color:c.fg,borderRadius:20,padding:"2px 9px",fontSize:10.5,fontWeight:700,whiteSpace:"nowrap"}}>{c.t}</span></td>
                 </tr>
               );})}
