@@ -8385,6 +8385,7 @@ th{background:#0d1b2a;color:#fff;font-weight:600}td.l{text-align:left;font-weigh
 // ── PARENT VIEW ──
 function ParentView({user,testsDB,studentsDB,attendanceDB,noticesDB}){
   const{student,cls}=user;
+  const[pvView,setPvView]=useState("home");   // parents had no route to ChangePassword — bulk logins need one
   const students=studentsDB.data[safeId(cls)]?.list||[];
   const _secMap=((studentsDB.data[safeId(cls)]||{}).sections)||{},_mySec=_secMap[student]||""; // roll = A–Z within section
   const rollNo=students.filter(n=>(_secMap[n]||"")===_mySec).sort((a,b)=>String(a).localeCompare(String(b))).indexOf(student)+1;
@@ -8432,8 +8433,20 @@ function ParentView({user,testsDB,studentsDB,attendanceDB,noticesDB}){
   const card={background:"var(--c-fff)",border:"1px solid var(--ap-line)",borderRadius:16,padding:"18px 20px"};
   const payInp={width:"100%",padding:"9px 11px",borderRadius:9,border:"1px solid var(--ap-line)",fontSize:13,boxSizing:"border-box",fontFamily:"var(--ss-font)",background:"var(--c-f7)",color:"var(--ap-ink)",marginTop:6};
   if(testsDB.loading)return<Spinner/>;
+  if(pvView==="password")return <ChangePassword user={user} onBack={()=>setPvView("home")}/>;
   return(
     <div className="fi" style={{maxWidth:660,margin:"0 auto",display:"flex",flexDirection:"column",gap:14}}>
+      {/* Bulk-created logins start with the mobile number as the password — prompt until it is changed. */}
+      {user.pwdTemp&&(
+        <div onClick={()=>setPvView("password")} style={{display:"flex",alignItems:"center",gap:12,background:"var(--bg-amb)",border:"1px solid var(--bd-amb)",borderRadius:14,padding:"12px 16px",cursor:"pointer"}}>
+          <span style={{fontSize:19}}>🔒</span>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:13.5,fontWeight:700,color:"var(--tx-org2)"}}>Please change your password</div>
+            <div style={{fontSize:12,color:"var(--ap-muted)",marginTop:1}}>Your login still uses your child's date of birth. Tap to set a private password.</div>
+          </div>
+          <span style={{fontSize:12.5,fontWeight:700,color:"var(--tx-org2)",whiteSpace:"nowrap"}}>Change →</span>
+        </div>
+      )}
       {/* hero */}
       <div style={{background:"linear-gradient(135deg,#0d1b2a,#1a2e45)",borderRadius:18,padding:"22px 24px",color:"#fff"}}>
         <div style={{fontSize:10.5,color:"#d9b75a",letterSpacing:1.5,textTransform:"uppercase",fontWeight:700}}>Parent portal</div>
@@ -13060,6 +13073,219 @@ function SecurityPanel({user,usersDB}){
   );
 }
 
+// ── Bulk parent logins (pilot onboarding) ───────────────────────────────────────────────────────────────────
+// Creates several parent accounts in one pass, straight from Student Records. The LINK to the child is the
+// admission no. (accounts.admNo) — exactly what the single "Add Parent" form writes and what the fees/attendance
+// rules key on. A row is only creatable when we can resolve BOTH an admission no. and a usable phone, so a login
+// that would show the parent nothing is never created.
+// CREDENTIALS — both halves are things the parent ALREADY KNOWS, so nothing has to be memorised and a lost slip
+// does not lock them out: username = their 10-digit mobile, password = the child's date of birth as DDMMYYYY.
+// (A phone-number login screen is impossible here: the users rule only lets someone read their own profile AFTER
+// signing in, and a public phone→child lookup would leak data — so the username itself has to be the phone.)
+// Siblings share a mobile, so the SECOND and later child on the same number get "<mobile>-2", "-3"… assigned by
+// ascending admission no. so the answer never changes between runs.
+function __ppPhone(s){var d=String(_attPhone(s)||"").replace(/\D/g,"");if(d.length>10)d=d.slice(-10);return d.length===10?d:"";}
+function __ppDob(s){
+  var t=String((s&&s.dob)||"").trim();if(!t)return "";
+  var d,m,y,iso=t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if(iso){y=iso[1];m=iso[2];d=iso[3];}
+  else{var dmy=t.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/);if(!dmy)return "";d=dmy[1];m=dmy[2];y=dmy[3];}
+  d=String(d).padStart(2,"0");m=String(m).padStart(2,"0");
+  if(+m<1||+m>12||+d<1||+d>31||+y<1900||+y>2100)return "";
+  return d+m+y;   // 8 digits — clears Firebase Auth's 6-character minimum
+}
+function BulkParentAccounts({dirDB,usersDB,accountsDB}){
+  const isMob=useIsMobile();
+  const CLS=useMemo(()=>allClassesFromDir(dirDB),[dirDB&&dirDB.data]);
+  const[cls,setCls]=useState("");                       // "" = every class
+  const[perClass,setPerClass]=useState(3);              // pilot: a few per class
+  const[sel,setSel]=useState({});
+  const[busy,setBusy]=useState(false);
+  const[prog,setProg]=useState("");
+  const[done,setDone]=useState(null);
+  const __br=useBranch();
+
+  // Existing parent logins, keyed by the child's admission no., so we never offer a duplicate.
+  const haveByAdm=useMemo(function(){
+    var m={};
+    Object.values(_branchUsers((usersDB&&usersDB.data)||{},__br)).forEach(function(u){if(u&&u.role==="parent"&&(u.admNo||u.childAdmNo))m[String(u.admNo||u.childAdmNo)]=u.username||true;});
+    Object.values((accountsDB&&accountsDB.data)||{}).forEach(function(a){if(a&&a.role==="parent"&&a.admNo)m[String(a.admNo)]=a.username||true;});
+    return m;
+  },[usersDB&&usersDB.data,accountsDB&&accountsDB.data,__br]);
+  const takenUser=useMemo(function(){
+    var m={};Object.keys((usersDB&&usersDB.data)||{}).forEach(function(k){m[String(k).toLowerCase()]=1;});
+    Object.values((accountsDB&&accountsDB.data)||{}).forEach(function(a){if(a&&a.username)m[String(a.username).toLowerCase()]=1;});
+    return m;
+  },[usersDB&&usersDB.data,accountsDB&&accountsDB.data]);
+
+  // One row per ACTIVE student in the directory, with the exact reason it can or cannot be onboarded.
+  // Sibling usernames are resolved across the WHOLE school (not the filtered class) so the suffix a child gets
+  // never changes just because the class filter changed.
+  const rows=useMemo(function(){
+    var all=[];
+    Object.keys((dirDB&&dirDB.data)||{}).forEach(function(k){
+      if(k.indexOf("dir_")!==0)return;
+      var lbl=__clsTokLabel(k.slice(4));
+      (((dirDB.data[k]||{}).students)||[]).forEach(function(s){
+        if(!s||!s.name)return;
+        if(String(s.status||"").toLowerCase()==="left")return;
+        all.push({cls:lbl,name:s.name,section:s.section||"",adm:String(s.admNo||"").trim(),
+                  phone:__ppPhone(s),dob:__ppDob(s),father:s.father||""});
+      });
+    });
+    // deterministic sibling suffix: lowest admission no. on a shared mobile keeps the plain number
+    var byPhone={};
+    all.forEach(function(r){if(r.phone)(byPhone[r.phone]=byPhone[r.phone]||[]).push(r);});
+    Object.keys(byPhone).forEach(function(p){
+      var g=byPhone[p].slice().sort(function(a,b){return (Number(a.adm)||1e12)-(Number(b.adm)||1e12)||String(a.adm).localeCompare(String(b.adm));});
+      g.forEach(function(r,ix){r.username=ix===0?p:(p+"-"+(ix+1));r.siblingOf=g.length>1?g.length:0;});
+    });
+    var out=all.filter(function(r){return !cls||r.cls===cls;});
+    out.forEach(function(r){
+      r.status = !r.adm ? "no-adm"
+        : haveByAdm[r.adm] ? "exists"
+        : !r.phone ? "no-phone"
+        : !r.dob ? "no-dob"
+        : takenUser[String(r.username||"").toLowerCase()] ? "user-taken"
+        : "ready";
+    });
+    out.sort(function(a,b){return __clsNum(a.cls)-__clsNum(b.cls)||String(a.name).localeCompare(String(b.name));});
+    return out;
+  },[dirDB&&dirDB.data,cls,haveByAdm,takenUser]);
+
+  const ready=useMemo(function(){return rows.filter(function(r){return r.status==="ready";});},[rows]);
+  const counts=useMemo(function(){var c={ready:0,exists:0,"no-phone":0,"no-dob":0,"no-adm":0,"user-taken":0};rows.forEach(function(r){c[r.status]=(c[r.status]||0)+1;});return c;},[rows]);
+  const selected=useMemo(function(){return ready.filter(function(r){return sel[r.adm];});},[ready,sel]);
+
+  function pickPerClass(){
+    var byCls={},next={};
+    ready.forEach(function(r){var n=(byCls[r.cls]=(byCls[r.cls]||0));if(n<perClass){next[r.adm]=true;byCls[r.cls]=n+1;}});
+    setSel(next);
+  }
+  function clearSel(){setSel({});}
+
+  async function createAll(){
+    if(busy||!selected.length)return;
+    if(!window.__authCreateOrGetUid){setProg("Not connected to the login service.");return;}
+    if(!await window.__confirm({title:"Create "+selected.length+" parent login"+(selected.length===1?"":"s")+"?",
+      body:"Username is the parent's mobile number; the password is the child's date of birth as DDMMYYYY. Each login is tied to that child's admission number and shows only that child. Parents are asked to change the password when they first sign in.",
+      confirmText:"Create logins"}))return;
+    setBusy(true);setDone(null);
+    var ok=[],fail=[];
+    for(var i=0;i<selected.length;i++){
+      var r=selected[i];
+      setProg("Creating "+(i+1)+" of "+selected.length+" — "+r.name+"…");
+      try{
+        var email=AUTH_EMAIL(r.username);
+        var uid=await window.__authCreateOrGetUid(email,r.dob);   // DDMMYYYY
+        var payload={username:r.username,role:"parent",name:"Parent of "+r.name,student:r.name,cls:r.cls,admNo:r.adm,
+                     pwdTemp:true,branches:[__br||"greencity"],createdAt:new Date().toISOString()};
+        await window.__fbSetDoc(window.__fbDoc(window.__db,"accounts",uid),Object.assign({},payload,{email:email}));
+        await usersDB.set(r.username,{username:r.username,role:"parent",name:payload.name,student:r.name,cls:r.cls,admNo:r.adm,pwdTemp:true,branches:payload.branches});
+        ok.push(r);
+      }catch(e){
+        var c=(e&&(e.code||e.message))||"error";
+        fail.push(Object.assign({},r,{why:c.indexOf("email-already-in-use")>=0?"username already has a login":c}));
+      }
+    }
+    try{logAudit("bulk-create-parents","accounts",String(ok.length)+" created",null,{created:ok.length,failed:fail.length});}catch(e){}
+    setBusy(false);setProg("");setDone({ok:ok,fail:fail});setSel({});
+  }
+
+  // A printable slip per family — hand this out; it carries the login and how to change the password.
+  function printSlips(list){
+    var w=window.open("","_blank");if(!w)return;
+    var esc=function(x){return String(x==null?"":x).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");};
+    var cards=list.map(function(r){return '<div class="s"><div class="h">'+esc(SCHOOL_NAME)+'</div>'+
+      '<div class="b">'+esc(BRANCH_LABEL)+' &middot; Parent Portal</div>'+
+      '<table><tr><td>Student</td><th>'+esc(r.name)+' ('+esc(r.cls)+(r.section?" "+esc(r.section):"")+')</th></tr>'+
+      '<tr><td>Admission no.</td><th>'+esc(r.adm)+'</th></tr>'+
+      '<tr><td>Website</td><th>ssic1.vercel.app</th></tr>'+
+      '<tr><td>Username</td><th class="m">'+esc(r.username)+'</th></tr>'+
+      '<tr><td>Password</td><th class="m">'+esc(r.dob)+'</th></tr></table>'+
+      '<div class="n"><b>Username</b> is your registered mobile number'+(r.siblingOf>1?' (with &ndash;'+esc(String(r.username).split("-")[1]||"")+' because more than one child is registered on this number)':'')+
+      '. <b>Password</b> is your child\'s date of birth written as DDMMYYYY &mdash; '+esc(r.dob)+'. Please change the password after signing in the first time. You can see only your own child\'s attendance, marks and fees.</div></div>';}).join("");
+    w.document.write('<!DOCTYPE html><html><head><title>Parent portal logins</title><style>'+
+      'body{font-family:Arial,sans-serif;margin:14px}.s{border:1px solid #999;border-radius:8px;padding:12px 14px;margin:0 0 10px;page-break-inside:avoid;max-width:520px}'+
+      '.h{font-weight:700;font-size:15px}.b{font-size:11px;color:#555;margin-bottom:8px}'+
+      'table{width:100%;border-collapse:collapse;font-size:13px}td{color:#555;padding:3px 0;width:38%}th{text-align:left;padding:3px 0}'+
+      '.m{font-family:monospace;font-size:15px;letter-spacing:.5px}.n{font-size:10.5px;color:#555;margin-top:8px;line-height:1.45}'+
+      '</style></head><body>'+cards+'</body></html>');
+    w.document.close();w.print();
+  }
+  function copyList(list){
+    var t=list.map(function(r){return [r.name,r.cls+(r.section?" "+r.section:""),r.adm,r.username,r.dob].join("\t");}).join("\n");
+    try{navigator.clipboard.writeText("Student\tClass\tAdmission\tUsername (mobile)\tPassword (DOB)\n"+t);if(window.__toast)window.__toast("Copied "+list.length+" login"+(list.length===1?"":"s")+" to the clipboard","ok");}catch(e){}
+  }
+
+  var CH={ready:{t:"Ready",bg:"var(--bg-grn)",fg:"var(--tx-grn2)"},exists:{t:"Has login",bg:"var(--c-f0)",fg:"var(--ap-muted)"},
+          "no-phone":{t:"No mobile on record",bg:"var(--bg-amb)",fg:"var(--tx-org2)"},
+          "no-dob":{t:"No date of birth",bg:"var(--bg-amb)",fg:"var(--tx-org2)"},
+          "no-adm":{t:"No admission no.",bg:"var(--bg-red)",fg:"var(--tx-red)"},
+          "user-taken":{t:"Username in use",bg:"var(--bg-amb)",fg:"var(--tx-org2)"}};
+  var th={textAlign:"left",padding:"8px 10px",fontSize:10.5,fontWeight:800,letterSpacing:.5,textTransform:"uppercase",color:"var(--ap-muted)",borderBottom:"1px solid var(--ap-line)",whiteSpace:"nowrap"};
+  var td={padding:"8px 10px",fontSize:12.5,borderBottom:"1px solid var(--c-f0)",color:"var(--ap-ink)"};
+
+  return(
+    <div className="ap-panel" style={{marginTop:18,overflow:"hidden"}}>
+      <div style={{padding:"14px 18px",borderBottom:"1px solid var(--ap-line)"}}>
+        <div style={{fontWeight:700,fontSize:14.5,color:"var(--ap-ink)"}}>Bulk parent logins — pilot onboarding</div>
+        <div style={{fontSize:12,color:"var(--ap-muted)",marginTop:2}}>Creates logins straight from Student Records. Username = <b>the parent's mobile</b>, password = <b>the child's date of birth (DDMMYYYY)</b> — both already known to the parent. Each login is tied to the child's admission number.</div>
+      </div>
+
+      <div style={{padding:"12px 18px",display:"flex",gap:12,alignItems:"flex-end",flexWrap:"wrap",background:"var(--c-f7)",borderBottom:"1px solid var(--ap-line)"}}>
+        <div style={{minWidth:150}}><Lbl c="Class"/><Sel value={cls} onChange={setCls} options={[{v:"",l:"All classes"}].concat(CLS.map(function(c){return{v:c,l:c};}))}/></div>
+        <div style={{width:120}}><Lbl c="Per class"/><input type="number" min={1} max={20} value={perClass} onChange={function(e){setPerClass(Math.max(1,Number(e.target.value)||1));}} className="ss-input" style={{width:"100%",padding:"9px 11px",borderRadius:9,border:"1px solid var(--c-d2)",fontSize:13}}/></div>
+        <Btn v="ghost" onClick={pickPerClass}>Select {perClass} per class</Btn>
+        {Object.keys(sel).length>0&&<Btn v="ghost" onClick={clearSel}>Clear</Btn>}
+        <div style={{marginLeft:"auto",display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+          <span style={{fontSize:12,color:"var(--ap-muted)"}}><b style={{color:"var(--tx-grn2)"}}>{counts.ready}</b> ready · {counts.exists} have a login · {counts["no-phone"]} no mobile · {counts["no-dob"]} no DOB{counts["no-adm"]?" · "+counts["no-adm"]+" no adm no.":""}</span>
+          <Btn onClick={createAll} disabled={busy||!selected.length}>{busy?"Creating…":"Create "+selected.length+" login"+(selected.length===1?"":"s")}</Btn>
+        </div>
+      </div>
+      {prog&&<div style={{padding:"9px 18px",fontSize:12.5,fontWeight:600,color:"var(--ap-accent)",background:"var(--bg-blu)"}}>{prog}</div>}
+
+      {done&&(
+        <div style={{padding:"12px 18px",borderBottom:"1px solid var(--ap-line)",background:"var(--bg-grn)"}}>
+          <div style={{fontSize:13,fontWeight:700,color:"var(--tx-grn2)"}}>✓ Created {done.ok.length} login{done.ok.length===1?"":"s"}{done.fail.length?" · "+done.fail.length+" failed":""}</div>
+          {done.ok.length>0&&<div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>
+            <Btn v="ghost" onClick={function(){printSlips(done.ok);}}>Print slips for parents</Btn>
+            <Btn v="ghost" onClick={function(){copyList(done.ok);}}>Copy as list</Btn>
+          </div>}
+          {done.fail.map(function(f,i){return <div key={i} style={{fontSize:12,color:"var(--tx-red)",marginTop:4}}>{f.name} ({f.cls}) — {f.why}</div>;})}
+        </div>
+      )}
+
+      <div className="mscroll" style={{maxHeight:430,overflowY:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",minWidth:isMob?600:0}}>
+          <thead><tr>
+            <th style={Object.assign({},th,{width:34})}></th>
+            <th style={th}>Student</th><th style={th}>Class</th><th style={th}>Adm no.</th>
+            <th style={th}>Username (mobile)</th><th style={th}>Password (DOB)</th><th style={th}>Status</th>
+          </tr></thead>
+          <tbody>
+            {rows.length===0&&<tr><td colSpan={7} style={{padding:26,textAlign:"center",color:"var(--ap-muted)",fontSize:13}}>No students found for this class.</td></tr>}
+            {rows.slice(0,400).map(function(r,i){
+              var c=CH[r.status]||CH.ready, can=r.status==="ready";
+              return(
+                <tr key={r.adm+"_"+i} style={{opacity:can?1:.62}}>
+                  <td style={td}>{can?<input type="checkbox" checked={!!sel[r.adm]} onChange={function(e){var v=e.target.checked;setSel(function(m){var x=Object.assign({},m);if(v)x[r.adm]=true;else delete x[r.adm];return x;});}} style={{width:16,height:16,cursor:"pointer"}}/>:null}</td>
+                  <td style={td}><div style={{fontWeight:600}}>{r.name}</div>{r.father?<div style={{fontSize:11,color:"var(--ap-muted)"}}>{r.father}</div>:null}</td>
+                  <td style={td}>{r.cls}{r.section?" "+r.section:""}</td>
+                  <td style={Object.assign({},td,{fontFamily:"var(--ss-font)"})}>{r.adm||"—"}</td>
+                  <td style={Object.assign({},td,{fontFamily:"var(--ss-font)",fontWeight:600})}>{r.username||"—"}{r.siblingOf>1?<span title={r.siblingOf+" children share this mobile"} style={{marginLeft:6,fontSize:9.5,fontWeight:700,color:"var(--tx-blu)",background:"var(--bg-blu)",borderRadius:20,padding:"1px 6px"}}>sibling</span>:null}</td>
+                  <td style={Object.assign({},td,{fontFamily:"var(--ss-font)"})}>{r.dob||<span style={{color:"var(--tx-org2)"}}>no DOB</span>}</td>
+                  <td style={td}><span style={{background:c.bg,color:c.fg,borderRadius:20,padding:"2px 9px",fontSize:10.5,fontWeight:700,whiteSpace:"nowrap"}}>{c.t}</span></td>
+                </tr>
+              );})}
+          </tbody>
+        </table>
+      </div>
+      {rows.length>400&&<div style={{padding:"8px 18px",fontSize:11.5,color:"var(--ap-muted)"}}>Showing the first 400 of {rows.length} — narrow by class to see the rest.</div>}
+    </div>
+  );
+}
+
 function AdminPanel({testsDB,studentsDB,usersDB,wrongDB}){
   const logsDB=useFirestore("loginLogs");
   const[activeTab,setActiveTab]=useState("tests");
@@ -13235,6 +13461,7 @@ function AdminPanel({testsDB,studentsDB,usersDB,wrongDB}){
             <Btn v="ghost" onClick={repairParentLinks} title="Older parent accounts were created without the child's admission number, so their fee view and UPI reporting are blocked. This looks each child up in Student Records and links them.">Repair fee links for existing parents</Btn>
           </div>
           {fixParentsMsg&&<div style={{fontSize:12,color:fixParentsMsg.startsWith("✓")?"var(--tx-grn2)":"var(--tx-org2)",marginTop:10}}>{fixParentsMsg}</div>}
+          <BulkParentAccounts dirDB={dirDB} usersDB={usersDB} accountsDB={accountsDB}/>
           {Object.entries(_branchUsers(usersDB.data,(typeof window!=="undefined"&&window.__currentBranch)||"greencity")).filter(([,u])=>u.role==="parent").length>0&&(
             <div style={{marginTop:20}}>
               <Lbl c="Existing Parent Accounts"/>
