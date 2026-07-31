@@ -8391,6 +8391,7 @@ th{background:#0d1b2a;color:#fff;font-weight:600}td.l{text-align:left;font-weigh
 function ParentView({user,testsDB,examsDB,studentsDB,academicRosterDB,attendanceDB,noticesDB}){
   const{student,cls}=user;
   const[pvView,setPvView]=useState("home");   // parents had no route to ChangePassword — bulk logins need one
+  const[hwDay,setHwDay]=useState("");         // homework is shown ONE day at a time ("" = today / latest with work)
   const students=studentsDB.data[safeId(cls)]?.list||[];
   const _secMap=((studentsDB.data[safeId(cls)]||{}).sections)||{};
   // Section by ADMISSION NO. from the roster first — the name-keyed cache is blank for many children and
@@ -8432,8 +8433,11 @@ function ParentView({user,testsDB,examsDB,studentsDB,academicRosterDB,attendance
     try{
       const d7=new Date(Date.now()-7*864e5).toLocaleDateString("en-CA",{timeZone:"Asia/Kolkata"});
       const snap=await window.__fbGetDocs(window.__fbQuery(window.__fbCollection(window.__db,"teacherLogs"),window.__fbWhere("date",">=",d7)));
+      const _myCls=String(__clsNum(cls)||"");
+      if(!_myCls){if(!cancel)setHwFeed([]);return;}   // account has no resolvable class → show NOTHING, never everything
       const mine=[];snap.forEach(dc=>{const l=dc.data();if(!l||!(l.topic||l.hw))return;
-        if(String(__clsNum(l.class))!==String(__clsNum(cls)))return; // canonical token match — logs store "10", accounts store "Class 10"
+        const _lc=String(__clsNum(l.class)||"");
+        if(!_lc||_lc!==_myCls)return; // canonical token match — logs store "10", accounts store "Class 10"
         const sec=String(l.section||"").toUpperCase().trim(),ms=String(_mySec||"").toUpperCase().trim();
         // Once we know the child's section, a log for ANOTHER section is not their homework. (Previously a blank
         // section on either side fell through and showed every section's work, which read as "completely wrong".)
@@ -8505,9 +8509,20 @@ function ParentView({user,testsDB,examsDB,studentsDB,academicRosterDB,attendance
         const days=Object.keys(groups).sort((a,b)=>b.localeCompare(a));
         const _td=today();const _yd=new Date(Date.now()-864e5).toLocaleDateString("en-CA",{timeZone:"Asia/Kolkata"});
         const dLbl=d=>d===_td?"Today":d===_yd?"Yesterday":new Date(d+"T00:00:00").toLocaleDateString("en-IN",{weekday:"short",day:"numeric",month:"short"});
+        // ONE DAY at a time — the 7-day pile made it impossible to tell what was set today. Defaults to today
+        // when there is work for today, else the most recent day that has any.
+        const pick=(hwDay&&groups[hwDay])?hwDay:(groups[_td]?_td:days[0]);
         return <div id="pv-hw" style={card}>
-          <div style={{fontSize:11,fontWeight:700,letterSpacing:.6,textTransform:"uppercase",color:"var(--c-64)",marginBottom:2}}>Homework &amp; classwork <span style={{fontWeight:600,textTransform:"none",letterSpacing:0,color:"var(--ap-faint)"}}>· last 7 days</span></div>
-          {days.map(d=>(
+          <div style={{fontSize:11,fontWeight:700,letterSpacing:.6,textTransform:"uppercase",color:"var(--c-64)",marginBottom:8}}>Homework &amp; classwork <span style={{fontWeight:600,textTransform:"none",letterSpacing:0,color:"var(--ap-faint)"}}>· {cls}{_mySec?" "+_mySec:""}</span></div>
+          <div className="mwrap" style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:4}}>
+            {days.map(d=>{const on=d===pick;return(
+              <button key={d} onClick={()=>setHwDay(d)} className="ss-press"
+                style={{border:"1px solid "+(on?"var(--ap-accent)":"var(--ap-line)"),background:on?"var(--ap-accent)":"var(--c-fff)",color:on?"#fff":"var(--ap-ink2)",
+                        borderRadius:20,padding:"5px 12px",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)",whiteSpace:"nowrap"}}>
+                {dLbl(d)} <span style={{opacity:.75,fontWeight:600}}>({groups[d].length})</span>
+              </button>);})}
+          </div>
+          {[pick].filter(d=>groups[d]).map(d=>(
             <div key={d} style={{padding:"10px 0 4px"}}>
               <div style={{fontSize:11.5,fontWeight:800,color:"var(--ap-ink)",marginBottom:6}}>{dLbl(d)}</div>
               {groups[d].map((l,i)=>(
@@ -8561,7 +8576,9 @@ function ParentView({user,testsDB,examsDB,studentsDB,academicRosterDB,attendance
            collection was staff-read-only. Marks resolve admission-no-first via the shared __examMarkOf helper. */}
       {(()=>{
         const rows=Object.values((examsDB&&examsDB.data)||{})
-          .filter(ex=>ex&&ex.cls===cls&&Array.isArray(ex.subjects)&&ex.subjects.length)
+          /* canonical class match — exam docs store "Class 10" while an account may carry "10"/"X"; an exact
+             string compare silently matched nothing and looked like "exams don't work". */
+          .filter(ex=>ex&&ex.cls&&String(__clsNum(ex.cls))===String(__clsNum(cls))&&Array.isArray(ex.subjects)&&ex.subjects.length)
           .map(ex=>{
             let obt=0,max=0,any=false;const subs=[];
             ex.subjects.forEach(s=>{
@@ -15714,7 +15731,7 @@ function MyDailyLog({user,tlStyle}){
     }
   },[user.subjects]);
 
-  const[rows,setRows]=useState(()=>{const raw=(user.assignedClasses&&user.assignedClasses[0]);const a=raw?(typeof raw==="string"?{cls:raw.split("-")[0],section:raw.split("-").slice(1).join("-")}:raw):null;return [{id:0,period:"1",cls:a?a.cls:"10",section:a?a.section:"A",chapno:"",topic:"",hw:""}];});
+  const[rows,setRows]=useState(()=>{const raw=(user.assignedClasses&&user.assignedClasses[0]);const a=raw?(typeof raw==="string"?{cls:raw.split("-")[0],section:raw.split("-").slice(1).join("-")}:raw):null;return [{id:0,period:"1",cls:a?a.cls:"10",section:a?a.section:"A",subject:"",chapno:"",topic:"",hw:""}];});
   const[saving,setSaving]=useState(false);
   const[msg,setMsg]=useState("");
   const[myEntries,setMyEntries]=useState([]);
@@ -15740,7 +15757,7 @@ function MyDailyLog({user,tlStyle}){
     return()=>{ window.removeEventListener("branchchange",onBranch); if(unsub)unsub();};
   },[user.username]);
 
-  const addRow=()=>setRows(r=>{const raw=(user.assignedClasses&&user.assignedClasses[0]);const a=raw?(typeof raw==="string"?{cls:raw.split("-")[0],section:raw.split("-").slice(1).join("-")}:raw):null;return [...r,{id:Date.now(),period:String(r.length+1),cls:a?a.cls:"10",section:a?a.section:"A",chapno:"",topic:"",hw:""}];});
+  const addRow=()=>setRows(r=>{const raw=(user.assignedClasses&&user.assignedClasses[0]);const a=raw?(typeof raw==="string"?{cls:raw.split("-")[0],section:raw.split("-").slice(1).join("-")}:raw):null;return [...r,{id:Date.now(),period:String(r.length+1),cls:a?a.cls:"10",section:a?a.section:"A",subject:"",chapno:"",topic:"",hw:""}];});
   const removeRow=(id)=>setRows(r=>r.filter(x=>x.id!==id));
   const updateRow=(id,field,val)=>setRows(r=>r.map(x=>x.id===id?{...x,[field]:val}:x));
 
@@ -15754,13 +15771,13 @@ function MyDailyLog({user,tlStyle}){
         const key="tl_"+Date.now()+"_"+r.id+"_"+(Math.random()*9999|0);
         await window.__fbSetDoc(window.__fbDoc(window.__db,"teacherLogs",key),{
           teacherId:user.username,teacherName:user.name,
-          date,subject,period:r.period,class:r.cls,section:r.section,
+          date,subject:(r.subject||subject),period:r.period,class:r.cls,section:r.section,
           chapterNo:r.chapno,topic:r.topic,hw:r.hw,
           submittedAt:new Date().toISOString()
         });
       }
       setMsg(`✓ ${valid.length} period(s) saved!`);
-      setRows(()=>{const raw=(user.assignedClasses&&user.assignedClasses[0]);const a=raw?(typeof raw==="string"?{cls:raw.split("-")[0],section:raw.split("-").slice(1).join("-")}:raw):null;return [{id:0,period:"1",cls:a?a.cls:"10",section:a?a.section:"A",chapno:"",topic:"",hw:""}];});
+      setRows(()=>{const raw=(user.assignedClasses&&user.assignedClasses[0]);const a=raw?(typeof raw==="string"?{cls:raw.split("-")[0],section:raw.split("-").slice(1).join("-")}:raw):null;return [{id:0,period:"1",cls:a?a.cls:"10",section:a?a.section:"A",subject:"",chapno:"",topic:"",hw:""}];});
     }catch(e){setMsg("Error: "+e.message);}
     setSaving(false);
   };
@@ -15794,6 +15811,15 @@ function MyDailyLog({user,tlStyle}){
                     {[1,2,3,4,5,6,7,8].map(n=><option key={n}>{n}</option>)}
                   </select>
                 </div>
+                {/* Subject is PER PERIOD. It used to be one dropdown for the whole form, so a teacher logging
+                    several periods at once stamped every row with the same subject — that is how Science
+                    homework reached parents labelled "Mathematics". Blank = the form's subject above. */}
+                {!free&&<div><label style={tlStyle.label}>Subject</label>
+                  <select value={r.subject||""} onChange={e=>updateRow(r.id,"subject",e.target.value)} style={tlStyle.select}>
+                    <option value="">{subject} (default)</option>
+                    {assignedSubjects.filter(s=>s!==subject).map(s=><option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>}
                 <div><label style={tlStyle.label}>Class</label>
                   <select value={r.cls} onChange={e=>{const v=e.target.value;updateRow(r.id,"cls",v);if(v==="Staffroom"){updateRow(r.id,"section","");updateRow(r.id,"chapno","");updateRow(r.id,"hw","");}else{updateRow(r.id,"section",(TL_CLASSES[v]||["A"])[0]);}}} style={tlStyle.select}>
                     {Object.keys(TL_CLASSES).map(c=><option key={c} value={c}>Class {c}</option>)}
