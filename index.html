@@ -2269,7 +2269,7 @@ function PrincipalDashboard({user,attendanceDB,staffAttDB,leaveDB,disciplineDB,c
   const openLog=(t)=>{setLf(t==="discipline"?{cls:"",severity:"Minor",type:"Behaviour",date:td}:{category:"Teaching",date:td});setLogType(t);};
   const saveLog=async()=>{
     try{
-      if(logType==="discipline"){if(!String(lf.student||"").trim())return;await disciplineDB.set("disc_"+Date.now()+Math.random().toString(36).slice(2,6),{student:String(lf.student).trim(),cls:lf.cls||"",type:lf.type||"Other",severity:lf.severity||"Minor",note:String(lf.note||"").trim(),date:lf.date||td,status:"open",by:user.name,at:new Date().toISOString()});}
+      if(logType==="discipline"){if(!String(lf.student||"").trim())return;await disciplineDB.set("disc_"+Date.now()+Math.random().toString(36).slice(2,6),{student:String(lf.student).trim(),cls:lf.cls||"",type:lf.type||"Other",severity:lf.severity||"Minor",note:__discTidy(lf.note),date:lf.date||td,status:"open",by:user.name,at:new Date().toISOString()});}
       else{if(!String(lf.from||"").trim()&&!String(lf.about||"").trim())return;await complaintsDB.set("cmp_"+Date.now()+Math.random().toString(36).slice(2,6),{from:String(lf.from||"").trim(),about:String(lf.about||"").trim(),category:lf.category||"Other",note:String(lf.note||"").trim(),date:lf.date||td,status:"open",by:user.name,at:new Date().toISOString()});}
       setLogType(null);
     }catch(e){alert("Could not save — "+((e&&e.message)||"check the discipline/complaints rules are published in Security."));}
@@ -2444,7 +2444,7 @@ function PrincipalDashboard({user,attendanceDB,staffAttDB,leaveDB,disciplineDB,c
                 <div style={{flex:1}}><Lbl c="Severity"/><Sel value={lf.severity||"Minor"} onChange={v=>setLf(Object.assign({},lf,{severity:v}))} options={["Minor","Major"]}/></div>
                 <div style={{flex:1}}><Lbl c="Date"/><input type="date" value={lf.date||td} onChange={e=>setLf(Object.assign({},lf,{date:e.target.value}))} className="ss-input" style={{width:"100%",padding:"9px 12px",borderRadius:9,fontSize:13.5}}/></div>
               </div>
-              <div><Lbl c="Note"/><input value={lf.note||""} onChange={e=>setLf(Object.assign({},lf,{note:e.target.value}))} placeholder="What happened…" className="ss-input" style={{width:"100%",padding:"9px 12px",borderRadius:9,fontSize:13.5}}/></div>
+              <div><Lbl c="Note"/><input value={lf.note||""} onChange={e=>setLf(Object.assign({},lf,{note:e.target.value}))} onBlur={e=>setLf(Object.assign({},lf,{note:__discTidy(e.target.value)}))} spellCheck={true} lang="en-IN" placeholder="What happened…" className="ss-input" style={{width:"100%",padding:"9px 12px",borderRadius:9,fontSize:13.5}}/></div>
             </>:<>
               <div><Lbl c="From (parent / complainant)"/><input value={lf.from||""} onChange={e=>setLf(Object.assign({},lf,{from:e.target.value}))} placeholder="Parent / guardian name" className="ss-input" style={{width:"100%",padding:"9px 12px",borderRadius:9,fontSize:13.5}}/></div>
               <div style={{display:"flex",gap:10}}>
@@ -3641,12 +3641,102 @@ function Registration({user, registrationsDB, setTab}){
 // Any staff member can log a behaviour incident against any student in the active branch. Writes to the
 // branch-scoped `discipline` collection (same shape as the Principal log) → shows on the student's 360 + the
 // principal/director discipline lists. `students` = [{name,cls,section,admNo}] from the academic roster.
+// Ready-made, parent-appropriate sentences per incident type. A discipline note becomes a permanent record AND
+// the text a parent is sent, so teachers tap a clean factual phrase instead of typing one under time pressure.
+// Wording is deliberately neutral and observational — describes what happened, never labels the child.
+var DISC_PHRASES={
+  "Behaviour":["Did not follow the teacher's instructions in class.","Spoke rudely to a teacher.","Used inappropriate language with classmates.","Left the classroom without permission.","Was found outside the classroom during a lesson."],
+  "Bullying / fighting":["Was involved in a physical fight with another student.","Repeatedly teased a classmate after being warned.","Used hurtful language towards a classmate.","Took another student's belongings without permission."],
+  "Homework not done":["Did not complete the homework assigned for today.","Has not submitted homework for three consecutive days.","Came to class without the required notebook.","Homework was incomplete and unsigned by a parent."],
+  "Uniform / discipline":["Came to school without the complete school uniform.","Was not wearing the school identity card.","Hair and nails were not maintained as per school rules.","Reported late to school without a written reason."],
+  "Disrupting class":["Talked continuously during the lesson and disturbed other students.","Made noise that interrupted the teaching.","Used a mobile phone during class hours.","Moved around the classroom during the lesson."],
+  "Property damage":["Damaged school furniture in the classroom.","Wrote on the classroom wall/desk.","Broke laboratory equipment during the practical.","Damaged another student's book or belongings."],
+  "Other":["Was absent from the class without informing the teacher.","Did not carry the required books for the period.","Did not participate in the assembly."]
+};
+// Conservative tidy — never rewrites words (a "correction" could mangle a name). Trims, collapses runs of spaces,
+// fixes spacing before punctuation, capitalises the first letter and ensures the note ends with a full stop.
+function __discTidy(s){
+  var t=String(s||"").replace(/\s+/g," ").replace(/\s+([,.;:!?])/g,"$1").replace(/([,.;:!?])(?=[A-Za-z0-9])/g,"$1 ").trim();
+  if(!t)return "";
+  t=t.charAt(0).toUpperCase()+t.slice(1);
+  if(!/[.!?]$/.test(t))t+=".";
+  return t;
+}
+// Auto-correct for discipline notes. WHITELIST ONLY: a word is changed solely when it appears in this map of
+// known misspellings, so anything unrecognised (a student's name typed into the note, a Hindi word, a subject)
+// is left untouched by construction. The student is CHOSEN from a picker, never typed, so the note is ordinary
+// prose. Keys must be genuine non-words — never a real word with another meaning (no principle→principal,
+// no form→from), or the "correction" would change what the teacher meant.
+var DISC_SPELL={
+  // school vocabulary
+  "behaviuor":"behaviour","behavour":"behaviour","behavier":"behaviour","behaiour":"behaviour","bahaviour":"behaviour","behaviore":"behaviour",
+  "disipline":"discipline","disciplin":"discipline","dicipline":"discipline","displine":"discipline","desipline":"discipline",
+  "homwork":"homework","hoemwork":"homework","homeowrk":"homework","homeworks":"homework",
+  "studnet":"student","stundent":"student","studet":"student","studens":"students","studnets":"students",
+  "techer":"teacher","teachr":"teacher","teacer":"teacher","tecaher":"teacher",
+  "clas":"class","calss":"class","clss":"class","classs":"class",
+  "unifrom":"uniform","uniforn":"uniform","uniformm":"uniform",
+  "attendence":"attendance","attandance":"attendance","attendace":"attendance",
+  "absant":"absent","abscent":"absent","absnt":"absent","absense":"absence","abscence":"absence",
+  "notebok":"notebook","noteboook":"notebook",
+  "libary":"library","liberary":"library","asembly":"assembly","assemblly":"assembly",
+  "pratical":"practical","practicle":"practical","labratory":"laboratory","labortory":"laboratory",
+  "principl":"principal","principaal":"principal",
+  "equipments":"equipment","furnitures":"furniture","informations":"information","childrens":"children",
+  // behaviour verbs
+  "misbehaive":"misbehave","misbehav":"misbehave","misbehavior":"misbehaviour",
+  "figthing":"fighting","fightng":"fighting","fighitng":"fighting",
+  "distrubing":"disturbing","disturbin":"disturbing","distirbing":"disturbing",
+  "talkin":"talking","talkng":"talking","shoutin":"shouting","runing":"running","comming":"coming",
+  "geting":"getting","puting":"putting","siting":"sitting","hiting":"hitting",
+  "repeatly":"repeatedly","repeatidly":"repeatedly","continously":"continuously","continuosly":"continuously",
+  "permision":"permission","permisson":"permission","warnning":"warning","warnign":"warning",
+  "complaine":"complaint","compalint":"complaint",
+  // everyday English
+  "teh":"the","hte":"the","adn":"and","nad":"and","taht":"that","thta":"that",
+  "recieve":"receive","recieved":"received","seperate":"separate","seperately":"separately",
+  "occured":"occurred","occuring":"occurring","untill":"until","alot":"a lot",
+  "becuase":"because","becasue":"because","bcoz":"because","bcz":"because","coz":"because",
+  "thier":"their","wich":"which","whcih":"which","wnat":"want","wnats":"wants",
+  "writen":"written","brok":"broke","tommorow":"tomorrow","tomarrow":"tomorrow","yestarday":"yesterday","yesterdy":"yesterday",
+  "definately":"definitely","immediatly":"immediately","immidiately":"immediately","frequntly":"frequently",
+  "responce":"response","responsibilty":"responsibility","behaviourial":"behavioural",
+  "aggresive":"aggressive","agressive":"aggressive","apoligise":"apologise","apologze":"apologise",
+  // contractions typed without the apostrophe
+  "didnt":"didn't","dont":"don't","doesnt":"doesn't","wasnt":"wasn't","werent":"weren't","isnt":"isn't",
+  "couldnt":"couldn't","wouldnt":"wouldn't","shouldnt":"shouldn't","hasnt":"hasn't","havent":"haven't","wont":"won't"
+};
+// Apply the dictionary to completed words only, preserving the writer's capitalisation.
+function __discFix(t){
+  var changed=[];
+  var out=String(t||"").replace(/[A-Za-z][A-Za-z']*/g,function(w){
+    var k=w.toLowerCase(),r=DISC_SPELL[k];
+    if(!r||r===k)return w;
+    var fixed = (w===w.toUpperCase()&&w.length>1) ? r.toUpperCase()
+              : (w[0]===w[0].toUpperCase() ? r.charAt(0).toUpperCase()+r.slice(1) : r);
+    changed.push(w+" → "+fixed);
+    return fixed;
+  });
+  return {text:out,changed:changed};
+}
+// Light quality hints — shown to the teacher, never blocking. Catches the things that actually look bad to a
+// parent: shouting, a note too short to mean anything, or no letters at all.
+function __discHints(s){
+  var t=String(s||"").trim(),out=[];
+  if(!t)return out;
+  var letters=t.replace(/[^A-Za-z]/g,"");
+  if(letters.length>=6&&letters===letters.toUpperCase())out.push("Written in ALL CAPITALS — parents read this as shouting.");
+  if(t.replace(/\s+/g," ").split(" ").filter(Boolean).length<3)out.push("Very short — add what actually happened.");
+  if(/\b(idiot|stupid|useless|nonsense|rascal|fool|nalayak|bewakoof)\b/i.test(t))out.push("Avoid words that judge the child; describe the behaviour instead.");
+  return out;
+}
 function DisciplineQuickLog({user,students,onClose}){
   const discDB=useFirestore("discipline");
   const[q,setQ]=useState("");const[sel,setSel]=useState(null);
   const[itype,setItype]=useState("Behaviour");const[severity,setSeverity]=useState("Minor");
   const[note,setNote]=useState("");const[date,setDate]=useState(today());
   const[saving,setSaving]=useState(false);const[msg,setMsg]=useState("");
+  const[fixed,setFixed]=useState([]);   // spellings just auto-corrected, shown so the teacher can see/undo
   const TYPES=["Behaviour","Bullying / fighting","Homework not done","Uniform / discipline","Disrupting class","Property damage","Other"];
   const SEV=[["Minor","var(--bg-grn)","var(--tx-grn2)"],["Major","var(--bg-amb)","var(--tx-org2)"],["Severe","var(--bg-red)","var(--tx-red)"]];
   const matches=q.trim()?(students||[]).filter(s=>nmKey(s.name).indexOf(nmKey(q))>=0||String(s.admNo||"").indexOf(q.trim())>=0).slice(0,8):[];
@@ -3655,7 +3745,7 @@ function DisciplineQuickLog({user,students,onClose}){
     if(!note.trim()){setMsg("Add a short note about what happened.");return;}
     setSaving(true);setMsg("");
     try{
-      await discDB.set("disc_"+Date.now()+Math.random().toString(36).slice(2,6),{student:sel.name,cls:sel.cls||"",section:sel.section||"",admNo:sel.admNo||"",type:itype,severity,note:note.trim(),date,status:"open",by:user.name,at:new Date().toISOString()});
+      await discDB.set("disc_"+Date.now()+Math.random().toString(36).slice(2,6),{student:sel.name,cls:sel.cls||"",section:sel.section||"",admNo:sel.admNo||"",type:itype,severity,note:__discTidy(note),date,status:"open",by:user.name,at:new Date().toISOString()});
       setSaving(false);setMsg("✓ Logged for "+sel.name+" — visible to the office/principal.");setSel(null);setNote("");setQ("");setItype("Behaviour");setSeverity("Minor");
     }catch(e){setSaving(false);setMsg("Could not save — "+((e&&e.message)||"the discipline rule may need publishing in Roles & Security."));}
   };
@@ -3699,7 +3789,25 @@ function DisciplineQuickLog({user,students,onClose}){
             <div style={{display:"flex",gap:8}}>{SEV.map(([s,bg,fg])=><button key={s} onClick={()=>setSeverity(s)} style={{flex:1,border:"1px solid "+(severity===s?fg:"var(--ap-line2)"),background:severity===s?bg:"var(--c-fff)",color:severity===s?fg:"var(--ap-ink2)",borderRadius:9,padding:"8px 0",fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>{s}</button>)}</div>
           </div>
           <div><div style={{fontSize:11,fontWeight:700,letterSpacing:.4,textTransform:"uppercase",color:"var(--ap-muted)",marginBottom:6}}>What happened</div>
-            <textarea value={note} onChange={e=>setNote(e.target.value)} rows={3} placeholder="Brief, factual note…" style={{width:"100%",border:"1px solid var(--ap-line2)",borderRadius:10,padding:"10px 13px",fontSize:13,lineHeight:1.5,fontFamily:"var(--ss-font)",resize:"vertical",boxSizing:"border-box"}}/>
+            <div className="mwrap" style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:7}}>
+              {(DISC_PHRASES[itype]||DISC_PHRASES.Other).map(function(p,pi){return(
+                <button key={pi} type="button" onClick={function(){setNote(function(v){var t=String(v||"").trim();return t?__discTidy(t)+" "+p:p;});}} className="ss-press"
+                  title="Tap to add this sentence — you can still edit it"
+                  style={{border:"1px solid var(--ap-line2)",background:"var(--c-f7)",color:"var(--ap-ink2)",borderRadius:16,padding:"5px 11px",fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:"var(--ss-font)",textAlign:"left",maxWidth:"100%"}}>+ {p}</button>);})}
+            </div>
+            <textarea value={note}
+              onChange={e=>{var v=e.target.value;
+                /* correct only a word the teacher has just FINISHED (they typed a space/punctuation), so the
+                   word being typed is never rewritten under the cursor */
+                if(/[\s.,;:!?]$/.test(v)){var f=__discFix(v);if(f.changed.length){setFixed(f.changed.slice(-3));setNote(f.text);return;}}
+                setNote(v);}}
+              onBlur={e=>{var f=__discFix(e.target.value);if(f.changed.length)setFixed(f.changed.slice(-3));setNote(__discTidy(f.text));}}
+              spellCheck={true} lang="en-IN" rows={3} placeholder="Brief, factual note…" style={{width:"100%",border:"1px solid var(--ap-line2)",borderRadius:10,padding:"10px 13px",fontSize:13,lineHeight:1.5,fontFamily:"var(--ss-font)",resize:"vertical",boxSizing:"border-box"}}/>
+            {fixed.length>0&&<div style={{fontSize:11.5,color:"var(--tx-grn2)",background:"var(--bg-grn)",border:"1px solid var(--bd-grn)",borderRadius:7,padding:"5px 9px",marginTop:6,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+              <span>Spelling corrected: {fixed.join(", ")}</span>
+              <button type="button" onClick={function(){setFixed([]);}} style={{marginLeft:"auto",background:"none",border:"none",color:"var(--tx-grn2)",fontSize:11,fontWeight:700,cursor:"pointer",textDecoration:"underline",fontFamily:"var(--ss-font)"}}>dismiss</button>
+            </div>}
+            {__discHints(note).map(function(h,hi){return(<div key={hi} style={{fontSize:11.5,color:"var(--tx-org2)",background:"var(--bg-amb)",border:"1px solid var(--bd-amb)",borderRadius:7,padding:"5px 9px",marginTop:6}}>{h}</div>);})}
           </div>
           <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
             <label style={{fontSize:12,color:"var(--ap-muted)"}}>Date <input type="date" value={date} max={today()} onChange={e=>setDate(e.target.value||today())} style={{border:"1px solid var(--ap-line2)",borderRadius:8,padding:"5px 9px",fontSize:12.5,fontFamily:"var(--ss-font)",marginLeft:4}}/></label>
@@ -3805,7 +3913,7 @@ function __printDiscLetter(kind,d,x){
   var w=window.open("","_blank");if(w){w.document.write(h);w.document.close();setTimeout(function(){w.print();},300);}else{if(window.__toast)window.__toast("Allow pop-ups to print the letter","err");}
 }
 // ── Case detail — the working surface of the channel: status, action trail, parent notice, letters ──
-function DisciplineCaseModal({user,id,db,noticesDB,history,phone,ident,canManage,canNotify,canAssign,staffList,onOpenStudent,onClose}){
+function DisciplineCaseModal({user,id,db,noticesDB,history,phone,ident,canManage,canNotify,canAssign,canEditCase,isDir,allStudents,staffList,onOpenStudent,onClose}){
   var raw=(db&&db.data&&db.data[id])||null;
   var d=raw?Object.assign({id:id},raw):null;
   // legacy docs carry no admNo/section — borrow the roster-resolved identity the panel already computed
@@ -3814,6 +3922,10 @@ function DisciplineCaseModal({user,id,db,noticesDB,history,phone,ident,canManage
   const[resNote,setResNote]=useState("");const[busy,setBusy]=useState(false);
   const[letter,setLetter]=useState("warning");const[lx,setLx]=useState({});
   const[npOpen,setNpOpen]=useState(false);const[npTitle,setNpTitle]=useState("");const[npBody,setNpBody]=useState("");
+  // Director/VP correction of a filed incident. A discipline record is formal, so an edit NEVER overwrites
+  // silently: the previous values are appended to an `edits` trail and written to the audit log.
+  const[edOpen,setEdOpen]=useState(false);const[edF,setEdF]=useState(null);const[edFix,setEdFix]=useState([]);
+  const[moveQ,setMoveQ]=useState("");const[moveOpen,setMoveOpen]=useState(false);   // Director-only: re-file / delete
   if(!d)return null;
   var st=__discStatusMeta(d.status),sev=__discSevMeta(d.severity);
   var ladder=__discLadder(history||[]);
@@ -3827,6 +3939,48 @@ function DisciplineCaseModal({user,id,db,noticesDB,history,phone,ident,canManage
     catch(e){window.__toast&&window.__toast("Could not save — "+((e&&e.message)||"check the discipline rule is published in Roles & Security"),"err");}
     setBusy(false);
   };
+  var openEdit=function(){setEdF({type:d.type||"Behaviour",severity:d.severity||"Minor",date:d.date||today(),note:d.note||""});setEdFix([]);setEdOpen(true);};
+  var saveEdit=async function(){
+    if(!edF||busy)return;
+    var note=__discTidy(__discFix(edF.note).text);
+    var before={type:d.type||"",severity:d.severity||"",date:d.date||"",note:d.note||""};
+    var after={type:edF.type,severity:edF.severity,date:edF.date,note:note};
+    var diff=Object.keys(after).filter(function(k){return String(before[k])!==String(after[k]);});
+    if(!diff.length){setEdOpen(false);window.__toast&&window.__toast("Nothing changed","ok");return;}
+    var rec={at:new Date().toISOString(),by:user.name,changed:diff.join(", "),before:before};
+    var f=Object.assign({},after,{edits:window.__fbArrayUnion?window.__fbArrayUnion(rec):(d.edits||[]).concat([rec]),
+                                  editedAt:rec.at,editedBy:user.name});
+    await patchCase(f,"Incident updated — the change is recorded");
+    try{logAudit("edit-discipline","discipline",String(d.id),before,after);}catch(e){}
+    setEdOpen(false);
+  };
+  // Director-only. Re-filing moves a permanent record between two children's files, so all four identity
+  // fields move together (never a half-changed record), the old identity is kept in the edits trail, and a
+  // parent notice already sent for this case is called out — it went to the previous parent.
+  var moveCase=async function(s){
+    if(!s||busy)return;
+    var warn=notice?"\n\nA parent notice was already sent for this incident — it went to "+(d.student||"the previous student")+"'s parent. Re-filing does NOT recall it.":"";
+    if(!await window.__confirm({title:"Re-file this incident?",
+      body:"Move it from "+(d.student||"—")+" to "+s.name+" ("+(s.cls||"")+(s.section?" "+s.section:"")+", Adm "+(s.admNo||"—")+"). The previous student stays in the case history."+warn,
+      danger:true,confirmText:"Re-file"}))return;
+    var before={student:d.student||"",admNo:d.admNo||"",cls:d.cls||"",section:d.section||""};
+    var after={student:s.name,admNo:String(s.admNo||""),cls:s.cls||"",section:s.section||""};
+    var rec={at:new Date().toISOString(),by:user.name,changed:"student (re-filed)",before:before};
+    await patchCase(Object.assign({},after,{edits:window.__fbArrayUnion?window.__fbArrayUnion(rec):(d.edits||[]).concat([rec]),
+                                            editedAt:rec.at,editedBy:user.name}),"Re-filed under "+s.name);
+    try{logAudit("refile-discipline","discipline",String(d.id),before,after);}catch(e){}
+    setMoveOpen(false);setMoveQ("");
+  };
+  var deleteCase=async function(){
+    if(busy)return;
+    if(!await window.__confirm({title:"Delete this incident?",
+      body:"It is removed from "+(d.student||"the student")+"'s record and from the escalation ladder. It moves to Recently Deleted (Settings) and can be restored.",
+      danger:true,confirmText:"Delete incident"}))return;
+    var ok=await softDelete(db,d.id,user);
+    if(ok){window.__toast&&window.__toast("Incident deleted — restorable from Recently Deleted","ok");onClose&&onClose();}
+  };
+  var moveHits=(moveQ.trim()&&allStudents)?allStudents.filter(function(s){
+      return nmKey(s.name).indexOf(nmKey(moveQ))>=0||String(s.admNo||"").indexOf(moveQ.trim())>=0;}).slice(0,8):[];
   var addAction=async function(){
     if(!String(aNote||"").trim()&&kind==="Note added"){window.__toast&&window.__toast("Write the note first","err");return;}
     var a={kind:kind,note:String(aNote||"").trim(),date:aDate||today(),by:user.name,at:new Date().toISOString()};
@@ -3891,6 +4045,8 @@ function DisciplineCaseModal({user,id,db,noticesDB,history,phone,ident,canManage
             </div>
             <div style={{fontSize:12,color:"var(--ap-muted)",marginTop:3}}>{clsSec||"class not recorded"}{d.admNo?" · #"+d.admNo:""} · {d.type||"Incident"} · {d.date?fmtDate(d.date):""} · reported by {hon(d.by)}{d.assignedTo?" · handling: "+hon(d.assignedTo):""}</div>
           </div>
+          {canEditCase&&!edOpen&&<button onClick={openEdit} title="Correct the incident details (recorded in the case history)" className="ss-press"
+            style={{background:"none",border:"1px solid var(--ap-line2)",borderRadius:9,padding:"6px 12px",fontSize:11.5,fontWeight:700,color:"var(--ap-ink2)",cursor:"pointer",fontFamily:"var(--ss-font)",whiteSpace:"nowrap",flexShrink:0}}>Edit details</button>}
           <button onClick={onClose} aria-label="Close" title="Close" style={{background:"none",border:"none",fontSize:22,lineHeight:1,color:"var(--ap-muted)",cursor:"pointer",width:36,height:36,display:"grid",placeItems:"center",flexShrink:0}}>×</button>
         </div>
         <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:15}}>
@@ -3904,6 +4060,69 @@ function DisciplineCaseModal({user,id,db,noticesDB,history,phone,ident,canManage
             {phone?<CallWAButtons phone={phone} msg={_discMsg(d.student,clsSec)}/>:<span style={{fontSize:11.5,color:"var(--ap-faint)"}}>no parent number on file</span>}
             {onOpenStudent&&d.admNo&&<button onClick={function(){onClose&&onClose();onOpenStudent(d.admNo);}} style={{background:"none",border:"1px solid var(--ap-line2)",borderRadius:9,padding:"7px 12px",fontSize:11.5,fontWeight:700,color:"var(--ap-accent)",cursor:"pointer",fontFamily:"var(--ss-font)"}}>Student 360 →</button>}
           </div>
+          {/* correct the filed incident — Director / VP only, always recorded */}
+          {edOpen&&edF&&<div style={{border:"1px solid var(--ap-accent)",borderRadius:12,padding:"13px 15px",background:"var(--c-f7)"}}>
+            <div style={lbl}>Correct incident details</div>
+            <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:10}}>
+              <div style={{flex:"1 1 190px"}}>
+                <div style={{fontSize:11,color:"var(--ap-muted)",marginBottom:4}}>Type</div>
+                <select value={edF.type} onChange={function(e){var v=e.target.value;setEdF(function(p){return Object.assign({},p,{type:v});});}} style={Object.assign({},inp,{width:"100%"})}>
+                  {["Behaviour","Bullying / fighting","Homework not done","Uniform / discipline","Disrupting class","Property damage","Other"].map(function(t){return <option key={t} value={t}>{t}</option>;})}
+                </select>
+              </div>
+              <div style={{flex:"1 1 130px"}}>
+                <div style={{fontSize:11,color:"var(--ap-muted)",marginBottom:4}}>Severity</div>
+                <select value={edF.severity} onChange={function(e){var v=e.target.value;setEdF(function(p){return Object.assign({},p,{severity:v});});}} style={Object.assign({},inp,{width:"100%"})}>
+                  {["Minor","Major","Severe"].map(function(s){return <option key={s} value={s}>{s}</option>;})}
+                </select>
+              </div>
+              <div style={{flex:"1 1 130px"}}>
+                <div style={{fontSize:11,color:"var(--ap-muted)",marginBottom:4}}>Date</div>
+                <input type="date" max={today()} value={edF.date} onChange={function(e){var v=e.target.value||today();setEdF(function(p){return Object.assign({},p,{date:v});});}} style={Object.assign({},inp,{width:"100%"})}/>
+              </div>
+            </div>
+            <div style={{fontSize:11,color:"var(--ap-muted)",marginBottom:4}}>What happened</div>
+            <div className="mwrap" style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:7}}>
+              {(DISC_PHRASES[edF.type]||DISC_PHRASES.Other).map(function(p,pi){return(
+                <button key={pi} type="button" onClick={function(){setEdF(function(q){var t=String(q.note||"").trim();return Object.assign({},q,{note:t?__discTidy(t)+" "+p:p});});}} className="ss-press"
+                  style={{border:"1px solid var(--ap-line2)",background:"var(--c-fff)",color:"var(--ap-ink2)",borderRadius:16,padding:"5px 11px",fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:"var(--ss-font)",textAlign:"left",maxWidth:"100%"}}>+ {p}</button>);})}
+            </div>
+            <textarea value={edF.note} rows={3} spellCheck={true} lang="en-IN"
+              onChange={function(e){var v=e.target.value;
+                if(/[\s.,;:!?]$/.test(v)){var fx=__discFix(v);if(fx.changed.length){setEdFix(fx.changed.slice(-3));setEdF(function(p){return Object.assign({},p,{note:fx.text});});return;}}
+                setEdF(function(p){return Object.assign({},p,{note:v});});}}
+              onBlur={function(e){var fx=__discFix(e.target.value);if(fx.changed.length)setEdFix(fx.changed.slice(-3));setEdF(function(p){return Object.assign({},p,{note:__discTidy(fx.text)});});}}
+              style={{width:"100%",border:"1px solid var(--ap-line2)",borderRadius:10,padding:"10px 13px",fontSize:13,lineHeight:1.5,fontFamily:"var(--ss-font)",background:"var(--c-fff)",color:"var(--ap-ink)",resize:"vertical"}}/>
+            {edFix.length>0&&<div style={{fontSize:11.5,color:"var(--tx-grn2)",background:"var(--bg-grn)",border:"1px solid var(--bd-grn)",borderRadius:7,padding:"5px 9px",marginTop:6}}>Spelling corrected: {edFix.join(", ")}</div>}
+            {__discHints(edF.note).map(function(h,hi){return(<div key={hi} style={{fontSize:11.5,color:"var(--tx-org2)",background:"var(--bg-amb)",border:"1px solid var(--bd-amb)",borderRadius:7,padding:"5px 9px",marginTop:6}}>{h}</div>);})}
+            <div style={{display:"flex",gap:8,marginTop:11,flexWrap:"wrap",alignItems:"center"}}>
+              <button onClick={saveEdit} disabled={busy} className="ss-press" style={{background:"var(--btn-pri-bg)",color:"#fff",border:"none",borderRadius:9,padding:"9px 18px",fontSize:12.5,fontWeight:700,cursor:busy?"default":"pointer",fontFamily:"var(--ss-font)"}}>{busy?"Saving…":"Save correction"}</button>
+              <button onClick={function(){setEdOpen(false);}} className="ss-press" style={{background:"var(--c-fff)",color:"var(--ap-ink2)",border:"1px solid var(--ap-line2)",borderRadius:9,padding:"9px 16px",fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Cancel</button>
+              <span style={{fontSize:11,color:"var(--ap-muted)"}}>The previous version stays in the case history.</span>
+            </div>
+            {isDir&&<div style={{borderTop:"1px dashed var(--ap-line2)",marginTop:13,paddingTop:12}}>
+              <div style={{fontSize:11,fontWeight:700,letterSpacing:.4,textTransform:"uppercase",color:"var(--tx-red)",marginBottom:7}}>Director only</div>
+              {!moveOpen
+                ?<div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                   <button onClick={function(){setMoveOpen(true);}} className="ss-press" style={{background:"var(--c-fff)",color:"var(--ap-ink2)",border:"1px solid var(--ap-line2)",borderRadius:9,padding:"8px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Change student</button>
+                   <button onClick={deleteCase} disabled={busy} className="ss-press" style={{background:"var(--bg-red)",color:"var(--tx-red)",border:"1px solid var(--bd-red)",borderRadius:9,padding:"8px 14px",fontSize:12,fontWeight:700,cursor:busy?"default":"pointer",fontFamily:"var(--ss-font)"}}>Delete incident</button>
+                 </div>
+                :<div>
+                   <div style={{fontSize:11,color:"var(--ap-muted)",marginBottom:4}}>Re-file this incident under another student</div>
+                   <input autoFocus value={moveQ} onChange={function(e){setMoveQ(e.target.value);}} placeholder="Search name or admission no…" style={Object.assign({},inp,{width:"100%"})}/>
+                   {moveHits.length>0&&<div style={{border:"1px solid var(--ap-line)",borderRadius:10,marginTop:6,overflow:"hidden",maxHeight:190,overflowY:"auto"}}>
+                     {moveHits.map(function(s,i){return(
+                       <button key={(s.admNo||s.name)+i} onClick={function(){moveCase(s);}} style={{display:"block",width:"100%",textAlign:"left",border:"none",borderTop:i?"1px solid var(--c-f0)":"none",background:"var(--c-fff)",padding:"9px 12px",cursor:"pointer",fontFamily:"var(--ss-font)"}}>
+                         <div style={{fontSize:13,fontWeight:700,color:"var(--ap-ink)"}}>{s.name}</div>
+                         <div style={{fontSize:11.5,color:"var(--ap-muted)"}}>{s.cls}{s.section?" "+s.section:""}{s.admNo?" · Adm "+s.admNo:""}</div>
+                       </button>);})}
+                   </div>}
+                   {moveQ.trim()&&!moveHits.length&&<div style={{fontSize:12,color:"var(--ap-muted)",marginTop:6}}>No student matches “{moveQ.trim()}”.</div>}
+                   <button onClick={function(){setMoveOpen(false);setMoveQ("");}} style={{marginTop:8,background:"none",border:"none",color:"var(--ap-ink2)",fontSize:11.5,fontWeight:700,cursor:"pointer",textDecoration:"underline",fontFamily:"var(--ss-font)"}}>Cancel</button>
+                 </div>}
+            </div>}
+          </div>}
+          {d.editedAt&&!edOpen&&<div style={{fontSize:11.5,color:"var(--ap-muted)",background:"var(--c-f7)",borderRadius:8,padding:"6px 10px"}}>Details corrected by {hon(d.editedBy)} on {fmtDate(String(d.editedAt).slice(0,10))}{(d.edits&&d.edits.length>1)?" · "+d.edits.length+" corrections on record":""}</div>}
           {/* status stepper */}
           {canManage&&<div>
             <div style={lbl}>Case status</div>
@@ -4206,7 +4425,7 @@ function DisciplinePanel({user,disciplineDB,noticesDB,academicRosterDB,dirDB,use
         </InsPanel>
       </div>}
       {logOpen&&<DisciplineQuickLog user={user} students={_allStudents} onClose={()=>setLogOpen(false)}/>}
-      {selInc&&<DisciplineCaseModal user={user} id={selInc.id} db={disciplineDB} noticesDB={noticesDB} history={selHistory} ident={selInc} phone={phones[String(selInc.admNo)]||""} canManage={canManage} canAssign={canAssign} canNotify={canNotify} staffList={staffList} onOpenStudent={jumpStudent?function(adm){try{window.__dirProfileTab="Discipline";}catch(_){}jumpStudent(String(adm));}:null} onClose={()=>setSelId(null)}/>}
+      {selInc&&<DisciplineCaseModal user={user} id={selInc.id} db={disciplineDB} noticesDB={noticesDB} history={selHistory} ident={selInc} phone={phones[String(selInc.admNo)]||""} canManage={canManage} canAssign={canAssign} canNotify={canNotify} canEditCase={user.role==="admin"||user.role==="vp"} isDir={user.role==="admin"&&user.fees!==false} allStudents={_allStudents} staffList={staffList} onOpenStudent={jumpStudent?function(adm){try{window.__dirProfileTab="Discipline";}catch(_){}jumpStudent(String(adm));}:null} onClose={()=>setSelId(null)}/>}
     </div>
   );
 }
@@ -17711,7 +17930,10 @@ function App(){
   const usersDB=useFirestore("users");
   const wrongDB=useFirestore("wrongAnswers", !!user&&user.role!=="parent"); // students practice + staff review — parents never read it
   const feesDBraw=useFirestore("fees", !!user&&((user.role==="admin"&&user.fees!==false)||user.role==="office"));
-  const examsDBraw=useFirestore("exams", !!user&&["admin","teacher","office","vp"].includes(user.role));
+  /* Parents must be subscribed too or the portal's Examinations block is always empty — the rule already allows
+     read:if signedIn(), so the gate here was the only thing withholding a child's exam result from their parent.
+     (Students likewise, for their own report.) */
+  const examsDBraw=useFirestore("exams", !!user&&["admin","teacher","office","vp","parent","student"].includes(user.role));
   const noticesDB=useFirestore("notices");
   const calendarDB=useFirestore("calendar"); // academic calendar — holidays + events (Director/Principal/VP edit, all read)
   const leaveDB=useFirestore("leaves", !!user&&(user.role==="admin"||user.role==="vp")); // director/VP: substitute-needed prompt + Principal Control Room approvals
@@ -17720,7 +17942,9 @@ function App(){
   const ttDB=useFirestore("timetables", !!user&&(user.role==="admin"||user.role==="teacher"||user.role==="vp")); // admin: substitute checks · teacher: today's timeline on the home
   const ttSetDB=useFirestore("timetableSettings", !!user&&(user.role==="admin"||user.role==="teacher"||user.role==="vp")); // period start/end times for the teacher timeline
   const dirDB=useFirestore("studentDirectory", !!user&&["admin","vp","office"].includes(user.role)); /* rules limit the full-PII record to admin/VP/office — teachers get their rosters from academicRoster */
-  const academicRosterDB=useFirestore("academicRoster", !!user&&user.role!=="parent"&&user.role!=="student"); // admission-no.-keyed roster for Attendance & Fees — staff screens only
+  /* Parent/student too: the portal resolves the child's SECTION from here by admission no. (the name-keyed
+     students cache collapses same-name children). Rule is already read:if signedIn(). */
+  const academicRosterDB=useFirestore("academicRoster", !!user); // admission-no.-keyed roster for Attendance & Fees — staff screens only
   const studentLinksDB=useFirestore("studentLinks", !!user&&user.role!=="parent"&&user.role!=="student"); // legacy test-name → admission-no. links (staff tools only)
   const metaDB=useFirestore("meta"); // app config — current session etc.
   // Populate the synchronous per-branch config cache so module code (termWeights / subject resolver / remedial) can read it.
