@@ -1349,7 +1349,41 @@ const honorific=n=>{ if(!n)return n; const s=String(n); return (s===(DEFAULT_USE
 // Maps a portal username to an internal email for Firebase Authentication (no email is ever sent).
 const AUTH_EMAIL=u=>String(u||"").trim().toLowerCase().replace(/[^a-z0-9._-]/g,"")+"@ssic-portal.app";
 const getTeacherClasses=(user)=>{if(!user||user.role==="admin"||user.role==="vp")return SCHOOL.classes;const cls=user.classes||[];if(!cls.length)return SCHOOL.classes;return [...new Set(cls.map(function(c){return c.split("-")[0].trim();}))];};
-const getTeacherSubjects=(user,cls)=>{if(!user||user.role==="admin"||user.role==="vp")return SCHOOL.subjects[cls]||[];const subjs=(user.subjects||[]).map(function(s){if(s==="English Language"||s==="English Literature")return "English";if(s==="Social Studies")return "Social Science";if(s==="Accounts")return "Accountancy";if(s==="Information Technology")return "Computer Science";return s;});const all=SCHOOL.subjects[cls]||[];if(!subjs.length)return all;const filtered=all.filter(function(s){return subjs.indexOf(s)>=0;});if(filtered.length>0)return filtered;return subjs;};
+// Subjects for a class — the BRANCH CONFIG wins over the built-in default. Branch Setup has always let the
+// director set a custom subject list per class (e.g. Physics/Chemistry/Biology instead of one "Science" for
+// classes 9-10), but every marks screen read SCHOOL.subjects directly, so that setting did nothing. Everything
+// now goes through here, so configuring it once actually reaches Topics, Enter Marks, Test Tracker, exams,
+// report cards and the portals.
+function __subjectsFor(cls){
+  var c=(typeof _bcfg==="function")?_bcfg():{};
+  var v=c&&c.subjects&&c.subjects[cls];
+  return (Array.isArray(v)&&v.length)?v:((SCHOOL.subjects&&SCHOOL.subjects[cls])||[]);
+}
+// CLASS TESTS are taught and tested per stream — Physics, Chemistry and Biology have their own teachers,
+// chapters and unit tests — while the BOARD subject for classes 9-10 is the single subject "Science". So the
+// two sides deliberately differ: class-test screens (Topics, Enter Marks, Test Tracker, Participation,
+// Progress, Syllabus) split it; exams, report cards and term results keep "Science" and are untouched.
+// Override per branch with cfg.testSubjects[cls] if a campus wants something else.
+var __SUBJ_SPLIT={"Science":["Physics","Chemistry","Biology"]};
+var __SPLIT_CLASSES=/^Class (9|10)$/;
+function __testSubjectsFor(cls){
+  var c=(typeof _bcfg==="function")?_bcfg():{};
+  var v=c&&c.testSubjects&&c.testSubjects[cls];
+  if(Array.isArray(v)&&v.length)return v;
+  var base=__subjectsFor(cls);
+  if(!__SPLIT_CLASSES.test(String(cls)))return base;
+  var out=[];
+  base.forEach(function(s){var sp=__SUBJ_SPLIT[s];if(sp)out=out.concat(sp);else out.push(s);});
+  return out;
+}
+// Same list, plus any combined subject it replaced — so a per-subject BREAKDOWN still shows marks recorded
+// under "Science" before the split, instead of silently dropping them.
+function __testSubjectsWithLegacy(cls){
+  var split=__testSubjectsFor(cls),base=__subjectsFor(cls),out=split.slice();
+  base.forEach(function(s){if(__SUBJ_SPLIT[s]&&out.indexOf(s)<0)out.push(s);});
+  return out;
+}
+const getTeacherSubjects=(user,cls)=>{if(!user||user.role==="admin"||user.role==="vp")return __testSubjectsFor(cls);const subjs=(user.subjects||[]).map(function(s){if(s==="English Language"||s==="English Literature")return "English";if(s==="Social Studies")return "Social Science";if(s==="Accounts")return "Accountancy";if(s==="Information Technology")return "Computer Science";return s;});const all=__subjectsFor(cls);if(!subjs.length)return all;const filtered=all.filter(function(s){return subjs.indexOf(s)>=0;});if(filtered.length>0)return filtered;return subjs;};
 const getTeacherSections=(user,cls)=>{const ALL=["A","B","C","D"];if(!user||user.role==="admin"||user.role==="vp")return ALL;const want=String(cls).split("-")[0].trim();const secs=(user.classes||[]).filter(function(c){return c.split("-")[0].trim()===want;}).map(function(c){var p=c.split("-");return p.length>1?p.slice(1).join("-").trim():"";}).filter(Boolean);return secs.length?[...new Set(secs)]:ALL;};
 // Admission number written INSIDE a name's bracket group — "ANUSHKA SINGH (141)", "NAME (ADM 141)",
 // even a garbled "(141) (141) (141)" all yield "141"; father-name brackets yield "". Old rosters
@@ -6856,7 +6890,7 @@ function TestTracker({user,testsDB,studentsDB,usersDB,dirDB,academicRosterDB}){
     var s=new Set();
     var mine=(user.subjects||[]).map(function(x){return x==="English Language"||x==="English Literature"?"English":x==="Social Studies"?"Social Science":x==="Accounts"?"Accountancy":x==="Information Technology"?"Computer Science":x;});
     [...(teachClassSet||[])].forEach(function(c){
-      var all=SCHOOL.subjects[c]||[];
+      var all=__testSubjectsFor(c);
       var sub=mine.length?all.filter(function(x){return mine.indexOf(x)>=0;}):[];
       if(!sub.length&&mine.length)sub=mine; // the teacher's subject isn't in the class's list → still theirs
       sub.forEach(function(x){s.add(c+"|"+x);});
@@ -6883,7 +6917,7 @@ function TestTracker({user,testsDB,studentsDB,usersDB,dirDB,academicRosterDB}){
     return m;
   },[allUsers,customSubjects,testsDB.data]);
   const matrix=useMemo(()=>classes.map(cls=>{
-    const base=SCHOOL.subjects[cls]||[];
+    const base=__testSubjectsFor(cls);
     const subjects=base.concat((customByCls[cls]||[]).filter(s=>base.indexOf(s)<0));
     const students=rosterForCls(dirDB,studentsDB,cls,academicRosterDB); // [{admNo,name,...}] from the record
     const cells=subjects.map(subj=>{
@@ -8163,7 +8197,7 @@ function StudentReport({user,testsDB,studentsDB,dirDB,academicRosterDB,jumpStude
   const[student,setStudent]=useState(students[0]||"");
   const[search,setSearch]=useState("");
   useEffect(()=>setStudent((rosterForCls(dirDB,studentsDB,cls,academicRosterDB)[0]||{}).name||""),[cls,studentsDB.data,dirDB&&dirDB.data]);
-  const subjects=SCHOOL.subjects[cls]||[];
+  const subjects=__testSubjectsWithLegacy(cls);
   const padm=String((_srRoster.find(s=>s.name===student)||{}).admNo||""); /* admission no. from the directory-first roster → marks read admNo-first */
   const sd=useMemo(()=>subjects.map(subj=>{
     const rel=Object.values(testsDB.data).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week);
@@ -8343,7 +8377,7 @@ function StudentProfile({user,testsDB,examsDB,studentsDB,attendanceDB,wrongDB,fe
       __photoSet(padm,img);setPhoto(img);setPhotoBusy("✓ Saved");setTimeout(()=>setPhotoBusy(""),1600);
     }catch(err){setPhotoBusy(""+((err&&err.message)||"Could not save"));}};
 
-  const subjects=SCHOOL.subjects[cls]||[];
+  const subjects=__testSubjectsWithLegacy(cls);
   const sd=useMemo(()=>subjects.map(subj=>{
     const rel=Object.values(testsDB.data).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week);
     const sc=rel.map(t=>{const v=_markOf(t,padm,student);return{week:t.week,p:pct(Number(v??0),t.total),topics:t.topics||[],date:t.testDate,has:v!==undefined&&v!==""};});
@@ -8626,7 +8660,7 @@ function ParentView({user,testsDB,examsDB,studentsDB,academicRosterDB,attendance
   },[user.admNo,user.childAdmNo,academicRosterDB&&academicRosterDB.data,cls,student,_secMap]);
   const rollNo=students.filter(n=>(_secMap[n]||"")===_mySec).sort((a,b)=>String(a).localeCompare(String(b))).indexOf(student)+1;
   const padm=String(user.admNo||user.childAdmNo||(studentsDB.data[safeId(cls)]?.admNo||{})[student]||""); // child's admission no.
-  const subjects=SCHOOL.subjects[cls]||[];
+  const subjects=__testSubjectsWithLegacy(cls);
   const sd=useMemo(()=>subjects.map(subj=>{
     const rel=Object.values(testsDB.data).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week);
     const sc=rel.map(t=>{const v=_markOf(t,padm,student);return{week:t.week,p:pct(Number(v??0),t.total),topics:t.topics||[],date:t.testDate,has:v!==undefined&&v!==""};}).filter(x=>x.has);
@@ -9328,7 +9362,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
     return{n:exams.length,totSub,markedSub,pct:totSub?Math.round(markedSub/totSub*100):0,latest:exams[0],upcoming};
   },[exams]);
   useEffect(()=>{if(!selId&&exams.length)setSelId(exams[0].id);},[exams,selId]);
-  useEffect(()=>{setNSubs((SCHOOL.subjects[nClass]||[]).map(s=>({name:s,max:100,on:true})));},[nClass]);
+  useEffect(()=>{setNSubs((__subjectsFor(nClass)).map(s=>({name:s,max:100,on:true})));},[nClass]);
   const exam=selId?examsDB.data[selId]:null;
   useEffect(()=>{
     if(exam){
@@ -9809,7 +9843,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
 
       {/* TERM RESULT — weighted /100 per the school's CBSE scheme; Unit Test auto-pulled, internals written in */}
       {tab==="term"&&(()=>{
-        const subjects=SCHOOL.subjects[trCls]||[];
+        const subjects=__subjectsFor(trCls);
         const curSubj=(trSubj&&subjects.indexOf(trSubj)>=0)?trSubj:(subjects[0]||"");
         const termExams=exams.filter(e=>e&&e.cls===trCls&&e.term===trTerm);
         const utList=termExams.filter(e=>/unit\s*test/i.test(e.name||""));
@@ -11245,7 +11279,7 @@ function DirectoryProfile({stu, testsDB, examsDB, studentsDB, attendanceDB, wron
   const _profSecs=academicCls?((studentsDB.data[safeId(academicCls)]||{}).sections||{}):{};
   const _profSec=(rosterName&&_profSecs[rosterName])||stu.section||"";
   const roll=rosterName?(rosterList.filter(n=>((_profSecs[n]||"")===_profSec)).sort((a,b)=>String(a).localeCompare(String(b))).indexOf(rosterName)+1)||null:null;
-  const subjects=academicCls?(SCHOOL.subjects[academicCls]||[]):[];
+  const subjects=academicCls?(__testSubjectsWithLegacy(academicCls)):[];
   const sd=useMemo(()=>{ if(!academicCls)return []; return subjects.map(subj=>{
     const rel=Object.values(testsDB.data||{}).filter(t=>t.cls===academicCls&&t.subj===subj).sort((a,b)=>a.week-b.week);
     const sc=rel.map(t=>{const raw=_markOf(t,adm,testName);return{week:t.week,p:pct(Number(raw||0),t.total),topics:t.topics||[],date:t.testDate,has:(raw!==undefined&&raw!=="")};});
@@ -12524,9 +12558,9 @@ function ConceptNotesPanel({user}){
 function StudyNotesPanel({user}){
   const notesDB=useFirestore("conceptNotes");
   const[cls,setCls]=useState("Class 10");
-  const subjects=SCHOOL.subjects[cls]||[];
+  const subjects=__subjectsFor(cls);   /* study notes are written per board subject, not per class-test stream */
   const[subj,setSubj]=useState(subjects[0]||"Mathematics");
-  useEffect(()=>{const ss=SCHOOL.subjects[cls]||[];if(!ss.includes(subj))setSubj(ss[0]||"");},[cls]);
+  useEffect(()=>{const ss=__subjectsFor(cls);if(!ss.includes(subj))setSubj(ss[0]||"");},[cls]);
   const base=(typeof window!=="undefined"&&window.__STUDY_NOTES)||{};
   const pre=cls+"|"+subj+"|";
   const chapters=useMemo(()=>{
@@ -18600,7 +18634,7 @@ function resolveStudent(user,studentsDB){
 function StudentMyReport({user,testsDB,studentsDB,attendanceDB,wrongDB,onBack}){
   const meta=useMemo(()=>resolveStudent(user,studentsDB),[user,studentsDB.data]);
   const {cls,name:student,rollNo,section,admNo:adm}=meta;
-  const subjects=SCHOOL.subjects[cls]||[];
+  const subjects=__testSubjectsWithLegacy(cls);
   // Parent/student fee view: read ONLY this student's own published balance (portalFees/{admNo}).
   // The director publishes these from Fees → Overview. We never load the full fees collection here.
   const[portalFee,setPortalFee]=useState(null);
