@@ -2257,9 +2257,45 @@ const ThemeToggle=({style={},size=36})=>{
 // ── LOGIN ──
 function Login({onLogin,usersDB}){
   const[u,setU]=useState("");const[p,setP]=useState("");const[err,setErr]=useState("");const[busy,setBusy]=useState(false);
-  const go=async()=>{
+  // ── Two-step sign-in ── ask WHO first, then the password, so the password screen can be tailored: a parent
+  // with several children picks the child first, and the password we then ask for is that child's date of birth.
+  const[step,setStep]=useState("who");      // "who" → optional "child" → "pass"
+  const[kids,setKids]=useState([]);         // [{username,first,cls}] for this mobile
+  const[acct,setAcct]=useState("");         // the username we will actually authenticate
+  const[kid,setKid]=useState(null);         // the chosen child (for the password screen's wording)
+  const[who,setWho]=useState("");           // the STAFF member's real name, so the password screen greets a person
+  const reset=()=>{setStep("who");setKids([]);setAcct("");setKid(null);setWho("");setP("");setErr("");};
+  // Resolve a username to a display name WITHOUT being signed in. /users/{id} is readable only by its owner, so
+  // the live profile is unavailable here — but DEFAULT_USERS is compiled into the page, which covers the seeded
+  // staff roster. Anything else (an account created in-app) simply falls back to showing the username.
+  const nameFor=(k)=>{
+    var d=DEFAULT_USERS[k]||(usersDB&&usersDB.data&&(usersDB.data[k]||usersDB.data[safeId(k)]));
+    return (d&&d.name)?String(d.name):"";
+  };
+  // Look the mobile up in the public parentLookup map. Failure is never fatal — we just fall through to the
+  // normal username+password path, so staff logins and any offline case behave exactly as before.
+  const next=async()=>{
     if(busy)return;
     const uKey=u.trim().toLowerCase();
+    if(!uKey){setErr("Enter your username.");return;}
+    setErr("");setBusy(true);
+    var found=null;
+    try{
+      var digits=uKey.replace(/[^0-9]/g,"");
+      if(digits.length>=10&&window.__db&&window.__fbGetDoc&&window.__fbDoc){
+        var snap=await window.__fbGetDoc(window.__fbDoc(window.__db,"parentLookup",digits));
+        if(snap&&snap.exists&&snap.exists()){var d=snap.data();if(d&&Array.isArray(d.children)&&d.children.length)found=d.children;}
+      }
+    }catch(e){/* not a parent, offline, or no lookup written yet — fall through */}
+    setBusy(false);
+    if(found&&found.length>1){setKids(found);setStep("child");return;}
+    if(found&&found.length===1){setAcct(found[0].username||uKey);setKid(found[0]);setStep("pass");return;}
+    setAcct(uKey);setKid(null);setWho(nameFor(uKey));setStep("pass");
+  };
+  const pickKid=(c)=>{setAcct(c.username||u.trim().toLowerCase());setKid(c);setErr("");setStep("pass");};
+  const go=async()=>{
+    if(busy)return;
+    const uKey=(acct||u).trim().toLowerCase();
     const baseData=DEFAULT_USERS[uKey];
     // Profile/assignments are stored under safeId(username) (set() sanitises the doc id), so a dotted
     // login like "aakash.singh" must also look up the "aakash_singh" doc — else its classes/subjects are missed.
@@ -2298,14 +2334,54 @@ function Login({onLogin,usersDB}){
           <div style={{fontSize:11,color:"var(--ap-muted)",marginTop:7,letterSpacing:1.8,fontWeight:600}}>{BRANCH_LABEL.toUpperCase()} · ACADEMIC PORTAL</div>
         </div>
         <div style={{background:"var(--c-fff)",border:"1px solid var(--c-ecf)",borderRadius:24,padding:"30px 30px 28px",boxShadow:"0 12px 44px rgba(16,24,40,.10),0 2px 8px rgba(16,24,40,.05)"}}>
-          <div style={{fontSize:20,fontWeight:700,color:"var(--ap-ink)",marginBottom:4,letterSpacing:"-0.02em"}}>Sign in</div>
-          <div style={{fontSize:13,color:"var(--ap-muted)",marginBottom:22}}>Enter your username and password to continue.</div>
-          <div onKeyDown={e=>{if(e.key==="Enter")go();}}>
-            <Inp label="Username" value={u} onChange={setU} placeholder="e.g. maths6"/>
-            <Inp label="Password" value={p} onChange={setP} type="password" placeholder="••••••••"/>
-          </div>
-          {err&&<div style={{fontSize:12.5,color:"var(--tx-red2)",background:"var(--bg-red)",border:"1px solid var(--bd-red)",borderRadius:10,padding:"9px 13px",marginBottom:12}}>{err}</div>}
-          <button onClick={go} disabled={busy} className="ss-press" style={{width:"100%",background:"var(--ap-accent)",color:"#fff",border:"none",borderRadius:12,padding:14,fontSize:15,fontWeight:600,cursor:busy?"not-allowed":"pointer",opacity:busy?0.6:1,marginTop:6,boxShadow:"0 2px 10px rgba(0,113,227,.32)",fontFamily:"var(--ss-font)"}}>{busy?"Signing in…":"Sign in →"}</button>
+          {(function(){
+            var btn={width:"100%",background:"var(--ap-accent)",color:"#fff",border:"none",borderRadius:12,padding:14,fontSize:15,fontWeight:600,cursor:busy?"not-allowed":"pointer",opacity:busy?0.6:1,marginTop:6,boxShadow:"0 2px 10px rgba(0,113,227,.32)",fontFamily:"var(--ss-font)"};
+            var back=<button onClick={reset} style={{background:"none",border:"none",padding:0,marginTop:14,fontSize:12.5,fontWeight:600,color:"var(--ap-accent)",cursor:"pointer",fontFamily:"var(--ss-font)"}}>← Not you? Start again</button>;
+            var errBox=err?<div style={{fontSize:12.5,color:"var(--tx-red2)",background:"var(--bg-red)",border:"1px solid var(--bd-red)",borderRadius:10,padding:"9px 13px",marginBottom:12}}>{err}</div>:null;
+
+            if(step==="who")return <>
+              {/* No helper sentence: the field label already says it, and a login screen that has to explain
+                  itself is a sign the label is doing too little. */}
+              <div style={{fontSize:20,fontWeight:700,color:"var(--ap-ink)",marginBottom:20,letterSpacing:"-0.02em"}}>Sign in</div>
+              <div onKeyDown={e=>{if(e.key==="Enter")next();}}>
+                <Inp label="Username or mobile number" value={u} onChange={setU} placeholder="e.g. 9876543210"/>
+              </div>
+              {errBox}
+              <button onClick={next} disabled={busy} className="ss-press" style={btn}>{busy?"Checking…":"Continue →"}</button>
+            </>;
+
+            if(step==="child")return <>
+              <div style={{fontSize:20,fontWeight:700,color:"var(--ap-ink)",marginBottom:4,letterSpacing:"-0.02em"}}>Which child?</div>
+              <div style={{fontSize:13,color:"var(--ap-muted)",marginBottom:18}}>{kids.length} children are registered on this number.</div>
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {kids.map(function(c,i){return <button key={(c.username||"")+i} onClick={function(){pickKid(c);}} className="ss-press"
+                  style={{display:"flex",alignItems:"center",gap:12,width:"100%",textAlign:"left",background:"var(--c-f7)",border:"1px solid var(--ap-line)",borderRadius:14,padding:"13px 15px",cursor:"pointer",fontFamily:"var(--ss-font)"}}>
+                  <span style={{width:38,height:38,borderRadius:"50%",flex:"none",display:"grid",placeItems:"center",background:"var(--ap-accent-soft)",color:"var(--ap-accent)",fontWeight:800,fontSize:15}}>{String(c.first||"?").trim().charAt(0).toUpperCase()}</span>
+                  <span style={{minWidth:0,flex:1}}>
+                    <span style={{display:"block",fontSize:14.5,fontWeight:700,color:"var(--ap-ink)"}}>{c.first}</span>
+                    <span style={{display:"block",fontSize:12,color:"var(--ap-muted)",marginTop:1}}>{c.cls||""}</span>
+                  </span>
+                  <span style={{color:"var(--ap-faint)",flex:"none"}}>›</span>
+                </button>;})}
+              </div>
+              {errBox}
+              {back}
+            </>;
+
+            return <>
+              {/* Lead with WHO you are signing in as — the way Apple shows the account above the password —
+                  so the child's name confirms the pick instead of a greeting that says nothing. */}
+              <div style={{fontSize:20,fontWeight:700,color:"var(--ap-ink)",marginBottom:(kid||who)?3:20,letterSpacing:"-0.02em"}}>{kid?kid.first:(who||u.trim())}</div>
+              {/* Under the name, the account being signed into — so a staff member with two logins knows which. */}
+              {(kid||who)&&<div style={{fontSize:13,color:"var(--ap-muted)",marginBottom:20}}>{kid?(kid.cls||""):u.trim()}</div>}
+              <div onKeyDown={e=>{if(e.key==="Enter")go();}}>
+                <Inp label={kid?"Date of birth (DDMMYYYY)":"Password"} value={p} onChange={setP} type="password" placeholder={kid?"DDMMYYYY":"••••••••"}/>
+              </div>
+              {errBox}
+              <button onClick={go} disabled={busy} className="ss-press" style={btn}>{busy?"Signing in…":"Sign in →"}</button>
+              {back}
+            </>;
+          })()}
         </div>
         <div style={{textAlign:"center",marginTop:20,fontSize:11.5,color:"var(--ap-faint)"}}>Powered by SSIC Academic Portal</div>
       </div>
@@ -12458,6 +12534,13 @@ service cloud.firestore {
 
     // Student photos — one small JPEG per admission no. All staff may upload; any signed-in user reads.
     match /studentPhotos/{id}     { allow read: if signedIn(); allow write: if isAny(['admin','vp','office','teacher']); }
+    // Sign-in helper: maps a parent's mobile -> the children linked to it, so a parent with more than one child
+    // can pick which child BEFORE typing that child's date of birth. Read is necessarily public (the parent is
+    // not signed in yet), so each entry carries the MINIMUM to recognise a child: first name + class only —
+    // no surname, no admission number, no phone, no date of birth.
+    // get is allowed (you must already know the full mobile number, which is the document id) but list is
+    // DENIED, so the collection cannot be enumerated to harvest families.
+    match /parentLookup/{id}      { allow get: if true; allow list: if false; allow write: if isAny(['admin','vp','office']); }
 
     // Academic roster (admission no. + name + section + parent phone) — all staff read; Director/Office sync it.
     // Deliberately broadly readable: this is the PII-free roster teachers/VP use instead of studentDirectory.
@@ -13797,6 +13880,8 @@ function BulkParentAccounts({dirDB,usersDB,accountsDB}){
     }
     try{logAudit("bulk-create-parents","accounts",String(ok.length)+" created",null,{created:ok.length,failed:fail.length});}catch(e){}
     setBusy(false);setProg("");setDone({ok:ok,fail:fail});setSel({});
+    // Publish the sign-in list straight away, or a parent with two children cannot pick between them at login.
+    if(ok.length){try{await syncLookup(true);}catch(e){}}
   }
 
   // A printable slip per family — hand this out; it carries the login and how to change the password.
@@ -13823,6 +13908,40 @@ function BulkParentAccounts({dirDB,usersDB,accountsDB}){
       '.c{font-family:Arial,sans-serif;font-size:12px;font-style:italic;color:#555;letter-spacing:0}'+
       '</style></head><body>'+cards+'</body></html>');
     w.document.close();w.print();
+  }
+  // ── Sign-in lookup ── parentLookup/{mobile} lets the login screen show a parent their children BEFORE asking
+  // for a password. Publicly readable by necessity (nobody is signed in yet), so it carries the MINIMUM needed to
+  // recognise a child: FIRST NAME + CLASS. Never the surname, admission number, date of birth or phone.
+  // Entries are tagged with the branch and merged, so rebuilding on one campus cannot drop another campus's children.
+  const[lkBusy,setLkBusy]=useState("");
+  async function syncLookup(silent){
+    if(!window.__db||!window.__fbSetDoc||!window.__fbDoc){if(!silent)setLkBusy("Not connected.");return;}
+    var br=String(__br||"greencity");
+    var byMobile={};
+    allLogins.forEach(function(r){
+      if(r.left)return;                                   // a child who has left should not be offered
+      var mob=String(r.username||"").split("-")[0].replace(/[^0-9]/g,"");
+      if(mob.length<10)return;                            // staff usernames are not mobiles
+      (byMobile[mob]=byMobile[mob]||[]).push({username:r.username,first:String(r.name||"").trim().split(/\s+/)[0]||"Child",cls:r.cls||"",branch:br});
+    });
+    var mobs=Object.keys(byMobile);
+    if(!mobs.length){if(!silent)setLkBusy("No parent logins to publish yet.");return;}
+    setLkBusy("Publishing "+mobs.length+"…");
+    var done=0,failed=0;
+    for(var i=0;i<mobs.length;i++){
+      var m=mobs[i],kids=byMobile[m];
+      try{
+        var keep=[];
+        try{var sn=await window.__fbGetDoc(window.__fbDoc(window.__db,"parentLookup",m));
+          if(sn&&sn.exists&&sn.exists()){var ex=sn.data();
+            if(ex&&Array.isArray(ex.children))keep=ex.children.filter(function(c){return c&&String(c.branch||"greencity")!==br;});}
+        }catch(e){}
+        await window.__fbSetDoc(window.__fbDoc(window.__db,"parentLookup",m),{mobile:m,children:keep.concat(kids),updatedAt:new Date().toISOString()});
+        done++;
+      }catch(e){failed++;}
+    }
+    try{logAudit("sync-parent-lookup","parentLookup",done+" mobiles",null,{published:done,failed:failed});}catch(e){}
+    setLkBusy("✓ Published "+done+" mobile"+(done===1?"":"s")+(failed?(" · "+failed+" failed"):"")+".");
   }
   function copyList(list){
     var t=list.map(function(r){return [r.name,r.cls+(r.section?" "+r.section:""),r.adm,r.username,r.changed?"(set by parent)":(r.dob||"—")].join("\t");}).join("\n");
@@ -13857,6 +13976,8 @@ function BulkParentAccounts({dirDB,usersDB,accountsDB}){
           <div style={{marginLeft:"auto",display:"flex",gap:8,flexWrap:"wrap"}}>
             <Btn v="ghost" onClick={function(){printSlips(live);}}>⤓ Download PDF — all {live.length} logins</Btn>
             <Btn v="ghost" onClick={function(){copyList(allLogins);}}>Copy all</Btn>
+            <Btn v="ghost" onClick={function(){syncLookup(false);}}>Publish sign-in list</Btn>
+            {lkBusy&&<span style={{fontSize:12,color:"var(--ap-ink2)",alignSelf:"center"}}>{lkBusy}</span>}
           </div>
         </div>;
       })()}
@@ -17727,6 +17848,9 @@ function StaffAttendanceRegister({user,isDirector,setTab:goTab}){
   const roster=allStaff.filter(function(s){return !s.left&&!s.removed;});
   const leftStaff=allStaff.filter(function(s){return s.left&&!s.removed;});
 
+  // Usernames exempt from the unmarked-is-absent rule. Config-driven, not hardcoded, so the Director can add or
+  // remove a person when staffing changes instead of needing the file edited.
+  const _noClock=useMemo(function(){var v=(cfg&&cfg.noClock)||[];return Array.isArray(v)?v.map(String):[];},[cfg&&cfg.noClock]);
   function statusFor(u){
     var rec=attDB.data&&attDB.data[_attId(u.username,date)];
     if(rec)return{key:rec.status||"present",rec:rec};
@@ -17736,6 +17860,11 @@ function StaffAttendanceRegister({user,isDirector,setTab:goTab}){
     // clock in) — the "unmarked = absent" rule is for teachers only. Without this the Director sees themselves ABSENT.
     var _isHead=String(u.username)===String(user.username)||(u.role==="admin"&&(u.username==="director"||(DEFAULT_USERS[u.username]&&DEFAULT_USERS[u.username].fees!==false)));
     if(_isHead)return{key:"none",rec:null};
+    // ── "Doesn't clock in" staff ── some teachers (e.g. those coming across from the ICSE campus) never mark the
+    // register, so the unmarked = absent rule libels them every single day. Listed in __config.noClock, they count
+    // as PRESENT unless the Director explicitly marks them otherwise — an explicit record above always wins, so
+    // marking them absent still works normally.
+    if(_noClock.indexOf(String(u.username))>=0)return{key:"present",rec:null,noclock:true};
     // director's rule: still unmarked once the day is underway (or any past weekday) = ABSENT (auto)
     if(typeof __staffAutoAbsent==="function"&&__staffAutoAbsent(date,_attTodayStr(),new Date().toTimeString().slice(0,5),(cfg&&cfg.lateAfter)||"",calDB.data))return{key:"autoabs",rec:null};
     return{key:"none",rec:null};
@@ -17858,13 +17987,20 @@ function StaffAttendanceRegister({user,isDirector,setTab:goTab}){
               </div>
               <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flex:"none"}}>
                 {u.phone?<a href={"tel:"+u.phone} style={{fontSize:11.5,color:"var(--ap-muted)",fontWeight:600,fontFamily:"var(--ss-font)",textDecoration:"none"}}>{u.phone}</a>:null}
-                <span style={{background:STK[k][2],color:STK[k][1],borderRadius:99,padding:"3px 10px",fontSize:10.5,fontWeight:700,whiteSpace:"nowrap"}}>{STK[k][0]}</span>
+                <span style={{background:STK[k][2],color:STK[k][1],borderRadius:99,padding:"3px 10px",fontSize:10.5,fontWeight:700,whiteSpace:"nowrap"}}>{STK[k][0]}{st.noclock?" · no clock-in":""}</span>
                 {isDirector&&<div style={{display:"flex",gap:4,marginTop:2}}>
                   {[["present","P",["var(--bg-grn)","var(--tx-grn2)"]],["late","L",["var(--bg-amb)","var(--tx-org2)"]],["absent","A",["var(--bg-red)","var(--tx-red)"]]].map(function(opt){
                     var on=!!st.rec&&k===opt[0];
                     return <button key={opt[0]} onClick={function(){setStatus(u,on?"__clear":opt[0]);}} title={on?"Tap to clear":("Mark "+u.name.split(" ")[0]+" "+opt[0])}
                       style={{width:32,height:32,borderRadius:7,fontSize:11.5,fontWeight:800,cursor:"pointer",fontFamily:"var(--ss-font)",transition:".12s",border:"1px solid "+(on?opt[2][1]:"var(--ap-line2)"),background:on?opt[2][0]:"var(--c-f7)",color:on?opt[2][1]:"var(--ap-ink2)"}}>{opt[1]}</button>;
                   })}
+                  {/* Exempt this person from the unmarked-is-absent rule (they never mark the register). */}
+                  <button onClick={function(){var cur=_noClock.slice();var ix=cur.indexOf(String(u.username));
+                      if(ix>=0)cur.splice(ix,1);else cur.push(String(u.username));saveCfg({noClock:cur});}}
+                    title={st.noclock?(u.name.split(" ")[0]+" is treated as present unless you mark them otherwise — tap to go back to the normal rule"):("Exempt "+u.name.split(" ")[0]+" from the unmarked-is-absent rule (they don't clock in)")}
+                    style={{height:32,padding:"0 9px",borderRadius:7,fontSize:10.5,fontWeight:800,cursor:"pointer",fontFamily:"var(--ss-font)",transition:".12s",whiteSpace:"nowrap",border:"1px solid "+(st.noclock?"var(--tx-blu)":"var(--ap-line2)"),background:st.noclock?"var(--bg-blu)":"var(--c-f7)",color:st.noclock?"var(--tx-blu)":"var(--ap-muted)"}}>
+                    {st.noclock?"No clock-in":"⏻"}
+                  </button>
                 </div>}
               </div>
             </div>);})}
