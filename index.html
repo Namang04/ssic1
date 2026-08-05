@@ -507,7 +507,7 @@ body,.ap-panel,.ap-content,.ap-nav,.ap-topbar{transition:background-color .25s e
 </head>
 <body>
 <script>/* lazy content loader */
-window.__ssEnsureContent=function(){if(window.__ssContentP)return window.__ssContentP;window.__ssContentP=new Promise(function(res){if(window.__ssContentReady)return res(true);var s=document.createElement("script");s.src="ssic-content.js?v=6";s.async=true;s.onload=function(){window.__ssContentReady=true;res(true);};s.onerror=function(){window.__ssContentP=null;res(false);};document.head.appendChild(s);});return window.__ssContentP;};
+window.__ssEnsureContent=function(){if(window.__ssContentP)return window.__ssContentP;window.__ssContentP=new Promise(function(res){if(window.__ssContentReady)return res(true);var s=document.createElement("script");s.src="ssic-content.js?v=8";s.async=true;s.onload=function(){window.__ssContentReady=true;res(true);};s.onerror=function(){window.__ssContentP=null;res(false);};document.head.appendChild(s);});return window.__ssContentP;};
 </script>
 <script>/* offline cache: makes repeat opens near-instant on any device. Safe for frequent deploys —
    the app shell is fetched network-first so a new GitHub→Vercel push always lands when online;
@@ -1373,6 +1373,16 @@ function __examPerfFor(examsData,clsLabel,adm,name){
   out.sort(function(a,b){return String(a.date||"").localeCompare(String(b.date||""));});
   return out;
 }
+// ── RTE (Right to Education) ── The Act gives FREE schooling to Classes 1–8 only, so an RTE child must carry a
+// 100% waiver of the annual fee; from Class 9 on, RTE no longer applies. The flag sits in the student record two
+// different ways depending on who typed it: most carry "RTE STUDENT DISCOUNT" in the `concession` field, but a
+// handful only have "(RTE)" appended to the NAME — which no fee logic can see, so those children were being billed
+// in full. Both spellings are honoured here. Matched as a standalone token so words like QUARTER/PORTER don't hit.
+const __RTE_RE=/(?:^|[^A-Za-z])RTE(?![A-Za-z])/i;
+function __rteFlag(stu){ if(!stu)return ""; if(__RTE_RE.test(String(stu.concession||"")))return "concession";
+  if(__RTE_RE.test(String(stu.name||"")))return "name"; return ""; }
+// Class 1–8 only. "Class SIP"/preschool have no digits → not eligible; "Class 10"/"Class 11" parse to 10/11 → out.
+function __rteClsEligible(cls){ var n=parseInt(String(cls||"").replace(/[^0-9]/g,""),10); return !isNaN(n)&&n>=1&&n<=8; }
 // Per-student fee waiver (concession / sibling discount), keyed by admission no. — stored in feesDB.__waivers.byAdm.
 // Deducted from the annual fee everywhere a balance is computed, so a waived student is not flagged as a defaulter.
 const waiverFor=(feesData,admNo)=>{if(!admNo)return 0;const w=feesData&&feesData.__waivers&&feesData.__waivers.byAdm&&feesData.__waivers.byAdm[String(admNo)];return w?Number(w.amount||0):0;};
@@ -8732,6 +8742,23 @@ function ParentView({user,testsDB,examsDB,studentsDB,academicRosterDB,attendance
   const overall=useMemo(()=>{const a=sd.filter(x=>x.avg!==null&&x.sc&&x.sc.length>0);if(!a.length)return null;const sum=a.reduce((t,x)=>t+x.avg*x.sc.length,0),n=a.reduce((t,x)=>t+x.sc.length,0);return n?Math.round(sum/n):null;},[sd]);
   // Child's attendance (admission-no.-first, this class only)
   const att=useMemo(()=>{let p=0,a=0,l=0;Object.values((attendanceDB&&attendanceDB.data)||{}).forEach(r=>{if(!r||!r.status||(cls&&String(r.cls||"")!==cls))return;var v=(padm&&r.status[padm]!==undefined)?r.status[padm]:r.status[student];if(v===undefined||v==="U")return;if(v==="P")p++;else if(v==="A")a++;else if(v==="L")l++;});const total=p+a+l;return{p,a,l,total,pct:total?Math.round((p+l)/total*100):null};},[attendanceDB&&attendanceDB.data,student,padm,cls]);
+  // ── Is my child in school TODAY? ── the first thing a parent opens the app to check. Admission-no. first (the
+  // name key is blank for many children and collapses same-name pairs), and only the child's OWN section, so
+  // another section's register can never answer for them. v="" means nobody has marked the register yet.
+  const todayAtt=useMemo(function(){
+    var td=today(),out={v:"",holiday:false};
+    Object.values((attendanceDB&&attendanceDB.data)||{}).forEach(function(r){
+      if(!r||!r.status||r.date!==td)return;
+      if(cls&&String(r.cls||"")!==cls)return;
+      var ms=String(_mySec||"").toUpperCase().trim(),rs=String(r.section||"").toUpperCase().trim();
+      if(ms&&rs&&rs!==ms)return;
+      var v=(padm&&r.status[padm]!==undefined)?r.status[padm]:r.status[student];
+      if(v!==undefined&&v!=="U")out.v=v;
+      else if(r.holiday)out.holiday=true;
+    });
+    return out;
+  },[attendanceDB&&attendanceDB.data,student,padm,cls,_mySec]);
+  const childPhoto=useOnePhoto(padm);
   // This child's OWN published fee balance (portalFees/{admNo}) + the school UPI config — exactly the parent-pay path StudentMyReport uses.
   const[portalFee,setPortalFee]=useState(null);const[feeLoaded,setFeeLoaded]=useState(false);
   useEffect(()=>{let cancel=false;const load=async()=>{if(!padm||!window.__db||!window.__fbGetDoc||!window.__fbDoc){setFeeLoaded(true);return;}try{const snap=await window.__fbGetDoc(window.__fbDoc(window.__db,"portalFees",String(padm)));if(!cancel&&snap&&snap.exists&&snap.exists())setPortalFee(snap.data());}catch(e){}if(!cancel)setFeeLoaded(true);};if(window.__fbReady)load();else window.addEventListener("fbready",load,{once:true});return()=>{cancel=true;};},[padm]);
@@ -8782,20 +8809,81 @@ function ParentView({user,testsDB,examsDB,studentsDB,academicRosterDB,attendance
           <span style={{fontSize:12.5,fontWeight:700,color:"var(--tx-org2)",whiteSpace:"nowrap"}}>Change →</span>
         </div>
       )}
-      {/* hero */}
-      <div style={{background:"linear-gradient(135deg,#0d1b2a,#1a2e45)",borderRadius:18,padding:"22px 24px",color:"#fff"}}>
-        <div style={{fontSize:10.5,color:"#d9b75a",letterSpacing:1.5,textTransform:"uppercase",fontWeight:700}}>Parent portal</div>
-        <div style={{fontSize:22,fontWeight:800,marginTop:5,letterSpacing:"-.02em"}}>{student}</div>
-        <div style={{fontSize:12.5,color:"rgba(255,255,255,.65)",marginTop:3}}>{cls}{rollNo>0?" · Roll No "+rollNo:""} · guardian {user.name}</div>
-        <div style={{display:"flex",gap:10,marginTop:16,flexWrap:"wrap"}}>
-          {overall!==null&&<div style={{background:"rgba(255,255,255,.1)",borderRadius:11,padding:"9px 15px"}}><div style={{fontSize:9.5,color:"rgba(255,255,255,.55)",textTransform:"uppercase",letterSpacing:.8}}>Overall</div><div style={{fontSize:21,fontWeight:800,fontFamily:"var(--ss-font)",color:"#fff"}}>{overall}%</div></div>}
-          {att.pct!=null&&<div style={{background:"rgba(255,255,255,.1)",borderRadius:11,padding:"9px 15px"}}><div style={{fontSize:9.5,color:"rgba(255,255,255,.55)",textTransform:"uppercase",letterSpacing:.8}}>Attendance</div><div style={{fontSize:21,fontWeight:800,fontFamily:"var(--ss-font)",color:att.pct>=75?"#7ee2a8":"#ffd479"}}>{att.pct}%</div></div>}
-          {feeLoaded&&portalFee&&feeBal>0&&<div onClick={()=>goTo("pv-fees")} style={{background:"rgba(225,70,59,.22)",borderRadius:11,padding:"9px 15px",cursor:"pointer"}}><div style={{fontSize:9.5,color:"rgba(255,255,255,.7)",textTransform:"uppercase",letterSpacing:.8}}>Fees due</div><div style={{fontSize:21,fontWeight:800,fontFamily:"var(--ss-font)",color:"#ff9a9a"}}>{inr(feeBal)}</div></div>}
+      {/* ── HERO ── the school's navy-and-gold card: the child, their photograph, and the three numbers a
+           parent actually opens the app for. Navy/gold are brand literals and stay fixed in both themes;
+           --on-brand is #fff in light AND dark, so text on the navy never inverts to invisible. */}
+      <div style={{background:"#0d1b2a",borderRadius:16,overflow:"hidden"}}>
+        <div style={{display:"flex",alignItems:"center",gap:13,padding:"16px 16px 17px"}}>
+          {/* The initial always sits underneath; the photo covers it. If the stored image is corrupt or
+              half-written, onError hides it and the initial shows through — never a broken-image icon. */}
+          <div style={{width:56,height:56,borderRadius:14,flex:"none",overflow:"hidden",background:"rgba(255,255,255,.07)",border:"1px solid rgba(217,183,90,.45)",display:"flex",alignItems:"center",justifyContent:"center",position:"relative"}}>
+            <span style={{fontSize:20,fontWeight:800,color:"#d9b75a"}}>{String(student||"?").trim().charAt(0).toUpperCase()}</span>
+            {childPhoto?<img src={childPhoto} alt="" onError={e=>{e.target.style.display="none";}} style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}/>:null}
+          </div>
+          <div style={{minWidth:0,flex:1}}>
+            <div style={{fontSize:10,fontWeight:700,letterSpacing:".13em",textTransform:"uppercase",color:"#d9b75a"}}>{cls}{_mySec?" · Section "+_mySec:""}</div>
+            <div style={{fontSize:24,fontWeight:800,letterSpacing:"-.032em",lineHeight:1.12,color:"var(--on-brand)",margin:"5px 0 4px",wordBreak:"break-word"}}>{student}</div>
+            <div style={{fontSize:12,color:"rgba(255,255,255,.62)",fontVariantNumeric:"tabular-nums"}}>{rollNo>0?"Roll no. "+rollNo:""}{rollNo>0&&padm?" · ":""}{padm?"Adm. "+padm:""}</div>
+          </div>
+          {window.__SESSION&&<div style={{flex:"none",alignSelf:"flex-start",fontSize:10.5,fontWeight:700,letterSpacing:".04em",color:"rgba(255,255,255,.62)",background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.13)",borderRadius:8,padding:"4px 8px",fontVariantNumeric:"tabular-nums"}}>{window.__SESSION}</div>}
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",borderTop:"1px solid rgba(255,255,255,.13)"}}>
+          {[["Overall",overall!==null?overall+"%":"—",false],
+            ["Attendance",att.pct!=null?att.pct+"%":"—",false],
+            // "Nil" only when the school has actually PUBLISHED a balance of zero. If nothing is published we
+            // do not know, so show a dash — telling a parent "Nil" when we simply have no figure is a lie.
+            ["Fees due",!feeLoaded?"—":(!portalFee?"—":(feeBal>0?inr(feeBal):"Nil")),!!(feeLoaded&&portalFee&&feeBal>0)]
+           ].map(function(s,i){return <div key={s[0]} onClick={s[2]?function(){goTo("pv-fees");}:null} style={{padding:"11px 14px 13px",borderLeft:i?"1px solid rgba(255,255,255,.13)":"none",cursor:s[2]?"pointer":"default"}}>
+            <div style={{fontSize:9.5,fontWeight:700,letterSpacing:".11em",textTransform:"uppercase",color:"rgba(255,255,255,.40)"}}>{s[0]}</div>
+            <div style={{fontSize:20,fontWeight:800,letterSpacing:"-.03em",marginTop:3,fontFamily:"var(--ss-font)",fontVariantNumeric:"tabular-nums",color:s[2]?"#d9b75a":"var(--on-brand)"}}>{s[1]}</div>
+          </div>;})}
         </div>
       </div>
-      {/* quick actions */}
-      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-        {[["Pay fees","pv-fees"],["Homework","pv-hw"],["Attendance","pv-att"],["Results","pv-results"]].map(c=><button key={c[1]} onClick={()=>goTo(c[1])} className="ss-press" style={{flex:"1 1 30%",minWidth:96,background:"var(--c-fff)",border:"1px solid var(--ap-line)",borderRadius:12,padding:"11px 10px",fontSize:12.5,fontWeight:600,color:"var(--ap-ink)",cursor:"pointer",fontFamily:"var(--ss-font)"}}>{c[0]}</button>)}
+      {/* ── IS MY CHILD IN SCHOOL TODAY? ── colour answers it before a word is read: GREEN with a big "P"
+           when present, RED with a big "A" when absent, and BLUE with nothing on the right when the
+           register has not been taken. Leave and holiday are deliberately quieter so they can never be
+           mistaken for the two answers that matter. */}
+      {(function(){
+        var S=todayAtt.v;
+        var st = S==="P" ? {bg:"var(--bg-grn)",fg:"var(--tx-grn2)",g:"P",t:"In school today",s:"Marked present in today's register."}
+          : S==="A" ? {bg:"var(--bg-red)",fg:"var(--tx-red)",g:"A",t:"Absent today",s:"Not in today's register. Please tell the class teacher if this is unexpected."}
+          : S==="L" ? {bg:"var(--bg-amb)",fg:"var(--tx-org2)",g:"L",sm:true,t:"On leave today",s:"Recorded as approved leave in today's register."}
+          : todayAtt.holiday ? {bg:"var(--c-f7)",fg:"var(--ap-ink)",g:"",t:"School holiday",s:"No attendance is taken today."}
+          : {bg:"var(--bg-blu)",fg:"var(--tx-blu)",g:"",t:"Register not taken yet",s:"Today's attendance has not been marked so far. Please check again a little later."};
+        return <div style={{background:st.bg,borderRadius:16,overflow:"hidden"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,padding:"11px 16px",borderBottom:"1px solid rgba(128,128,128,.16)"}}>
+            <span style={{width:7,height:7,borderRadius:"50%",background:st.fg,flex:"none"}}/>
+            <span style={{fontSize:10,fontWeight:800,letterSpacing:".13em",textTransform:"uppercase",color:st.fg}}>Today</span>
+            <span style={{marginLeft:"auto",fontSize:10.5,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase",color:st.fg,opacity:.75,fontVariantNumeric:"tabular-nums"}}>{(function(){
+              // "Tue, 5 Aug" reads to a parent far faster than 05/08/2026. Falls back to the app-wide
+              // formatter if the date can't be parsed, so this can never render "Invalid Date".
+              try{var d=new Date(today()+"T00:00:00");if(isNaN(d))return fmtDate(today());
+                return d.toLocaleDateString("en-IN",{weekday:"short",day:"numeric",month:"short"});}catch(e){return fmtDate(today());}
+            })()}</span>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:12,padding:"16px 16px 18px",minHeight:104,boxSizing:"border-box"}}>
+            <div style={{minWidth:0,flex:1}}>
+              <div style={{fontSize:19,fontWeight:800,letterSpacing:"-.025em",lineHeight:1.18,color:st.fg}}>{st.t}</div>
+              <div style={{fontSize:12.5,lineHeight:1.5,color:"var(--ap-ink2)",marginTop:6}}>{st.s}</div>
+            </div>
+            {st.g?<div style={{flex:"none",fontSize:st.sm?34:80,lineHeight:st.sm?1:.72,fontWeight:800,letterSpacing:"-.06em",color:st.fg,opacity:st.sm?.65:1,margin:"0 2px 0 4px",fontFamily:"var(--ss-font)"}}>{st.g}</div>:null}
+          </div>
+          <div onClick={()=>goTo("pv-att")} className="ss-press" style={{display:"flex",alignItems:"center",gap:6,padding:"12px 16px",borderTop:"1px solid rgba(128,128,128,.16)",cursor:"pointer",fontSize:12.5,color:"var(--ap-ink2)"}}>
+            Attendance record{att.pct!=null?<> · <b style={{color:"var(--ap-ink)"}}>{att.pct}% this term</b></>:null}
+            <span style={{marginLeft:"auto",color:"var(--ap-faint)"}}>›</span>
+          </div>
+        </div>;
+      })()}
+      {/* quick actions — one row, hairline-separated, minimal stroke icons (no emoji) */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:1,background:"var(--ap-line)",border:"1px solid var(--ap-line)",borderRadius:14,overflow:"hidden"}}>
+        {[["Pay fees","pv-fees","M3 7h18v10H3z M3 11h18"],
+          ["Homework","pv-hw","M6 3h9l3 3v15H6z M9 9h6 M9 13h6 M9 17h4"],
+          ["Attendance","pv-att","M4 5h16v16H4z M4 9h16 M8 3v4 M16 3v4 M9 14l2 2 4-4"],
+          ["Results","pv-results","M5 20V10 M12 20V4 M19 20v-7"]].map(function(c){
+          return <button key={c[1]} onClick={()=>goTo(c[1])} className="ss-press" style={{background:"var(--c-fff)",border:"none",padding:"13px 6px 12px",fontSize:12,fontWeight:600,color:"var(--ap-ink)",cursor:"pointer",fontFamily:"var(--ss-font)",display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="var(--tx-gold)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={c[2]}/></svg>
+            {c[0]}
+          </button>;})}
       </div>
       {/* school announcements — circulars published from Communication → Parent Broadcast (In-app channel) */}
       {(()=>{
@@ -10433,10 +10521,12 @@ function Fees({user,feesDB,studentsDB,academicRosterDB,dirDB,metaDB}){
   const ALL_CLASSES=useMemo(function(){var order=__DIR_ORDER;var out=[];order.forEach(function(cn){var doc=dirDB&&dirDB.data&&dirDB.data["dir_"+cn];if(doc&&(doc.students||[]).some(function(s){return String(s.status||"").toLowerCase()!=="left";}))out.push(__clsTokLabel(cn));});return out.length?out:SCHOOL.classes;},[dirDB&&dirDB.data]);
   // Roster: prefer the directory (all classes, master spelling); fall back to academic roster / legacy list.
   const rosterFor=(c)=>{var cn=String(c).replace("Class ","").trim();var dk=(cn==="SIP"||cn==="SIP CLASS"||cn==="SIP_CLASS")?"dir_SIP_CLASS":"dir_"+cn;var doc=dirDB&&dirDB.data&&dirDB.data[dk];
-    if(doc&&Array.isArray(doc.students)&&doc.students.length) return doc.students.filter(s=>String(s.status||"").toLowerCase()!=="left").map(s=>({admNo:String(s.admNo||""),name:s.name,section:s.section||"",oldNew:s.oldNew||""}));
+    // `concession` is carried through (it holds "RTE STUDENT DISCOUNT" etc.) — the RTE panel reads it off the roster,
+    // and without it every RTE child would look like an ordinary full-fee student.
+    if(doc&&Array.isArray(doc.students)&&doc.students.length) return doc.students.filter(s=>String(s.status||"").toLowerCase()!=="left").map(s=>({admNo:String(s.admNo||""),name:s.name,section:s.section||"",oldNew:s.oldNew||"",concession:s.concession||""}));
     const d=academicRosterDB&&academicRosterDB.data&&academicRosterDB.data[safeId(c)];
-    if(d&&Array.isArray(d.students)&&d.students.length) return d.students.map(s=>({admNo:String(s.admNo||""),name:s.name,section:s.section||"",oldNew:""}));
-    return ((studentsDB.data[safeId(c)]?.list)||[]).map(nm=>({admNo:"",name:nm,section:"",oldNew:""}));};
+    if(d&&Array.isArray(d.students)&&d.students.length) return d.students.map(s=>({admNo:String(s.admNo||""),name:s.name,section:s.section||"",oldNew:"",concession:s.concession||""}));
+    return ((studentsDB.data[safeId(c)]?.list)||[]).map(nm=>({admNo:"",name:nm,section:"",oldNew:"",concession:""}));};
   const roster=rosterFor(cls);
   const students=roster.map(s=>s.name);
   const selStu=roster.find(s=>s.name===student)||{};
@@ -10687,6 +10777,35 @@ td.r,th.r{text-align:right}
     try{await feesDB.set("__waivers",{...(feesDB.data.__waivers||{}),byAdm:cur,updatedAt:new Date().toISOString()});}
     catch(e){setWSaving(false);setWMsg("Could not seed — "+(e&&e.message||"try again"));return;}
     setWSaving(false);setWMsg("✓ Seeded "+added+" waiver"+(added===1?"":"s")+" from import (existing ones untouched).");
+  };
+  // ---- RTE students (Classes 1–8) get a 100% waiver of their annual fee ----
+  // Built from the live roster rather than a fixed list, so a newly-admitted RTE child appears here automatically.
+  const rteRows=useMemo(()=>{const out=[];
+    ALL_CLASSES.forEach(c=>{ if(!__rteClsEligible(c))return;
+      rosterFor(c).forEach(s=>{ const via=__rteFlag(s); if(!via)return;
+        const annual=annualForStu(c,s.section,s.oldNew);
+        const cur=waiverFor(feesDB.data,s.admNo);
+        out.push({admNo:s.admNo||"",name:s.name,cls:c,via,annual,cur,
+          needs:!!s.admNo&&annual>0&&cur!==annual});
+      });
+    });
+    return out.sort((a,b)=>(parseInt(a.cls.replace(/\D/g,""),10)-parseInt(b.cls.replace(/\D/g,""),10))||String(a.name).localeCompare(String(b.name)));
+  },[dirDB&&dirDB.data,academicRosterDB.data,studentsDB.data,feesDB.data,structure]);
+  const rteTodo=rteRows.filter(r=>r.needs), rteNoAdm=rteRows.filter(r=>!r.admNo);
+  const applyRteWaivers=async()=>{
+    if(!rteTodo.length){setWMsg(rteNoAdm.length?(rteNoAdm.length+" RTE student"+(rteNoAdm.length===1?" has":"s have")+" no admission number — sync the academic roster (Student Records) first."):"Every RTE student already carries a full waiver.");return;}
+    const tot=rteTodo.reduce((a,r)=>a+r.annual,0);
+    if(!(await window.__confirm({title:"Apply RTE waiver to "+rteTodo.length+" student"+(rteTodo.length===1?"":"s")+"?",
+      body:"RTE is free schooling for Classes 1–8, so each of these children gets a 100% waiver of their annual fee — "+inr(tot)+" in total. Any existing waiver on these students is replaced; every other student is left untouched.",
+      confirmText:"Apply RTE waiver"})))return;
+    setWSaving(true);
+    const cur={...(feesDB.data.__waivers?.byAdm||{})};
+    rteTodo.forEach(r=>{cur[String(r.admNo)]={admNo:String(r.admNo),cls:r.cls,amount:r.annual,reason:"RTE — free schooling (Classes 1–8)",rte:true,by:user.name,at:new Date().toISOString()};});
+    try{await feesDB.set("__waivers",{...(feesDB.data.__waivers||{}),byAdm:cur,updatedAt:new Date().toISOString()});}
+    catch(e){setWSaving(false);setWMsg("Could not apply — "+(e&&e.message||"try again"));return;}
+    try{if(typeof logAudit==="function")logAudit("apply-rte-waivers",{students:rteTodo.length,total:tot});}catch(e){}
+    setWSaving(false);
+    setWMsg("✓ RTE waiver applied to "+rteTodo.length+" student"+(rteTodo.length===1?"":"s")+" ("+inr(tot)+")."+(rteNoAdm.length?" "+rteNoAdm.length+" skipped — no admission number.":""));
   };
   const pendingRows=()=>{const out=[];const _t=today();
     const _inB=d=>ageFilter==="1-7"?(d<=7):ageFilter==="8-30"?(d>=8&&d<=30):ageFilter==="31-60"?(d>=31&&d<=60):ageFilter==="61+"?(d>=61):true;
@@ -11241,6 +11360,29 @@ td.r,th.r{text-align:right}
               {wMsg&&<div style={{fontSize:12.5,color:"var(--ap-ink2)"}}>{wMsg}</div>}
             </div>
           </InsPanel>
+          {rteRows.length>0&&<InsPanel title={"RTE students · "+rteRows.length+" in Classes 1–8"} sub="Right to Education is free schooling up to Class 8, so each of these children should carry a 100% waiver of their annual fee.">
+            <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginBottom:12}}>
+              <div style={{fontSize:12.5,color:"var(--ap-ink2)",lineHeight:1.5}}>
+                {rteTodo.length>0
+                  ? <><b>{rteTodo.length}</b> still billed in full — <b>{inr(rteTodo.reduce((a,r)=>a+r.annual,0))}</b> to waive.</>
+                  : <span style={{color:"var(--tx-grn)"}}>All {rteRows.length} already fully waived.</span>}
+                {rteNoAdm.length>0&&<span style={{color:"var(--tx-org2)"}}> · {rteNoAdm.length} without an admission number cannot be waived — sync the academic roster first.</span>}
+              </div>
+              <div style={{flex:1,minWidth:10}}/>
+              <Btn onClick={applyRteWaivers} disabled={wSaving||!rteTodo.length}>{wSaving?"Applying…":"Apply 100% RTE waiver"}</Btn>
+            </div>
+            <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead><tr><th style={th}>Student</th><th style={th}>Class</th><th style={th}>Flagged via</th><th style={{...th,textAlign:"right"}}>Annual</th><th style={{...th,textAlign:"right"}}>Waiver now</th><th style={th}>Status</th></tr></thead>
+              <tbody>{rteRows.map(r=><tr key={(r.admNo||r.name)+r.cls}>
+                <td style={td}>{r.name}</td>
+                <td style={td}>{r.cls}</td>
+                <td style={{...td,fontSize:12,color:r.via==="name"?"var(--tx-org2)":"var(--c-64)"}}>{r.via==="name"?"name only":"concession field"}</td>
+                <td style={{...td,textAlign:"right",...mono}}>{inr(r.annual)}</td>
+                <td style={{...td,textAlign:"right",...mono,fontWeight:700,color:r.cur>0?"var(--tx-grn)":"var(--c-94)"}}>{r.cur>0?inr(r.cur):"—"}</td>
+                <td style={{...td,fontSize:12,fontWeight:600,color:!r.admNo?"var(--tx-org2)":(r.needs?"var(--tx-red)":"var(--tx-grn)")}}>{!r.admNo?"no admission no.":(r.needs?"billed in full":"waived")}</td>
+              </tr>)}</tbody>
+            </table></div>
+          </InsPanel>}
           <InsPanel title={"On record · "+list.length+" waiver"+(list.length===1?"":"s")+(list.length?" · "+inr(totalW)+" total":"")} sub="All concessions and sibling discounts currently deducted from fees">
             <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginBottom:12}}>
               <button onClick={seedWaiversFromImport} disabled={wSaving} style={{background:"var(--c-f5)",border:"1px solid var(--c-ec)",borderRadius:9,padding:"8px 13px",fontSize:12.5,fontWeight:600,cursor:wSaving?"default":"pointer",color:"var(--ap-ink)"}}>⤓ Seed from imported discounts</button>
@@ -13575,6 +13717,48 @@ function BulkParentAccounts({dirDB,usersDB,accountsDB}){
     return out;
   },[dirDB&&dirDB.data,cls,haveByAdm,takenUser]);
 
+  // Every student in the directory by admission no. — used to put a name, class and date of birth against a
+  // login that already exists. Deliberately NOT filtered by the class picker.
+  const dirByAdm=useMemo(function(){
+    var m={};
+    Object.keys((dirDB&&dirDB.data)||{}).forEach(function(k){
+      if(k.indexOf("dir_")!==0)return;
+      var lbl=__clsTokLabel(k.slice(4));
+      (((dirDB.data[k]||{}).students)||[]).forEach(function(s){
+        if(!s||!s.name)return;
+        var a=String(s.admNo||"").trim();if(!a)return;
+        m[a]={name:s.name,cls:lbl,section:s.section||"",dob:__ppDob(s),left:String(s.status||"").toLowerCase()==="left"};
+      });
+    });
+    return m;
+  },[dirDB&&dirDB.data]);
+
+  // EVERY parent login on record, not just the batch created in this session — so the slips can be reprinted
+  // at any time (a lost slip, a new class teacher, a parent meeting) without creating anything.
+  const allLogins=useMemo(function(){
+    var out=[],seen={};
+    var add=function(u){
+      if(!u||u.role!=="parent")return;
+      var un=String(u.username||"").trim();if(!un)return;
+      var lk=un.toLowerCase();if(seen[lk])return;seen[lk]=1;
+      var adm=String(u.admNo||u.childAdmNo||"").trim();
+      var d=dirByAdm[adm]||{};
+      out.push({username:un,adm:adm,name:u.student||d.name||"—",cls:u.cls||d.cls||"",section:d.section||"",
+                dob:d.dob||"",left:!!d.left,
+                // pwdTemp was never cleared before this build, so treat only an explicit false as "changed".
+                changed:u.pwdTemp===false});
+    };
+    Object.values(_branchUsers((usersDB&&usersDB.data)||{},__br)).forEach(add);
+    // `accounts` is a GLOBAL (un-prefixed) collection, so it must be branch-filtered by hand — otherwise this
+    // branch's printout would carry another campus's parent logins.
+    Object.values((accountsDB&&accountsDB.data)||{}).forEach(function(a){
+      if(a&&a.branches&&a.branches.length&&a.branches.indexOf(__br||"greencity")<0)return;
+      add(a);
+    });
+    out.sort(function(a,b){return (__clsNum(a.cls)-__clsNum(b.cls))||String(a.name).localeCompare(String(b.name));});
+    return out;
+  },[usersDB&&usersDB.data,accountsDB&&accountsDB.data,dirByAdm,__br]);
+
   const ready=useMemo(function(){return rows.filter(function(r){return r.status==="ready";});},[rows]);
   const counts=useMemo(function(){var c={ready:0,exists:0,"no-phone":0,"no-dob":0,"no-adm":0,"user-taken":0};rows.forEach(function(r){c[r.status]=(c[r.status]||0)+1;});return c;},[rows]);
   const selected=useMemo(function(){return ready.filter(function(r){return sel[r.adm];});},[ready,sel]);
@@ -13624,19 +13808,23 @@ function BulkParentAccounts({dirDB,usersDB,accountsDB}){
       '<tr><td>Admission no.</td><th>'+esc(r.adm)+'</th></tr>'+
       '<tr><td>Website</td><th>ssic1.vercel.app</th></tr>'+
       '<tr><td>Username</td><th class="m">'+esc(r.username)+'</th></tr>'+
-      '<tr><td>Password</td><th class="m">'+esc(r.dob)+'</th></tr></table>'+
+      '<tr><td>Password</td><th class="m">'+(r.changed?'<span class="c">set by you</span>':esc(r.dob||"—"))+'</th></tr></table>'+
       '<div class="n"><b>Username</b> is your registered mobile number'+(r.siblingOf>1?' (with &ndash;'+esc(String(r.username).split("-")[1]||"")+' because more than one child is registered on this number)':'')+
-      '. <b>Password</b> is your child\'s date of birth written as DDMMYYYY &mdash; '+esc(r.dob)+'. Please change the password after signing in the first time. You can see only your own child\'s attendance, marks and fees.</div></div>';}).join("");
+      '. '+(r.changed
+        ? '<b>Password</b> is the private one you already set. If you have forgotten it, ask the school office to reset it.'
+        : '<b>Password</b> is your child\'s date of birth written as DDMMYYYY &mdash; '+esc(r.dob||"—")+'. If you have already changed it, keep using your own password.')+
+      ' Please change the password after signing in the first time. You can see only your own child\'s attendance, marks and fees.</div></div>';}).join("");
     w.document.write('<!DOCTYPE html><html><head><title>Parent portal logins</title><style>'+
       'body{font-family:Arial,sans-serif;margin:14px}.s{border:1px solid #999;border-radius:8px;padding:12px 14px;margin:0 0 10px;page-break-inside:avoid;max-width:520px}'+
       '.h{font-weight:700;font-size:15px}.b{font-size:11px;color:#555;margin-bottom:8px}'+
       'table{width:100%;border-collapse:collapse;font-size:13px}td{color:#555;padding:3px 0;width:38%}th{text-align:left;padding:3px 0}'+
       '.m{font-family:monospace;font-size:15px;letter-spacing:.5px}.n{font-size:10.5px;color:#555;margin-top:8px;line-height:1.45}'+
+      '.c{font-family:Arial,sans-serif;font-size:12px;font-style:italic;color:#555;letter-spacing:0}'+
       '</style></head><body>'+cards+'</body></html>');
     w.document.close();w.print();
   }
   function copyList(list){
-    var t=list.map(function(r){return [r.name,r.cls+(r.section?" "+r.section:""),r.adm,r.username,r.dob].join("\t");}).join("\n");
+    var t=list.map(function(r){return [r.name,r.cls+(r.section?" "+r.section:""),r.adm,r.username,r.changed?"(set by parent)":(r.dob||"—")].join("\t");}).join("\n");
     try{navigator.clipboard.writeText("Student\tClass\tAdmission\tUsername (mobile)\tPassword (DOB)\n"+t);if(window.__toast)window.__toast("Copied "+list.length+" login"+(list.length===1?"":"s")+" to the clipboard","ok");}catch(e){}
   }
 
@@ -13654,6 +13842,23 @@ function BulkParentAccounts({dirDB,usersDB,accountsDB}){
         <div style={{fontWeight:700,fontSize:14.5,color:"var(--ap-ink)"}}>Bulk parent logins — pilot onboarding</div>
         <div style={{fontSize:12,color:"var(--ap-muted)",marginTop:2}}>Creates logins straight from Student Records. Username = <b>the parent's mobile</b>, password = <b>the child's date of birth (DDMMYYYY)</b> — both already known to the parent. Each login is tied to the child's admission number.</div>
       </div>
+
+      {/* Every login ever created — reprint slips at any time (lost slip, parent meeting, new class teacher)
+          without creating a single new account. */}
+      {allLogins.length>0&&(function(){
+        var live=allLogins.filter(function(r){return !r.left;});
+        var gone=allLogins.length-live.length;
+        return <div style={{padding:"11px 18px",display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",borderBottom:"1px solid var(--ap-line)"}}>
+          <div style={{fontSize:12.5,color:"var(--ap-ink2)"}}>
+            <b style={{color:"var(--ap-ink)"}}>{allLogins.length}</b> parent login{allLogins.length===1?"":"s"} on record
+            {gone>0?<span style={{color:"var(--ap-muted)"}}> · {gone} for {gone===1?"a child who has":"children who have"} left, not printed</span>:null}
+          </div>
+          <div style={{marginLeft:"auto",display:"flex",gap:8,flexWrap:"wrap"}}>
+            <Btn v="ghost" onClick={function(){printSlips(live);}}>⤓ Download PDF — all {live.length} logins</Btn>
+            <Btn v="ghost" onClick={function(){copyList(allLogins);}}>Copy all</Btn>
+          </div>
+        </div>;
+      })()}
 
       <div style={{padding:"12px 18px",display:"flex",gap:12,alignItems:"flex-end",flexWrap:"wrap",background:"var(--c-f7)",borderBottom:"1px solid var(--ap-line)"}}>
         <div style={{minWidth:150}}><Lbl c="Class"/><Sel value={cls} onChange={setCls} options={[{v:"",l:"All classes"}].concat(CLS.map(function(c){return{v:c,l:c};}))}/></div>
@@ -18613,8 +18818,12 @@ function ChangePassword({user,onBack}){
       if(window.__authUpdatePassword){
         await window.__authUpdatePassword(newP);
         if(window.__db){try{await window.__fbSetDoc(window.__fbDoc(window.__db,"users",safeId(user.username)),{
-          ...user, password:newP
+          // pwdTemp MUST be cleared here. It was being carried straight through by the `...user` spread, so a
+          // parent who had already set their own password kept seeing "Please change your password" forever —
+          // and the printed login sheet kept claiming their password was still the child's date of birth.
+          ...user, password:newP, pwdTemp:false
         });}catch(e2){/* legacy sync is best-effort — the Auth password above is what login checks */}}
+        try{if(user)user.pwdTemp=false;}catch(e3){}   // hide the nudge immediately, without waiting for a re-login
         setMsg("✓ Password changed successfully! Use your new password next time you log in.");
         setCurr("");setNewP("");setConf("");
       } else {
