@@ -8758,7 +8758,8 @@ function ParentView({user,testsDB,examsDB,studentsDB,academicRosterDB,attendance
     });
     return out;
   },[attendanceDB&&attendanceDB.data,student,padm,cls,_mySec]);
-  const childPhoto=useOnePhoto(padm);
+  const[childPhoto]=useOnePhoto(padm);   // returns a [photo,setPhoto] TUPLE — assigning it whole yields a
+                                         // always-truthy array that renders as a broken <img> and hides the real photo.
   // This child's OWN published fee balance (portalFees/{admNo}) + the school UPI config — exactly the parent-pay path StudentMyReport uses.
   const[portalFee,setPortalFee]=useState(null);const[feeLoaded,setFeeLoaded]=useState(false);
   useEffect(()=>{let cancel=false;const load=async()=>{if(!padm||!window.__db||!window.__fbGetDoc||!window.__fbDoc){setFeeLoaded(true);return;}try{const snap=await window.__fbGetDoc(window.__fbDoc(window.__db,"portalFees",String(padm)));if(!cancel&&snap&&snap.exists&&snap.exists())setPortalFee(snap.data());}catch(e){}if(!cancel)setFeeLoaded(true);};if(window.__fbReady)load();else window.addEventListener("fbready",load,{once:true});return()=>{cancel=true;};},[padm]);
