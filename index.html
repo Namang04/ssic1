@@ -2,8 +2,18 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
 <title>Stepping Stone — Academic Portal</title>
+<!-- Installable app (Android/iOS home screen). The service worker below already caches the shell, so once
+     installed it opens full-screen with no browser chrome and works on a weak connection. -->
+<link rel="manifest" href="manifest.json"/>
+<meta name="theme-color" content="#0d1b2a"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="Stepping Stone"/>
+<link rel="apple-touch-icon" href="apple-touch-icon.png"/>
+<link rel="icon" href="favicon.png" type="image/png"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
@@ -497,12 +507,62 @@ body,.ap-panel,.ap-content,.ap-nav,.ap-topbar{transition:background-color .25s e
 </head>
 <body>
 <script>/* lazy content loader */
-window.__ssEnsureContent=function(){if(window.__ssContentP)return window.__ssContentP;window.__ssContentP=new Promise(function(res){if(window.__ssContentReady)return res(true);var s=document.createElement("script");s.src="ssic-content.js?v=5";s.async=true;s.onload=function(){window.__ssContentReady=true;res(true);};s.onerror=function(){window.__ssContentP=null;res(false);};document.head.appendChild(s);});return window.__ssContentP;};
+window.__ssEnsureContent=function(){if(window.__ssContentP)return window.__ssContentP;window.__ssContentP=new Promise(function(res){if(window.__ssContentReady)return res(true);var s=document.createElement("script");s.src="ssic-content.js?v=6";s.async=true;s.onload=function(){window.__ssContentReady=true;res(true);};s.onerror=function(){window.__ssContentP=null;res(false);};document.head.appendChild(s);});return window.__ssContentP;};
 </script>
 <script>/* offline cache: makes repeat opens near-instant on any device. Safe for frequent deploys —
    the app shell is fetched network-first so a new GitHub→Vercel push always lands when online;
    only the big content bundle is served cache-first. Firebase/Firestore are never touched by the SW. */
 if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){});});}
+/* ── Install to home screen ──────────────────────────────────────────────────────────────────────────────
+   Chrome fires beforeinstallprompt only when the app is installable (manifest + icons + service worker over
+   HTTPS). We stash the event and offer a small one-tap bar, because almost nobody finds Chrome's own
+   "Add to Home screen" menu item. Dismissal is remembered so it never nags. Written in plain JS, outside
+   React, so it also shows on the login screen — which is where a parent first arrives. */
+(function(){
+  if(typeof window==='undefined')return;
+  var DISMISS='ss_install_dismissed', deferred=null;
+  var standalone=window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true;
+  if(standalone)return;                                  // already installed
+  window.addEventListener('beforeinstallprompt',function(e){
+    e.preventDefault(); deferred=e;
+    try{ if(localStorage.getItem(DISMISS))return; }catch(_){}
+    show();
+  });
+  window.addEventListener('appinstalled',function(){ try{localStorage.setItem(DISMISS,'1');}catch(_){} var b=document.getElementById('ss-install');if(b)b.remove(); });
+  function show(){
+    if(document.getElementById('ss-install'))return;
+    var bar=document.createElement('div'); bar.id='ss-install';
+    /* sit ABOVE the mobile quick-bar (~62px) so it never covers Home/Fees/Attendance */
+    var lift=(window.innerWidth<=768?76:12);
+    bar.setAttribute('style','position:fixed;left:12px;right:12px;bottom:'+lift+'px;z-index:99999;display:flex;align-items:center;gap:12px;'+
+      'background:#0d1b2a;color:#fff;border-radius:14px;padding:12px 14px;box-shadow:0 10px 30px rgba(0,0,0,.35);'+
+      'font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:13.5px;max-width:520px;margin:0 auto');
+    var ico=document.createElement('img'); ico.src='icon-192.png'; ico.alt='';
+    ico.setAttribute('style','width:34px;height:34px;border-radius:9px;background:#fff;flex:none');
+    var txt=document.createElement('div'); txt.setAttribute('style','flex:1;min-width:0;line-height:1.35');
+    txt.innerHTML='<b>Install the school app</b><br><span style="opacity:.8;font-size:12px">Opens full screen and works on a weak signal.</span>';
+    var add=document.createElement('button'); add.textContent='Install';
+    add.setAttribute('style','background:#fff;color:#0d1b2a;border:none;border-radius:9px;padding:9px 16px;font-weight:700;font-size:13px;cursor:pointer;flex:none;font-family:inherit');
+    add.onclick=function(){ var d=deferred; deferred=null; bar.remove(); if(d&&d.prompt)d.prompt(); };
+    var no=document.createElement('button'); no.textContent='Not now'; no.setAttribute('aria-label','Dismiss');
+    no.setAttribute('style','background:none;color:#9fb0c9;border:none;font-size:12px;cursor:pointer;flex:none;font-family:inherit;text-decoration:underline');
+    no.onclick=function(){ try{localStorage.setItem(DISMISS,'1');}catch(_){} bar.remove(); };
+    bar.appendChild(ico); bar.appendChild(txt); bar.appendChild(add); bar.appendChild(no);
+    (document.body||document.documentElement).appendChild(bar);
+  }
+  /* iPhone/iPad get no beforeinstallprompt — Safari only supports Share ▸ Add to Home Screen, so tell them how. */
+  var isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)&&!window.MSStream;
+  if(isIOS){ window.addEventListener('load',function(){
+    try{ if(localStorage.getItem(DISMISS))return; }catch(_){}
+    setTimeout(function(){
+      if(document.getElementById('ss-install'))return;
+      show();
+      var b=document.getElementById('ss-install'); if(!b)return;
+      b.querySelector('div').innerHTML='<b>Add to Home Screen</b><br><span style="opacity:.8;font-size:12px">Tap Share, then “Add to Home Screen”.</span>';
+      var btn=b.querySelector('button'); if(btn)btn.remove();     // no programmatic install on iOS
+    },2500);
+  }); }
+})();
 </script>
 
 <script>(function(){try{var t=localStorage.getItem('ss_theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}})();</script>
