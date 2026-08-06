@@ -244,7 +244,7 @@ body,.ap-panel,.ap-content,.ap-nav,.ap-topbar{transition:background-color .25s e
 .ap-user .ap-rl{font-size:11px;color:var(--ap-muted);text-transform:capitalize}
 .ap-signout{margin-left:auto;color:var(--ap-faint);display:grid;place-items:center}
 .ap-main{margin-left:var(--ap-sidebar);min-height:100vh;display:flex;flex-direction:column}
-.ap-topbar{position:sticky;top:0;z-index:90;min-height:62px;display:flex;align-items:center;gap:14px;padding:10px 30px;background:var(--c-blur2);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);border-bottom:1px solid var(--ap-line)}
+.ap-topbar{position:sticky;top:0;z-index:90;min-height:62px;display:flex;align-items:center;gap:14px;padding:calc(10px + env(safe-area-inset-top,0px)) max(30px,env(safe-area-inset-right,0px)) 10px max(30px,env(safe-area-inset-left,0px));background:var(--c-blur2);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);border-bottom:1px solid var(--ap-line)}
 .ap-crumb{font-size:13px;color:var(--ap-muted);font-weight:500}
 .ap-crumb b{color:var(--ap-ink);font-weight:650}
 .ap-subnav{display:flex;gap:4px;overflow-x:auto;padding:3px;background:var(--c-ec);border-radius:12px}
@@ -260,7 +260,7 @@ body,.ap-panel,.ap-content,.ap-nav,.ap-topbar{transition:background-color .25s e
   .ap-sidebar.open{transform:none}
   .ap-main,.ap-foot{margin-left:0}
   .ap-content{padding:20px 16px 50px}
-  .ap-topbar{padding:10px 16px}
+  .ap-topbar{padding:calc(10px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) 10px max(16px,env(safe-area-inset-left,0px))}
   .ap-menu-btn{display:grid!important}
 }
 .ap-menu-btn{display:none;width:38px;height:38px;border-radius:50%;place-items:center;color:var(--ap-ink2);background:none;border:none;cursor:pointer}
@@ -364,7 +364,7 @@ body,.ap-panel,.ap-content,.ap-nav,.ap-topbar{transition:background-color .25s e
 .ap-viewtog button{font-size:12px;font-weight:600;color:var(--ap-muted);padding:6px 10px;border-radius:7px;display:flex;align-items:center;gap:5px;border:none;background:none;cursor:pointer;font-family:var(--ss-font)}
 .ap-viewtog button svg{width:14px;height:14px;stroke-width:1.9}
 .ap-viewtog button.on{background:var(--c-fff);color:var(--ap-ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
-.ap-subbar{position:sticky;top:62px;z-index:80;display:flex;align-items:center;gap:12px;padding:9px 30px;background:var(--c-blur2);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);border-bottom:1px solid var(--ap-line)}
+.ap-subbar{position:sticky;top:calc(62px + env(safe-area-inset-top,0px));z-index:80;display:flex;align-items:center;gap:12px;padding:9px 30px;background:var(--c-blur2);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);border-bottom:1px solid var(--ap-line)}
 .ap-subbar .ap-crumb{flex:none}
 @media(max-width:880px){.ap-topbar{flex-wrap:wrap;row-gap:8px}.ap-search{max-width:none;flex:1 1 100%;order:9}.ap-topchip{display:none}.ap-viewtog{display:none}.ap-branchsel span.bn{display:none}.ap-subbar{padding:8px 16px}}
 .ap-content.mobileview{max-width:420px;margin:22px auto 40px;border:11px solid #0c1626;border-radius:42px;box-shadow:0 30px 70px rgba(15,27,45,.30);overflow:hidden;padding:18px 14px 36px;background:var(--c-f5)}
@@ -534,7 +534,7 @@ if('serviceWorker' in navigator){window.addEventListener('load',function(){navig
     var bar=document.createElement('div'); bar.id='ss-install';
     /* sit ABOVE the mobile quick-bar (~62px) so it never covers Home/Fees/Attendance */
     var lift=(window.innerWidth<=768?76:12);
-    bar.setAttribute('style','position:fixed;left:12px;right:12px;bottom:'+lift+'px;z-index:99999;display:flex;align-items:center;gap:12px;'+
+    bar.setAttribute('style','position:fixed;left:12px;right:12px;bottom:calc('+lift+'px + env(safe-area-inset-bottom,0px));z-index:99999;display:flex;align-items:center;gap:12px;'+
       'background:#0d1b2a;color:#fff;border-radius:14px;padding:12px 14px;box-shadow:0 10px 30px rgba(0,0,0,.35);'+
       'font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:13.5px;max-width:520px;margin:0 auto');
     var ico=document.createElement('img'); ico.src='icon-192.png'; ico.alt='';
@@ -710,7 +710,7 @@ function ToastHost(){
     info:{bg:"var(--c-fff)",bd:"var(--ap-line)",fg:"var(--ap-ink)",ic:"bell"}
   };
   return(
-    <div style={{position:"fixed",right:16,bottom:16,zIndex:4000,display:"flex",flexDirection:"column",gap:10,maxWidth:"min(380px,calc(100vw - 32px))",pointerEvents:"none"}}>
+    <div style={{position:"fixed",right:16,bottom:"calc(16px + env(safe-area-inset-bottom,0px))",zIndex:4000,display:"flex",flexDirection:"column",gap:10,maxWidth:"min(380px,calc(100vw - 32px))",pointerEvents:"none"}}>
       {items.map(function(t){
         const c=tones[t.tone]||tones.info;
         return(
@@ -6936,6 +6936,7 @@ function Attendance({user,attendanceDB,studentsDB,usersDB,academicRosterDB,dirDB
    was buried under Resources → Admin → Tests where the director couldn't find it. Admin/VP-legacy only. */
 function TestCenter({user,testsDB,usersDB}){
   const isDir=user.role==="admin"&&user.fees!==false;
+  const[view,setView]=useState("all");   // "all" | "notopic"
   const ymNow=today().slice(0,7);
   const[month,setMonth]=useState(ymNow);
   const[fCls,setFCls]=useState("");
@@ -6960,6 +6961,23 @@ function TestCenter({user,testsDB,usersDB}){
   const classesInScope=useMemo(()=>[...new Set(all.map(t=>t.cls).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true})),[all]);
   const teacherNames=useMemo(()=>[...new Set(inMonth.map(t=>t.by||"—"))].sort(),[inMonth]);
   const list=useMemo(()=>inMonth.filter(t=>(!fCls||t.cls===fCls)&&(!fTeacher||(t.by||"—")===fTeacher)).sort((a,b)=>String(b.testDate||"").localeCompare(String(a.testDate||""))||String(b.at||"").localeCompare(String(a.at||""))),[inMonth,fCls,fTeacher]);
+  // ── Tests with no topic recorded ── a parent seeing "45%" learns nothing without the topic, so the portal now
+  // prints "Topic not recorded by the teacher" wherever it is missing. This view is the other half of that: it
+  // names exactly which tests are missing one, so the Director/VP can chase the teacher who left it blank.
+  // Blank strings count as missing, not just an absent field.
+  const hasTopic=(t)=>Array.isArray(t.topics)&&t.topics.some(x=>String(x||"").trim());
+  const noTopic=useMemo(()=>inMonth.filter(t=>!hasTopic(t))
+    .filter(t=>(!fCls||t.cls===fCls)&&(!fTeacher||(t.by||"—")===fTeacher))
+    .sort((a,b)=>String(a.by||"").localeCompare(String(b.by||""))||String(b.testDate||"").localeCompare(String(a.testDate||""))),[inMonth,fCls,fTeacher]);
+  const noTopicAll=useMemo(()=>inMonth.filter(t=>!hasTopic(t)),[inMonth]);   // unfiltered, for the tab badge
+  const noTopicByTeacher=useMemo(()=>{
+    const m={};noTopic.forEach(t=>{const k=t.by||"—";(m[k]=m[k]||[]).push(t);});
+    return Object.entries(m).map(([name,rows])=>({name,rows})).sort((a,b)=>b.rows.length-a.rows.length||String(a.name).localeCompare(String(b.name)));
+  },[noTopic]);
+  const copyNoTopic=()=>{
+    const t=noTopic.map(x=>[honorific(x.by)||x.by||"—",x.cls||"",x.subj||"",x.testDate?fmtDate(x.testDate):"no date",("week "+(x.week||"—"))].join("\t")).join("\n");
+    try{navigator.clipboard.writeText("Teacher\tClass\tSubject\tDate\tWeek\n"+t);if(window.__toast)window.__toast("Copied "+noTopic.length+" test"+(noTopic.length===1?"":"s")+" to the clipboard","ok");}catch(e){}
+  };
   const del=async(t)=>{
     if(!isDir||busy)return;
     if(!(await window.__confirm({title:"Delete this test?",body:(t.cls||"")+" · "+(t.subj||"")+" · "+(t.testDate?fmtDate(t.testDate):"no date")+" by "+(honorific(t.by)||"—")+". It moves to Recently Deleted (Settings) and can be restored — nothing is lost for good.",danger:true,confirmText:"Delete test"})))return;
@@ -6976,12 +6994,23 @@ function TestCenter({user,testsDB,usersDB}){
       <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:16,flexWrap:"wrap"}}>
         <div><div className="ap-hi">Test Center</div><div className="ap-hisub">Every class test in one place — who's testing, who isn't, and one-tap delete.</div></div>
       </div>
+      {/* Two pages: the full register, and the chase-list of tests with no topic recorded. */}
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        {[["all","All tests",null],["notopic","Missing topics",noTopicAll.length]].map(function(v){
+          var on=view===v[0];
+          return <button key={v[0]} onClick={function(){setView(v[0]);}} className="ss-press"
+            style={{display:"flex",alignItems:"center",gap:7,background:on?"var(--ap-accent)":"var(--c-fff)",color:on?"#fff":"var(--ap-ink2)",border:"1px solid "+(on?"var(--ap-accent)":"var(--ap-line)"),borderRadius:11,padding:"9px 15px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"var(--ss-font)"}}>
+            {v[1]}
+            {v[2]!==null&&v[2]>0&&<span style={{background:on?"rgba(255,255,255,.22)":"var(--bg-red)",color:on?"#fff":"var(--tx-red)",borderRadius:20,padding:"1px 8px",fontSize:11,fontWeight:800,fontVariantNumeric:"tabular-nums"}}>{v[2]}</span>}
+          </button>;})}
+      </div>
       {/* Filters */}
       <div className="ap-panel" style={{padding:16,display:"flex",gap:14,alignItems:"flex-end",flexWrap:"wrap"}}>
         <div style={{flex:1,minWidth:150}}><Lbl c="Month"/><Sel value={month} onChange={setMonth} options={[{v:"",l:"All time"},...months.map(m=>({v:m,l:monthLabel(m)}))]}/></div>
         <div style={{flex:1,minWidth:140}}><Lbl c="Class"/><Sel value={fCls} onChange={setFCls} options={[{v:"",l:"All classes"},...classesInScope.map(c=>({v:c,l:c}))]}/></div>
         <div style={{flex:1,minWidth:170}}><Lbl c="Teacher"/><Sel value={fTeacher} onChange={setFTeacher} options={[{v:"",l:"All teachers"},...teacherNames.map(n=>({v:n,l:honorific(n)||n}))]}/></div>
       </div>
+      {view==="all"&&<>
       {/* KPIs */}
       <div className="grid4 m2col" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14}}>
         <StatCard label="Tests recorded" val={inMonth.length} icon="📋" color="var(--brand)" sub={month?monthLabel(month):"All time"}/>
@@ -7019,6 +7048,37 @@ function TestCenter({user,testsDB,usersDB}){
               {isDir&&<button onClick={()=>del(t)} disabled={!!busy} className="ss-press" style={{background:"var(--bg-red)",color:"var(--tx-red)",border:"1px solid var(--bd-red)",borderRadius:8,padding:"6px 13px",fontSize:11.5,fontWeight:700,cursor:busy?"default":"pointer",fontFamily:"var(--ss-font)",opacity:busy===t.id?.6:1}}>{busy===t.id?"Deleting…":"Delete"}</button>}
             </div>))}
       </div>
+      </>}
+      {view==="notopic"&&(noTopic.length===0
+        ? <div className="ap-panel" style={{padding:"34px 20px",textAlign:"center"}}>
+            <div style={{fontSize:15,fontWeight:700,color:"var(--tx-grn2)"}}>Every test has a topic recorded</div>
+            <div style={{fontSize:12.5,color:"var(--ap-muted)",marginTop:5}}>Nothing to chase for {month?monthLabel(month):"any month"}{fCls?" · "+fCls:""}{fTeacher?" · "+(honorific(fTeacher)||fTeacher):""}.</div>
+          </div>
+        : <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <div className="ap-panel" style={{padding:16,display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
+              <div style={{fontSize:13,color:"var(--ap-ink2)",lineHeight:1.5}}>
+                <b style={{color:"var(--tx-red)"}}>{noTopic.length}</b> test{noTopic.length===1?"":"s"} with no topic recorded, across <b>{noTopicByTeacher.length}</b> teacher{noTopicByTeacher.length===1?"":"s"}.
+                <span style={{color:"var(--ap-muted)"}}> Parents see "Topic not recorded by the teacher" against each of these.</span>
+              </div>
+              <div style={{flex:1,minWidth:8}}/>
+              <Btn v="ghost" onClick={copyNoTopic}>Copy list</Btn>
+            </div>
+            {noTopicByTeacher.map(function(g){return (
+              <div key={g.name} className="ap-panel" style={{overflow:"hidden"}}>
+                <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 16px",borderBottom:"1px solid var(--ap-line)"}}>
+                  <div style={{fontSize:13.5,fontWeight:700,color:"var(--ap-ink)"}}>{honorific(g.name)||g.name}</div>
+                  <span style={{...pill,background:"var(--bg-red)",color:"var(--tx-red)"}}>{g.rows.length} missing</span>
+                </div>
+                {g.rows.map(function(t){return (
+                  <div key={t.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",borderTop:"1px solid var(--c-f0)",flexWrap:"wrap"}}>
+                    <div style={{minWidth:0,flex:1}}>
+                      <div style={{fontSize:13,fontWeight:600,color:"var(--ap-ink)"}}>{t.cls||"—"}{t.subj?" · "+t.subj:""}</div>
+                      <div style={{fontSize:11.5,color:"var(--ap-muted)",marginTop:2,fontVariantNumeric:"tabular-nums"}}>{t.testDate?fmtDate(t.testDate):"no date"}{t.week?" · week "+t.week:""} · {nMarked(t)} marked</div>
+                    </div>
+                    <span style={{...pill,background:"var(--c-f0)",color:"var(--ap-ink2)"}}>/{t.total||"—"}</span>
+                  </div>);})}
+              </div>);})}
+          </div>)}
       <div style={{fontSize:11.5,color:"var(--ap-muted)",padding:"0 4px 20px"}}>Deleted tests go to <b>Settings → Recently Deleted</b> and can be restored. Marks entry stays under <b>Tests → Enter Marks</b>.</div>
     </div>
   );
@@ -18543,7 +18603,7 @@ function App(){
     /* Tests got their own group — the old 13-item "Academics" pile buried them and the director couldn't
        find the per-teacher counts / delete (which sat under Resources → Admin). Test Center is the hub. */
     {id:"tests-grp", label:"Tests", sec:"MAIN", children:[
-      ...(isAdmin?[{id:"testcenter", label:"Test Center"}]:[]),
+      ...((isAdmin||isVP)?[{id:"testcenter", label:"Test Center"}]:[]),   // Director AND Vice Principal
       {id:"enter",         label:"Enter Marks"},
       {id:"participation", label:"Participation"},
       ...(isAdmin?[{id:"tracker", label:"Monthly Tracker"}]:[]),
@@ -18735,7 +18795,7 @@ function App(){
         {tab==="datacenter"&&isDirector&&<DataCenter user={user} dirDB={dirDB} studentsDB={studentsDB} testsDB={testsDB} usersDB={usersDB} feesDB={feesDB} examsDB={examsDB} noticesDB={noticesDB} registrationsDB={registrationsDB} academicRosterDB={academicRosterDB} metaDB={metaDB} attendanceDB={attendanceDB} curSession={curSession} viewSession={viewSession} setViewSession={setViewSession} allSessions={allSessions}/>}
         {tab==="topics"&&!isParent&&<ManageTopics user={user} usersDB={usersDB} topicsDB={topicsDB}/>}
         {tab==="syllabus"&&!isParent&&!isStudent&&<SyllabusTracker user={user} topicsDB={topicsDB} syllabusDB={syllabusDB}/>}
-        {tab==="testcenter"&&isAdmin&&<TestCenter user={user} testsDB={testsDB} usersDB={usersDB}/>}
+        {tab==="testcenter"&&(isAdmin||isVP)&&<TestCenter user={user} testsDB={testsDB} usersDB={usersDB}/>}
         {tab==="tracker"&&!isParent&&<TestTracker user={user} testsDB={testsDB} studentsDB={studentsDB} usersDB={usersDB} dirDB={dirDB} academicRosterDB={academicRosterDB}/>}
         {tab==="participation"&&!isParent&&<TestParticipation user={user} testsDB={testsDB} studentsDB={studentsDB} dirDB={dirDB} academicRosterDB={academicRosterDB}/>}
         {tab==="enter"&&!isParent&&<EnterMarks user={user} testsDB={testsDB} topicsDB={topicsDB} studentsDB={studentsDB} dirDB={dirDB} ttSetDB={ttSetDB} academicRosterDB={academicRosterDB}/>}
