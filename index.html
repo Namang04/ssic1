@@ -9141,6 +9141,11 @@ function ParentView({user,testsDB,examsDB,studentsDB,academicRosterDB,attendance
         const rows=Object.values((examsDB&&examsDB.data)||{})
           /* canonical class match — exam docs store "Class 10" while an account may carry "10"/"X"; an exact
              string compare silently matched nothing and looked like "exams don't work". */
+          /* PUBLISH GATE — an exam is invisible to parents until the Director/VP releases it. Marks are entered
+             over several days and reviewed at the PTM; showing them the moment a teacher saves would mean parents
+             read the result at home and stop coming in. `published` is opt-IN, so anything created before this
+             existed stays hidden until it is deliberately released. */
+          .filter(ex=>ex&&ex.published===true)
           .filter(ex=>ex&&ex.cls&&String(__clsNum(ex.cls))===String(__clsNum(cls))&&Array.isArray(ex.subjects)&&ex.subjects.length)
           .map(ex=>{
             let obt=0,max=0,any=false;const subs=[];
@@ -9665,6 +9670,27 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
   const[exSec,setExSec]=useState(""); // section filter for the Enter-Marks grid (#4: section-wise, not whole class)
   const[exSort,setExSort]=useState("added"); // "added" = roll / record order (default) · "az" = alphabetical
   const canViewAllSecEx=user.role==="admin"||user.role==="vp"||user.role==="office";
+  // ── Release marks to parents ── an exam stays hidden from the parent portal until the Director or VP publishes
+  // it, so results can be checked and handed over at the PTM before families read them at home.
+  const canPublishEx=user.role==="admin"||user.role==="vp";
+  const[pubBusy,setPubBusy]=useState(false);
+  const publishExam=async(on)=>{
+    if(!exam||pubBusy||!canPublishEx)return;
+    if(on&&!await window.__confirm({title:"Publish "+(exam.name||"this exam")+" to parents?",
+      body:"Every parent in "+(exam.cls||"this class")+" will immediately see their own child's marks for this exam. Publish only once the marks are final.",
+      confirmText:"Publish to parents"}))return;
+    if(!on&&!await window.__confirm({title:"Hide this exam from parents?",
+      body:"Parents will stop seeing these marks until you publish again. Nothing is deleted.",danger:true,confirmText:"Hide from parents"}))return;
+    setPubBusy(true);
+    const fresh=examsDB.data[selId]||exam;
+    try{await examsDB.set(selId,Object.assign({},fresh,on
+      ?{published:true,publishedAt:new Date().toISOString(),publishedBy:user.name||user.username}
+      :{published:false,unpublishedAt:new Date().toISOString(),publishedBy:user.name||user.username}));
+      try{logAudit(on?"publish-exam":"unpublish-exam","exams",(exam.name||"")+" "+(exam.cls||""),null,{id:selId});}catch(e){}
+      if(window.__toast)window.__toast(on?"Published — parents can now see these marks":"Hidden from parents","ok");
+    }catch(e){if(window.__toast)window.__toast("Could not change this — "+((e&&e.message)||"try again"),"err");}
+    setPubBusy(false);
+  };
   // create-exam form
   const[nClass,setNClass]=useState(examClasses[0]||SCHOOL.classes[0]);
   const[nTerm,setNTerm]=useState("Term 1");
@@ -10129,7 +10155,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
 
       {/* MARKS */}
       {tab==="marks"&&<div>
-        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14,flexWrap:"wrap"}}><ExamPicker/>{exam&&exSecsAvail.length>0&&<select value={exSec} onChange={e=>setExSec(e.target.value)} className="ss-input" style={{padding:"9px 12px",borderRadius:10,fontSize:13,fontWeight:600}}>{(canViewAllSecEx||exSecsAvail.length>1)&&<option value="">All sections</option>}{exSecsAvail.map(s=><option key={s} value={s}>{/^[A-D]$/.test(s)?"Section "+s:s}</option>)}</select>}{exam&&<div className="ap-subnav"><button className={"ap-pill"+(exSort==="added"?" on":"")} onClick={()=>setExSort("added")}>Roll</button><button className={"ap-pill"+(exSort==="az"?" on":"")} onClick={()=>setExSort("az")}>A–Z</button></div>}{exam&&<Btn onClick={saveMarks} disabled={saving}>{saving?"Saving…":"Save marks"}</Btn>}</div>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14,flexWrap:"wrap"}}><ExamPicker/>{exam&&<span style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:11,fontWeight:700,borderRadius:20,padding:"3px 10px",whiteSpace:"nowrap",background:exam.published?"var(--bg-grn)":"var(--bg-amb)",color:exam.published?"var(--tx-grn2)":"var(--tx-org2)"}}>{exam.published?"Visible to parents":"Not published"}</span>{canPublishEx&&<button onClick={()=>publishExam(!exam.published)} disabled={pubBusy} className="ss-press" style={{background:exam.published?"var(--c-f7)":"var(--ap-accent)",color:exam.published?"var(--ap-ink2)":"#fff",border:"1px solid "+(exam.published?"var(--ap-line)":"var(--ap-accent)"),borderRadius:9,padding:"7px 13px",fontSize:12.5,fontWeight:600,cursor:pubBusy?"default":"pointer",fontFamily:"var(--ss-font)",whiteSpace:"nowrap"}}>{pubBusy?"Saving…":(exam.published?"Hide from parents":"Publish to parents")}</button>}</span>}{exam&&exSecsAvail.length>0&&<select value={exSec} onChange={e=>setExSec(e.target.value)} className="ss-input" style={{padding:"9px 12px",borderRadius:10,fontSize:13,fontWeight:600}}>{(canViewAllSecEx||exSecsAvail.length>1)&&<option value="">All sections</option>}{exSecsAvail.map(s=><option key={s} value={s}>{/^[A-D]$/.test(s)?"Section "+s:s}</option>)}</select>}{exam&&<div className="ap-subnav"><button className={"ap-pill"+(exSort==="added"?" on":"")} onClick={()=>setExSort("added")}>Roll</button><button className={"ap-pill"+(exSort==="az"?" on":"")} onClick={()=>setExSort("az")}>A–Z</button></div>}{exam&&<Btn onClick={saveMarks} disabled={saving}>{saving?"Saving…":"Save marks"}</Btn>}</div>
         {!exam?<Empty icon="📝" title="No exam selected" sub="Create an exam first, then enter marks here."/>:
         roster.length===0?<Empty icon="👨‍🎓" title={"No students in "+exam.cls} sub="Add students to this class first."/>:
         <div style={{...INS_CARD,overflow:"hidden"}}>
@@ -13956,28 +13982,46 @@ function BulkParentAccounts({dirDB,usersDB,accountsDB}){
   }
   function clearSel(){setSel({});}
 
-  async function createAll(){
-    if(busy||!selected.length)return;
+  // `list` defaults to the tick-selected rows; "Create every ready login" passes the whole ready set so the
+  // Director never has to select class by class.
+  async function createAll(list){
+    const target=(list&&list.length)?list:selected;
+    if(busy||!target.length)return;
     if(!window.__authCreateOrGetUid){setProg("Not connected to the login service.");return;}
-    if(!await window.__confirm({title:"Create "+selected.length+" parent login"+(selected.length===1?"":"s")+"?",
-      body:"Username is the parent's mobile number; the password is the child's date of birth as DDMMYYYY. Each login is tied to that child's admission number and shows only that child. Parents are asked to change the password when they first sign in.",
+    const _mins=Math.ceil(target.length*0.6/60);
+    if(!await window.__confirm({title:"Create "+target.length+" parent login"+(target.length===1?"":"s")+"?",
+      body:"Username is the parent's mobile number; the password is the child's date of birth as DDMMYYYY. Each login is tied to that child's admission number and shows only that child. Parents are asked to change the password when they first sign in."
+      +(target.length>25?(" This creates one account at a time and will take roughly "+_mins+" minute"+(_mins===1?"":"s")+" — keep this page open until it finishes."):""),
       confirmText:"Create logins"}))return;
     setBusy(true);setDone(null);
     var ok=[],fail=[];
-    for(var i=0;i<selected.length;i++){
-      var r=selected[i];
-      setProg("Creating "+(i+1)+" of "+selected.length+" — "+r.name+"…");
+    for(var i=0;i<target.length;i++){
+      var r=target[i];
+      setProg("Creating "+(i+1)+" of "+target.length+" — "+r.name+" ("+r.cls+")…");
       try{
         var email=AUTH_EMAIL(r.username);
+        var step="creating the login";
         var uid=await window.__authCreateOrGetUid(email,r.dob);   // DDMMYYYY
         var payload={username:r.username,role:"parent",name:"Parent of "+r.name,student:r.name,cls:r.cls,admNo:r.adm,
                      pwdTemp:true,branches:[__br||"greencity"],createdAt:new Date().toISOString()};
-        await window.__fbSetDoc(window.__fbDoc(window.__db,"accounts",uid),Object.assign({},payload,{email:email}));
+        // If the Auth login already existed, accounts/{uid} is an UPDATE — and the rules allow update to the
+        // Director only (create is also open to the VP). So skip the write when the doc is already correct;
+        // that makes a re-run idempotent AND lets the VP finish a batch that includes pre-existing logins.
+        step="saving the account";
+        var _need=true;
+        try{var _sn=await window.__fbGetDoc(window.__fbDoc(window.__db,"accounts",uid));
+          if(_sn&&_sn.exists&&_sn.exists()){var _d=_sn.data()||{};
+            _need=!(_d.role==="parent"&&String(_d.admNo||"")===String(r.adm)&&String(_d.username||"")===String(r.username));}
+        }catch(e2){}
+        if(_need)await window.__fbSetDoc(window.__fbDoc(window.__db,"accounts",uid),Object.assign({},payload,{email:email}));
+        step="saving the profile";
         await usersDB.set(r.username,{username:r.username,role:"parent",name:payload.name,student:r.name,cls:r.cls,admNo:r.adm,pwdTemp:true,branches:payload.branches});
         ok.push(r);
       }catch(e){
         var c=(e&&(e.code||e.message))||"error";
-        fail.push(Object.assign({},r,{why:c.indexOf("email-already-in-use")>=0?"username already has a login":c}));
+        var why=c.indexOf("email-already-in-use")>=0?"username already has a login"
+               :(c.indexOf("permission-denied")>=0?("not allowed while "+step+" — a Director sign-in is needed for logins that already exist"):c);
+        fail.push(Object.assign({},r,{why:why}));
       }
     }
     try{logAudit("bulk-create-parents","accounts",String(ok.length)+" created",null,{created:ok.length,failed:fail.length});}catch(e){}
@@ -14113,7 +14157,10 @@ function BulkParentAccounts({dirDB,usersDB,accountsDB}){
         {Object.keys(sel).length>0&&<Btn v="ghost" onClick={clearSel}>Clear</Btn>}
         <div style={{marginLeft:"auto",display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
           <span style={{fontSize:12,color:"var(--ap-muted)"}}><b style={{color:"var(--tx-grn2)"}}>{counts.ready}</b> ready · {counts.exists} have a login · {counts["no-phone"]} no mobile · {counts["no-dob"]} no DOB{counts["no-adm"]?" · "+counts["no-adm"]+" no adm no.":""}</span>
-          <Btn onClick={createAll} disabled={busy||!selected.length}>{busy?"Creating…":"Create "+selected.length+" login"+(selected.length===1?"":"s")}</Btn>
+          {/* One click for the whole school — every student the checks say is ready, no class-by-class ticking.
+              `ready` already excludes children who have a login, or lack a mobile / date of birth / admission no. */}
+          {ready.length>0&&<Btn onClick={function(){createAll(ready);}} disabled={busy}>{busy?"Creating…":"Create all "+ready.length+" ready login"+(ready.length===1?"":"s")}</Btn>}
+          <Btn v={ready.length>0?"ghost":"pri"} onClick={function(){createAll();}} disabled={busy||!selected.length}>{busy?"Creating…":"Create "+selected.length+" selected"}</Btn>
         </div>
       </div>
       {prog&&<div style={{padding:"9px 18px",fontSize:12.5,fontWeight:600,color:"var(--ap-accent)",background:"var(--bg-blu)"}}>{prog}</div>}
