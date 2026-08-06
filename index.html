@@ -2676,7 +2676,13 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
     // any past weekday) — director's rule. Sundays / calendar Holidays / early morning stay "none".
     const _sCfg=(staffAttDB.data&&staffAttDB.data["__config"])||{};
     const _autoNow=(typeof __staffAutoAbsent==="function")&&__staffAutoAbsent(today,_realToday,_nowHM,_sCfg.lateAfter,calendarDB&&calendarDB.data);
-    staffRoster.forEach(u=>{var _isHead=String(u.username)===String(user.username)||(u.role==="admin"&&(u.username==="director"||(typeof DEFAULT_USERS!=="undefined"&&DEFAULT_USERS[u.username]&&DEFAULT_USERS[u.username].fees!==false)));let k=staffStat(u);let auto=false;if(k==="none"&&_autoNow&&!_isHead){k="absent";auto=true;}c[k]++;if((k==="absent"||k==="leave"||k==="late")&&!_isHead)out.push({name:u.name,kind:k,auto});});
+    const _noClk=(typeof __noClockList==="function")?__noClockList(staffAttDB.data):[];
+    staffRoster.forEach(u=>{var _isHead=String(u.username)===String(user.username)||(u.role==="admin"&&(u.username==="director"||(typeof DEFAULT_USERS!=="undefined"&&DEFAULT_USERS[u.username]&&DEFAULT_USERS[u.username].fees!==false)));let k=staffStat(u);let auto=false;
+      // Exempt staff: silence means present, so they must never be swept into the absent count or the flagged list.
+      var _exempt=_noClk.indexOf(String(u.username))>=0;
+      if(k==="none"&&_exempt)k="present";
+      else if(k==="none"&&_autoNow&&!_isHead){k="absent";auto=true;}
+      c[k]++;if((k==="absent"||k==="leave"||k==="late")&&!_isHead)out.push({name:u.name,kind:k,auto});});
     return {c,flagged:out,total:staffRoster.length,inToday:c.present+c.late};
   },[staffRoster,staffAttDB.data,leaveDB.data,today,calendarDB&&calendarDB.data,_nowHM,user]);
 
@@ -13413,7 +13419,10 @@ function SalaryPanel({user}){
     const srec=salDB.data&&salDB.data[safeId(s.username)];
     const base=srec?Number(srec.base||0):0;
     const nm=__ttNorm(s.name);
-    const myAuto=autoDates.filter(ds=>!apprLeaves.some(l=>__ttNorm(l.teacherName)===nm&&String(l.from)<=ds&&String(l.to)>=ds)); // an approved-leave day is never an auto-absent
+    // A "doesn't clock in" teacher has NO auto-absent days at all — otherwise payroll would silently dock a day's
+    // pay for every date they didn't mark a register they are not expected to mark.
+    const _exemptNoClock=((typeof __noClockList==="function")?__noClockList(attDB.data):[]).indexOf(String(s.username))>=0;
+    const myAuto=_exemptNoClock?[]:autoDates.filter(ds=>!apprLeaves.some(l=>__ttNorm(l.teacherName)===nm&&String(l.from)<=ds&&String(l.to)>=ds)); // an approved-leave day is never an auto-absent
     // Overlay approved-leave working days as status "leave" so the leavePaid toggle actually has leave
     // days to deduct (self check-in/register writes rarely create "leave" records) — a real mark wins.
     const bd=Object.assign({},byStaff[safeId(s.username)]||{});
@@ -17531,6 +17540,15 @@ function _attId(username,date){return safeId(safeId(username)+"__"+date);}
 // Yes on working days once the day is underway — any past weekday, or today after the late-cutoff —
 // never on Sundays, calendar Holidays, or future dates. Used by the cockpit, the Register and Salary
 // so "unmarked = absent" can never mean three different things.
+// Staff the Director has exempted from the unmarked-is-absent rule — they never mark the register (e.g. teachers
+// who come across from the ICSE campus), so silence from them means PRESENT, not absent. Stored as a list of
+// usernames in the staffAttendance __config doc. Read this EVERYWHERE unmarked is turned into absent: the Staff
+// Attendance screen, the Director's dashboard, AND payroll — otherwise an exempt teacher looks present on one
+// screen, absent on another, and quietly loses a day's salary on the third.
+function __noClockList(staffAttData){
+  var c=staffAttData&&staffAttData["__config"];var v=(c&&c.noClock)||[];
+  return Array.isArray(v)?v.map(String):[];
+}
 function __staffAutoAbsent(dateStr,todayStr,nowHHMM,cutHHMM,calData){
   if(!dateStr||!todayStr||dateStr>todayStr)return false;
   var d=new Date(dateStr+"T12:00");if(!d.getDay())return false; // Sunday
@@ -17850,7 +17868,7 @@ function StaffAttendanceRegister({user,isDirector,setTab:goTab}){
 
   // Usernames exempt from the unmarked-is-absent rule. Config-driven, not hardcoded, so the Director can add or
   // remove a person when staffing changes instead of needing the file edited.
-  const _noClock=useMemo(function(){var v=(cfg&&cfg.noClock)||[];return Array.isArray(v)?v.map(String):[];},[cfg&&cfg.noClock]);
+  const _noClock=useMemo(function(){return (typeof __noClockList==="function")?__noClockList(attDB.data):[];},[attDB.data]);
   function statusFor(u){
     var rec=attDB.data&&attDB.data[_attId(u.username,date)];
     if(rec)return{key:rec.status||"present",rec:rec};
