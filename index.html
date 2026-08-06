@@ -2295,21 +2295,30 @@ function Login({onLogin,usersDB}){
   const pickKid=(c)=>{setAcct(c.username||u.trim().toLowerCase());setKid(c);setErr("");setStep("pass");};
   const go=async()=>{
     if(busy)return;
-    const uKey=(acct||u).trim().toLowerCase();
+    const typedKey=(acct||u).trim().toLowerCase();
+    setErr("");setBusy(true);
+    // Sibling accounts are stored as <mobile>, <mobile>-2, <mobile>-3 … but a parent is only ever told their
+    // PLAIN mobile. Normally the child picker resolves which one; if the sign-in list hasn't been published, or
+    // the device is offline, fall back to trying the suffixes so the second child's login still works. Only for
+    // a bare mobile with no child chosen — a staff username is tried exactly once, as before.
+    const cands=(!kid&&/^\d{10,}$/.test(typedKey))?[typedKey,typedKey+"-2",typedKey+"-3",typedKey+"-4"]:[typedKey];
+    // 1) Try secure login (Firebase Authentication). 2) Fall back to legacy password check.
+    let authed=false,disabled=false,acctBranches=null,uKey=typedKey;
+    if(window.__authSignIn){
+      for(let ci=0;ci<cands.length;ci++){
+      try{
+        const cred=await window.__authSignIn(AUTH_EMAIL(cands[ci]),p);authed=true;uKey=cands[ci];
+        try{const snap=await window.__fbGetDoc(window.__fbDoc(window.__db,"accounts",cred.user.uid));const d=(snap&&snap.exists&&snap.exists())?snap.data():null;if(d&&d.role==="disabled")disabled=true;if(d&&Array.isArray(d.branches))acctBranches=d.branches;}catch(e){}
+        break;                       // this candidate worked — stop trying suffixes
+      }catch(e){authed=false;}
+      }
+    }
+    // Profile is resolved AFTER authentication, against the account that actually succeeded — otherwise a
+    // sibling who signed in as <mobile>-2 would be handed the FIRST child's profile.
+    // Dotted logins like "aakash.singh" are stored under safeId() ("aakash_singh"), so check both keys.
     const baseData=DEFAULT_USERS[uKey];
-    // Profile/assignments are stored under safeId(username) (set() sanitises the doc id), so a dotted
-    // login like "aakash.singh" must also look up the "aakash_singh" doc — else its classes/subjects are missed.
     const extraData=usersDB.data&&(usersDB.data[uKey]||usersDB.data[safeId(uKey)]);
     const userData=baseData?{...baseData,...(extraData||{}),username:uKey,password:baseData.password}:(extraData?{...extraData,username:uKey}:null);
-    setErr("");setBusy(true);
-    // 1) Try secure login (Firebase Authentication). 2) Fall back to legacy password check.
-    let authed=false,disabled=false,acctBranches=null;
-    if(window.__authSignIn){
-      try{
-        const cred=await window.__authSignIn(AUTH_EMAIL(uKey),p);authed=true;
-        try{const snap=await window.__fbGetDoc(window.__fbDoc(window.__db,"accounts",cred.user.uid));const d=(snap&&snap.exists&&snap.exists())?snap.data():null;if(d&&d.role==="disabled")disabled=true;if(d&&Array.isArray(d.branches))acctBranches=d.branches;}catch(e){}
-      }catch(e){authed=false;}
-    }
     const legacyOk=userData&&userData.password===p;
     setBusy(false);
     if(disabled){setErr("This account has been disabled. Please contact the office.");try{await window.__authSignOut();}catch(e){}return;}
@@ -13976,10 +13985,15 @@ function BulkParentAccounts({dirDB,usersDB,accountsDB}){
       '<table><tr><td>Student</td><th>'+esc(r.name)+' ('+esc(r.cls)+(r.section?" "+esc(r.section):"")+')</th></tr>'+
       '<tr><td>Admission no.</td><th>'+esc(r.adm)+'</th></tr>'+
       '<tr><td>Website</td><th>ssic1.vercel.app</th></tr>'+
-      '<tr><td>Username</td><th class="m">'+esc(r.username)+'</th></tr>'+
+      // Parents sign in with their PLAIN mobile — the "-2"/"-3" suffix is an internal account id and must never
+      // appear on a slip. Sign-in asks which child, and for one child it skips straight through.
+      '<tr><td>Username</td><th class="m">'+esc(String(r.username||"").split("-")[0])+'</th></tr>'+
       '<tr><td>Password</td><th class="m">'+(r.changed?'<span class="c">set by you</span>':esc(r.dob||"—"))+'</th></tr></table>'+
-      '<div class="n"><b>Username</b> is your registered mobile number'+(r.siblingOf>1?' (with &ndash;'+esc(String(r.username).split("-")[1]||"")+' because more than one child is registered on this number)':'')+
-      '. '+(r.changed
+      '<div class="n"><b>Username</b> is your registered mobile number.'+
+      (String(r.username||"").indexOf("-")>0
+        ? ' You have more than one child at the school, so after entering your mobile number you will be asked <b>which child</b> &mdash; choose '+esc(String(r.name||"").trim().split(/\s+/)[0]||"your child")+', then enter the date of birth below.'
+        : '')+
+      ' '+(r.changed
         ? '<b>Password</b> is the private one you already set. If you have forgotten it, ask the school office to reset it.'
         : '<b>Password</b> is your child\'s date of birth written as DDMMYYYY &mdash; '+esc(r.dob||"—")+'. If you have already changed it, keep using your own password.')+
       ' Please change the password after signing in the first time. You can see only your own child\'s attendance, marks and fees.</div></div>';}).join("");
@@ -14027,7 +14041,7 @@ function BulkParentAccounts({dirDB,usersDB,accountsDB}){
     setLkBusy("✓ Published "+done+" mobile"+(done===1?"":"s")+(failed?(" · "+failed+" failed"):"")+".");
   }
   function copyList(list){
-    var t=list.map(function(r){return [r.name,r.cls+(r.section?" "+r.section:""),r.adm,r.username,r.changed?"(set by parent)":(r.dob||"—")].join("\t");}).join("\n");
+    var t=list.map(function(r){return [r.name,r.cls+(r.section?" "+r.section:""),r.adm,String(r.username||"").split("-")[0],r.changed?"(set by parent)":(r.dob||"—")].join("\t");}).join("\n");
     try{navigator.clipboard.writeText("Student\tClass\tAdmission\tUsername (mobile)\tPassword (DOB)\n"+t);if(window.__toast)window.__toast("Copied "+list.length+" login"+(list.length===1?"":"s")+" to the clipboard","ok");}catch(e){}
   }
 
