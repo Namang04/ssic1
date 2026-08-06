@@ -1231,6 +1231,15 @@ const gradeOf=p=>{
   return{l:"D",c:"var(--tx-red)",bg:"var(--bg-red)"};
 };
 const safeId=s=>s.replace(/[^a-zA-Z0-9]/g,"_");
+// A parent login is the 10-digit mobile, with siblings suffixed. The suffix separator is NOT consistent:
+// accounts are created as "9651700337-2", but safeId() (above) rewrites the DOC ID to "9651700337_2", and either
+// form can end up in the username field depending on how the account was made. Both must fold back to the same
+// mobile, or one sibling silently lands under a different key and never appears in the other's child picker.
+// Returns "" for anything that isn't a parent mobile (staff usernames, country-code-prefixed numbers).
+function __mobileOf(username){
+  var m=String(username||"").trim().match(/^(\d{10})(?:[-_]\d+)?$/);
+  return m?m[1]:"";
+}
 // Normalised name key for matching fee payments ↔ roster students (case/space-insensitive,
 // so an imported "KRISH YADAV" payment credits roster student "Krish Yadav"). Used everywhere
 // payments are tied to a student so imports (ALL-CAPS) reconcile with the Title-Case roster.
@@ -2301,7 +2310,8 @@ function Login({onLogin,usersDB}){
     // PLAIN mobile. Normally the child picker resolves which one; if the sign-in list hasn't been published, or
     // the device is offline, fall back to trying the suffixes so the second child's login still works. Only for
     // a bare mobile with no child chosen — a staff username is tried exactly once, as before.
-    const cands=(!kid&&/^\d{10,}$/.test(typedKey))?[typedKey,typedKey+"-2",typedKey+"-3",typedKey+"-4"]:[typedKey];
+    const cands=(!kid&&/^\d{10}$/.test(typedKey))
+      ?[typedKey,typedKey+"-2",typedKey+"_2",typedKey+"-3",typedKey+"_3",typedKey+"-4",typedKey+"_4"]:[typedKey];
     // 1) Try secure login (Firebase Authentication). 2) Fall back to legacy password check.
     let authed=false,disabled=false,acctBranches=null,uKey=typedKey;
     if(window.__authSignIn){
@@ -13987,10 +13997,10 @@ function BulkParentAccounts({dirDB,usersDB,accountsDB}){
       '<tr><td>Website</td><th>ssic1.vercel.app</th></tr>'+
       // Parents sign in with their PLAIN mobile — the "-2"/"-3" suffix is an internal account id and must never
       // appear on a slip. Sign-in asks which child, and for one child it skips straight through.
-      '<tr><td>Username</td><th class="m">'+esc(String(r.username||"").split("-")[0])+'</th></tr>'+
+      '<tr><td>Username</td><th class="m">'+esc(__mobileOf(r.username)||String(r.username||""))+'</th></tr>'+
       '<tr><td>Password</td><th class="m">'+(r.changed?'<span class="c">set by you</span>':esc(r.dob||"—"))+'</th></tr></table>'+
       '<div class="n"><b>Username</b> is your registered mobile number.'+
-      (String(r.username||"").indexOf("-")>0
+      (/[-_]\d+$/.test(String(r.username||""))
         ? ' You have more than one child at the school, so after entering your mobile number you will be asked <b>which child</b> &mdash; choose '+esc(String(r.name||"").trim().split(/\s+/)[0]||"your child")+', then enter the date of birth below.'
         : '')+
       ' '+(r.changed
@@ -14017,8 +14027,8 @@ function BulkParentAccounts({dirDB,usersDB,accountsDB}){
     var byMobile={};
     allLogins.forEach(function(r){
       if(r.left)return;                                   // a child who has left should not be offered
-      var mob=String(r.username||"").split("-")[0].replace(/[^0-9]/g,"");
-      if(mob.length<10)return;                            // staff usernames are not mobiles
+      var mob=__mobileOf(r.username);
+      if(!mob)return;                                     // staff usernames are not mobiles
       (byMobile[mob]=byMobile[mob]||[]).push({username:r.username,first:String(r.name||"").trim().split(/\s+/)[0]||"Child",cls:r.cls||"",branch:br});
     });
     var mobs=Object.keys(byMobile);
@@ -14041,7 +14051,7 @@ function BulkParentAccounts({dirDB,usersDB,accountsDB}){
     setLkBusy("✓ Published "+done+" mobile"+(done===1?"":"s")+(failed?(" · "+failed+" failed"):"")+".");
   }
   function copyList(list){
-    var t=list.map(function(r){return [r.name,r.cls+(r.section?" "+r.section:""),r.adm,String(r.username||"").split("-")[0],r.changed?"(set by parent)":(r.dob||"—")].join("\t");}).join("\n");
+    var t=list.map(function(r){return [r.name,r.cls+(r.section?" "+r.section:""),r.adm,(__mobileOf(r.username)||String(r.username||"")),r.changed?"(set by parent)":(r.dob||"—")].join("\t");}).join("\n");
     try{navigator.clipboard.writeText("Student\tClass\tAdmission\tUsername (mobile)\tPassword (DOB)\n"+t);if(window.__toast)window.__toast("Copied "+list.length+" login"+(list.length===1?"":"s")+" to the clipboard","ok");}catch(e){}
   }
 
@@ -14076,6 +14086,23 @@ function BulkParentAccounts({dirDB,usersDB,accountsDB}){
             <Btn v="ghost" onClick={function(){syncLookup(false);}}>Publish sign-in list</Btn>
             {lkBusy&&<span style={{fontSize:12,color:"var(--ap-ink2)",alignSelf:"center"}}>{lkBusy}</span>}
           </div>
+          {/* Which families the child picker will actually offer. If a sibling is missing here, the problem is the
+              ACCOUNT (not created, or not on this mobile) — not the picker. */}
+          {(function(){
+            var fam={};
+            allLogins.forEach(function(r){ if(r.left)return; var m=__mobileOf(r.username); if(!m)return;
+              (fam[m]=fam[m]||[]).push(String(r.name||"").trim().split(/\s+/)[0]||"?"); });
+            var multi=Object.keys(fam).filter(function(m){return fam[m].length>1;}).sort();
+            if(!multi.length)return <div style={{width:"100%",fontSize:11.5,color:"var(--ap-muted)",marginTop:2}}>No mobile number has more than one child yet — every parent will go straight to the password screen.</div>;
+            return <div style={{width:"100%",marginTop:4}}>
+              <div style={{fontSize:11.5,color:"var(--ap-muted)",marginBottom:5}}><b style={{color:"var(--ap-ink2)"}}>{multi.length}</b> mobile number{multi.length===1?"":"s"} with more than one child — these parents get the "Which child?" step:</div>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {multi.map(function(m){return <span key={m} style={{fontSize:11.5,background:"var(--c-f7)",border:"1px solid var(--ap-line)",borderRadius:8,padding:"4px 9px",color:"var(--ap-ink2)"}}>
+                  <b style={{color:"var(--ap-ink)",fontVariantNumeric:"tabular-nums"}}>{m}</b> · {fam[m].join(", ")}
+                </span>;})}
+              </div>
+            </div>;
+          })()}
         </div>;
       })()}
 
