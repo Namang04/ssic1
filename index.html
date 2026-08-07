@@ -1469,7 +1469,30 @@ function __testSubjectsWithLegacy(cls){
   base.forEach(function(s){if(__SUBJ_SPLIT[s]&&out.indexOf(s)<0)out.push(s);});
   return out;
 }
-const getTeacherSubjects=(user,cls)=>{if(!user||user.role==="admin"||user.role==="vp")return __testSubjectsFor(cls);const subjs=(user.subjects||[]).map(function(s){if(s==="English Language"||s==="English Literature")return "English";if(s==="Social Studies")return "Social Science";if(s==="Accounts")return "Accountancy";if(s==="Information Technology")return "Computer Science";return s;});const all=__subjectsFor(cls);if(!subjs.length)return all;const filtered=all.filter(function(s){return subjs.indexOf(s)>=0;});if(filtered.length>0)return filtered;return subjs;};
+// Subjects a teacher may enter CLASS-TEST marks for. Must use __testSubjectsFor (the split list), not
+// __subjectsFor (the exam list) — otherwise the Director saw Physics/Chemistry/Biology for Class 9 while the
+// teacher of that same class saw a single "Science", because their assignment record says "Science".
+// A teacher assigned the PARENT subject gets ALL of its split parts; one assigned "Physics" gets only Physics.
+const getTeacherSubjects=(user,cls)=>{
+  if(!user||user.role==="admin"||user.role==="vp")return __testSubjectsFor(cls);
+  const subjs=(user.subjects||[]).map(function(s){
+    if(s==="English Language"||s==="English Literature")return "English";
+    if(s==="Social Studies")return "Social Science";
+    if(s==="Accounts")return "Accountancy";
+    if(s==="Information Technology")return "Computer Science";
+    return s;});
+  const all=__testSubjectsFor(cls);
+  if(!subjs.length)return all;
+  // expand a parent subject (Science) into its split parts on the classes that split
+  const want=[];
+  subjs.forEach(function(s){
+    var parts=(__SPLIT_CLASSES.test(String(cls))&&__SUBJ_SPLIT[s])?__SUBJ_SPLIT[s]:[s];
+    parts.forEach(function(p){if(want.indexOf(p)<0)want.push(p);});
+  });
+  const filtered=all.filter(function(s){return want.indexOf(s)>=0;});
+  if(filtered.length>0)return filtered;
+  return want;
+};
 const getTeacherSections=(user,cls)=>{const ALL=["A","B","C","D"];if(!user||user.role==="admin"||user.role==="vp")return ALL;const want=String(cls).split("-")[0].trim();const secs=(user.classes||[]).filter(function(c){return c.split("-")[0].trim()===want;}).map(function(c){var p=c.split("-");return p.length>1?p.slice(1).join("-").trim():"";}).filter(Boolean);return secs.length?[...new Set(secs)]:ALL;};
 // Admission number written INSIDE a name's bracket group — "ANUSHKA SINGH (141)", "NAME (ADM 141)",
 // even a garbled "(141) (141) (141)" all yield "141"; father-name brackets yield "". Old rosters
@@ -4654,7 +4677,14 @@ function Dashboard({user,testsDB,studentsDB,attendanceDB,academicRosterDB,dirDB,
   const _allStudents=useMemo(()=>{const out=[];Object.values((academicRosterDB&&academicRosterDB.data)||{}).forEach(d=>{var cls=(d&&d.cls)||("Class "+((d&&d.clsNum)||""));((d&&d.students)||[]).forEach(s=>{if(s&&s.name)out.push({name:s.name,cls:cls,section:s.section||"",admNo:s.admNo||""});});});return out;},[academicRosterDB&&academicRosterDB.data]);
   // Teachers see ONLY their own classes & subjects; admin/VP/Director keep the school-wide view.
   const myClasses=useMemo(()=>isTeacher?[...new Set((user.classes||[]).map(c=>String(c).split("-")[0].trim()))]:null,[isTeacher,user.classes]);
-  const inScope=(t)=>{ if(!isTeacher)return true; if(!t||myClasses.indexOf(t.cls)<0)return false; const subs=getTeacherSubjects(user,t.cls); return subs.indexOf(t.subj)>=0||t.by===user.name; };
+  // A Class 9/10 teacher's subject list is now the SPLIT one (Physics/Chemistry/Biology), so tests saved earlier
+  // under the parent subject "Science" would otherwise disappear from their view. Match the parent name too.
+  const inScope=(t)=>{ if(!isTeacher)return true; if(!t||myClasses.indexOf(t.cls)<0)return false;
+    const subs=getTeacherSubjects(user,t.cls);
+    if(subs.indexOf(t.subj)>=0||t.by===user.name)return true;
+    var parent=false;
+    try{Object.keys(__SUBJ_SPLIT).forEach(function(p){ if(p===t.subj&&__SUBJ_SPLIT[p].some(function(x){return subs.indexOf(x)>=0;}))parent=true; });}catch(e){}
+    return parent; };
   const TD=useMemo(()=>{ if(!isTeacher)return testsDB.data; const o={}; Object.entries(testsDB.data).forEach(([k,t])=>{ if(inScope(t))o[k]=t; }); return o; },[testsDB.data,isTeacher,myClasses,user]);
   const totalStudents=isTeacher?(myClasses||[]).reduce((a,c)=>a+((studentsDB.data[safeId(c)]?.list)||[]).length,0):Object.values(studentsDB.data).reduce((a,b)=>a+(b?.list||[]).length,0);
   const totalTests=Object.keys(TD).length;
@@ -8436,6 +8466,22 @@ function ClassProgress({user,testsDB,studentsDB,dirDB,academicRosterDB,jumpStude
 }
 
 // ── STUDENT REPORT ──
+// ── Weekly-test chip ── the TOPIC leads, because "45%" tells a student nothing about what to revise. The score
+// stays the loudest thing; the date drops to a compact dd/mm underneath. Long topics ellipsis rather than wrap
+// (these sit in a tight right-aligned strip) and the full topic + full date are always in the hover title.
+function TestChip(props){
+  var sc=props.sc||{};
+  var tp=(sc.topics||[]).filter(Boolean);
+  var label=tp.join(" · ");
+  var d=sc.date?(String(sc.date).slice(8,10)+"/"+String(sc.date).slice(5,7)):"";
+  return <div style={{textAlign:"center",minWidth:props.w||62,maxWidth:118}}
+    title={(label||"Topic not recorded by the teacher")+(sc.date?(" — "+fmtDate(sc.date)):"")}>
+    <div style={{fontSize:10,fontWeight:600,lineHeight:1.3,color:label?"var(--ap-ink2)":"var(--ap-faint)",
+      overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{label||"—"}</div>
+    <div style={{fontSize:props.big?13:12.5,fontWeight:700,color:(sc.p>=75?"var(--tx-grn2)":sc.p>=50?"var(--tx-org)":"var(--tx-red)"),fontFamily:"var(--ss-font)"}}>{sc.p}%</div>
+    <div style={{fontSize:9,color:"var(--ap-faint)",fontVariantNumeric:"tabular-nums"}}>{d}</div>
+  </div>;
+}
 function StudentReport({user,testsDB,studentsDB,dirDB,academicRosterDB,jumpStudent}){
   const aC=getTeacherClasses(user);
   const[cls,setCls]=useState(aC[0]);
@@ -8571,7 +8617,7 @@ ${sd.map(s=>`<tr><td class="subj">${esc(s.subj)}</td><td>${s.sc.length}</td><td 
                 {s.weak.length>0?<div style={{fontSize:12,color:"var(--tx-org)",marginTop:3}}>Revise: {s.weak.join(", ")}</div>:<div style={{fontSize:12,color:"var(--ap-muted)",marginTop:3}}>{s.sc.length?`${s.sc.length} test${s.sc.length>1?"s":""} recorded`:"No tests yet"}</div>}
               </div>
               <div style={{display:"flex",gap:13,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
-                {s.sc.map(sc=><div key={sc.week} style={{textAlign:"center",minWidth:40}}><div style={{fontSize:9.5,color:"var(--ap-faint)",fontWeight:600}}>{fmtDate(sc.date)}</div><div style={{fontSize:13,fontWeight:700,color:gcolor(sc.p),fontFamily:"var(--ss-font)"}}>{sc.p}%</div></div>)}
+                {s.sc.map(sc=><TestChip key={sc.week} sc={sc} w={62} big={true}/>)}
                 {s.avg!==null?<GBadge p={s.avg}/>:<span style={{fontSize:12,color:"var(--c-cb)"}}>No data</span>}
                 {s.trend!==null&&<span style={{fontSize:12,fontWeight:700,color:s.trend>0?"var(--tx-grn2)":s.trend<-5?"#d2342a":"var(--ap-muted)"}}>{s.trend>0?`↑ +${s.trend}%`:s.trend<-5?`↓ ${s.trend}%`:"→"}</span>}
               </div>
@@ -8844,7 +8890,7 @@ th{background:#0d1b2a;color:#fff;font-weight:600}td.l{text-align:left;font-weigh
                 {s.weak.length>0?<div style={{fontSize:12,color:"var(--tx-org)",marginTop:3}}>Revise: {s.weak.join(", ")}</div>:<div style={{fontSize:12,color:"var(--ap-muted)",marginTop:3}}>{s.sc.length?`${s.sc.length} test${s.sc.length>1?"s":""} recorded`:"No tests yet"}{s.missed>0?` · ${s.missed} missed`:""}</div>}
               </div>
               <div style={{display:"flex",gap:13,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
-                {s.sc.map(sc=><div key={sc.week} style={{textAlign:"center",minWidth:40}}><div style={{fontSize:9,color:"var(--ap-faint)",fontWeight:600}}>{fmtDate(sc.date)}</div><div style={{fontSize:13,fontWeight:700,color:gcolor(sc.p),fontFamily:"var(--ss-font)"}}>{sc.p}%</div></div>)}
+                {s.sc.map(sc=><TestChip key={sc.week} sc={sc} w={62} big={true}/>)}
                 {s.avg!==null?<GBadge p={s.avg}/>:<span style={{fontSize:12,color:"var(--c-cb)"}}>No data</span>}
                 {s.trend!==null&&<span style={{fontSize:12,fontWeight:700,color:s.trend>0?"var(--tx-grn2)":s.trend<-5?"#d2342a":"var(--ap-muted)"}}>{s.trend>0?`↑ +${s.trend}%`:s.trend<-5?`↓ ${s.trend}%`:"→"}</span>}
               </div>
@@ -12155,7 +12201,7 @@ function DirectoryProfile({stu, testsDB, examsDB, studentsDB, attendanceDB, wron
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,flexWrap:"wrap"}}>
                         <div style={{minWidth:0}}><div style={{fontSize:13.5,fontWeight:650,color:"var(--ap-ink)"}}>{s.subj}</div>{s.weak.length>0?<div style={{fontSize:12,color:"var(--tx-org)",marginTop:3}}>Revise: {s.weak.join(", ")}</div>:<div style={{fontSize:12,color:"var(--ap-muted)",marginTop:3}}>{s.sc.length} test{s.sc.length>1?"s":""}{s.missed>0?" · "+s.missed+" missed":""}</div>}</div>
                         <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
-                          {s.sc.map(sc=><div key={sc.week} style={{textAlign:"center",minWidth:36}}><div style={{fontSize:9,color:"var(--ap-faint)",fontWeight:600}}>{fmtDate(sc.date)}</div><div style={{fontSize:12.5,fontWeight:700,color:gcolor(sc.p),fontFamily:"var(--ss-font)"}}>{sc.p}%</div></div>)}
+                          {s.sc.map(sc=><TestChip key={sc.week} sc={sc} w={62} big={false}/>)}
                           {s.avg!==null&&<GBadge p={s.avg}/>}
                           {s.trend!==null&&<span style={{fontSize:12,fontWeight:700,color:s.trend>0?"var(--tx-grn2)":s.trend<-5?"#d2342a":"var(--ap-muted)"}}>{s.trend>0?"↑ +"+s.trend+"%":s.trend<-5?"↓ "+s.trend+"%":"→"}</span>}
                         </div>
@@ -18711,7 +18757,13 @@ function App(){
   // ── Branch (campus) — director switches all four; others are pinned to their own branch(es). Phase 1: identity only. ──
   const[currentBranch,setCurrentBranch]=useState("greencity");
   const __isDirector=!!user&&user.role==="admin"&&user.fees!==false; // director (admin, not VP) sees & switches every branch — VP (fees===false) is pinned to own branch
-  const __allowedBranches=useMemo(()=>__isDirector?BRANCHES.map(b=>b.id):((user&&Array.isArray(user.branches)&&user.branches.length)?user.branches:["greencity"]),[__isDirector,user]);
+  // ── SINGLE-CAMPUS BUILD (2026-08-06) ── this app is now Greencity ONLY. The other campuses get their own
+  // build off this same file, so their data can never leak in and each keeps its own Firebase quota.
+  // The BRANCHES table and the _bcoll prefixing below are deliberately LEFT INTACT: they are the template the
+  // per-campus builds are cut from, and Greencity is the UNPREFIXED branch so all of it is inert here.
+  // To re-enable switching, restore this to the commented original on the next line.
+  // WAS: const __allowedBranches=useMemo(()=>__isDirector?BRANCHES.map(b=>b.id):((user&&Array.isArray(user.branches)&&user.branches.length)?user.branches:["greencity"]),[__isDirector,user]);
+  const __allowedBranches=useMemo(()=>["greencity"],[]);
   useEffect(()=>{var allow=__allowedBranches;var b=allow.indexOf(currentBranch)>=0?currentBranch:(allow[0]||"greencity");if(b!==currentBranch)setCurrentBranch(b);__applyBranch(b);},[currentBranch,__allowedBranches]);
   const switchBranch=(id)=>{if(__allowedBranches.indexOf(id)>=0){__applyBranch(id);setCurrentBranch(id);}};
   // Restore the logged-in session after a refresh: Firebase keeps the auth session, but the app's
