@@ -1050,6 +1050,13 @@ const BRANCHES=[
   {id:"maniram",  label:"Maniram Branch",   addr:"Gorakhpur · CBSE Affiliated",board:"CBSE",classes:__PRESCH.concat(__clsRange(1,12))},
   {id:"surajkund",label:"Surajkund Branch", addr:"Gorakhpur · ICSE Affiliated",board:"ICSE",classes:__PRESCH.concat(__clsRange(1,12))},
 ];
+// ── Which classes are tracked ACADEMICALLY ── a class can be on the roll (students + fees) without the school
+// keeping attendance/tests/exams for it online. Greencity runs Classes 1-5 on paper for now, so listing them in
+// the attendance picker just produced "unmarked" noise every day. The Director controls this from
+// Academics -> Branch Setup -> Classes; the OFF list is stored so a newly added class defaults to ON.
+function __academicOff(){var v=(_bcfg()||{}).academicsOff;return Array.isArray(v)?v.map(String):[];}
+function __isAcademicCls(c){return __academicOff().indexOf(String(c))<0;}
+function __academicClasses(){var off=__academicOff();return (__branchClasses()||[]).filter(function(c){return off.indexOf(String(c))<0;});}
 function __branchClasses(){var b=__branchById((typeof window!=="undefined"&&window.__currentBranch)||"greencity");return (b&&b.classes)||["Class 6","Class 7","Class 8","Class 9","Class 10","Class 11","Class 12"];}
 function __branchById(id){for(var i=0;i<BRANCHES.length;i++)if(BRANCHES[i].id===id)return BRANCHES[i];return BRANCHES[0];}
 // BRANCH_LABEL/ADDR are LET so the director's branch switcher can re-point them live — every print header reads
@@ -6527,7 +6534,10 @@ function _attValIn(status,adm,name){
 }
 function Attendance({user,attendanceDB,studentsDB,usersDB,academicRosterDB,dirDB,calendarDB}){
   const ROMAN_MAP={"I":"1","II":"2","III":"3","IV":"4","V":"5","VI":"6","VII":"7","VIII":"8","IX":"9","X":"10","XI":"11","XII":"12"};
-  const CLASS_SECTIONS={"Class 1":["A"],"Class 2":["A"],"Class 3":["A"],"Class 4":["A"],"Class 5":["A"],"Class 6":["A","B"],"Class 7":["A","B"],"Class 8":["A","B"],"Class 9":["A","B"],"Class 10":["A","B"],"Class 11":["A","B","C","D"],"Class 12":["A","B","C","D"]};
+  const _CLASS_SECTIONS_ALL={"Class 1":["A"],"Class 2":["A"],"Class 3":["A"],"Class 4":["A"],"Class 5":["A"],"Class 6":["A","B"],"Class 7":["A","B"],"Class 8":["A","B"],"Class 9":["A","B"],"Class 10":["A","B"],"Class 11":["A","B","C","D"],"Class 12":["A","B","C","D"]};
+  // Classes the Director has switched to "students & fees only" (Branch Setup -> Classes) are removed here,
+  // which takes them out of the picker AND out of every unmarked/turnout count on this screen.
+  const CLASS_SECTIONS=useMemo(function(){var o={};Object.keys(_CLASS_SECTIONS_ALL).forEach(function(c){if(__isAcademicCls(c))o[c]=_CLASS_SECTIONS_ALL[c];});return o;},[]);
 
   const toClassKey=(c)=>{
     if(c.startsWith("Class "))return c.split("-")[0].trim();
@@ -8891,24 +8901,57 @@ function ParentView({user,testsDB,examsDB,studentsDB,academicRosterDB,attendance
   },[user.admNo,user.childAdmNo,academicRosterDB&&academicRosterDB.data,cls,student,_secMap]);
   const rollNo=students.filter(n=>(_secMap[n]||"")===_mySec).sort((a,b)=>String(a).localeCompare(String(b))).indexOf(student)+1;
   const padm=String(user.admNo||user.childAdmNo||(studentsDB.data[safeId(cls)]?.admNo||{})[student]||""); // child's admission no.
+  // ── Scoped reads for THIS child's class ── replaces the whole-school listeners the shell used to hand every
+  // parent. Identical data on screen; a few hundred documents instead of the entire school's history. One-shot
+  // getDocs rather than a listener: a parent does not need live updates, and a listener would re-bill on churn.
+  const[scoped,setScoped]=useState(null);   // {att,tests} | null = still loading
+  useEffect(function(){
+    var cancel=false;
+    var load=async function(){
+      if(!cls||!window.__db||!window.__fbGetDocs||!window.__fbQuery||!window.__fbWhere||!window.__fbCollection){
+        if(!cancel)setScoped({att:{},tests:{}});return;
+      }
+      var grab=async function(coll){
+        var out={};
+        try{
+          var snap=await window.__fbGetDocs(window.__fbQuery(window.__fbCollection(window.__db,coll),window.__fbWhere("cls","==",cls)));
+          snap.forEach(function(dc){out[dc.id]=dc.data();});
+        }catch(e){/* offline, or a rules refusal — fall back to whatever the shell already had */}
+        return out;
+      };
+      var a=await grab("attendance"), t=await grab("tests");
+      if(!cancel)setScoped({att:a,tests:t});
+    };
+    if(window.__fbReady)load();else window.addEventListener("fbready",load,{once:true});
+    return function(){cancel=true;};
+  },[cls]);
+  // Prefer the scoped result; fall back to the shell's data when the query returns nothing (offline / staff preview).
+  const _attData=useMemo(function(){
+    var sc=scoped&&scoped.att,sh=(attendanceDB&&attendanceDB.data)||{};
+    return (sc&&Object.keys(sc).length)?sc:sh;
+  },[scoped,attendanceDB&&attendanceDB.data]);
+  const _testData=useMemo(function(){
+    var sc=scoped&&scoped.tests,sh=(testsDB&&testsDB.data)||{};
+    return (sc&&Object.keys(sc).length)?sc:sh;
+  },[scoped,testsDB&&testsDB.data]);
   const subjects=__testSubjectsWithLegacy(cls);
   const sd=useMemo(()=>subjects.map(subj=>{
-    const rel=Object.values(testsDB.data).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week);
+    const rel=Object.values(_testData).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week);
     const sc=rel.map(t=>{const v=_markOf(t,padm,student);return{week:t.week,p:pct(Number(v??0),t.total),topics:t.topics||[],date:t.testDate,has:v!==undefined&&v!==""};}).filter(x=>x.has);
     const avg=sc.length?Math.round(sc.reduce((a,b)=>a+b.p,0)/sc.length):null;
     const trend=trendOf(sc.map(x=>x.p));
     const weak=[...new Set(sc.filter(x=>x.p<50).flatMap(x=>x.topics))];
     return{subj,sc,avg,trend,weak};
-  }),[student,cls,testsDB.data,subjects]);
+  }),[student,cls,_testData,subjects]);
   const overall=useMemo(()=>{const a=sd.filter(x=>x.avg!==null&&x.sc&&x.sc.length>0);if(!a.length)return null;const sum=a.reduce((t,x)=>t+x.avg*x.sc.length,0),n=a.reduce((t,x)=>t+x.sc.length,0);return n?Math.round(sum/n):null;},[sd]);
   // Child's attendance (admission-no.-first, this class only)
-  const att=useMemo(()=>{let p=0,a=0,l=0;Object.values((attendanceDB&&attendanceDB.data)||{}).forEach(r=>{if(!r||!r.status||(cls&&String(r.cls||"")!==cls))return;var v=(padm&&r.status[padm]!==undefined)?r.status[padm]:r.status[student];if(v===undefined||v==="U")return;if(v==="P")p++;else if(v==="A")a++;else if(v==="L")l++;});const total=p+a+l;return{p,a,l,total,pct:total?Math.round((p+l)/total*100):null};},[attendanceDB&&attendanceDB.data,student,padm,cls]);
+  const att=useMemo(()=>{let p=0,a=0,l=0;Object.values(_attData).forEach(r=>{if(!r||!r.status||(cls&&String(r.cls||"")!==cls))return;var v=(padm&&r.status[padm]!==undefined)?r.status[padm]:r.status[student];if(v===undefined||v==="U")return;if(v==="P")p++;else if(v==="A")a++;else if(v==="L")l++;});const total=p+a+l;return{p,a,l,total,pct:total?Math.round((p+l)/total*100):null};},[_attData,student,padm,cls]);
   // ── Is my child in school TODAY? ── the first thing a parent opens the app to check. Admission-no. first (the
   // name key is blank for many children and collapses same-name pairs), and only the child's OWN section, so
   // another section's register can never answer for them. v="" means nobody has marked the register yet.
   const todayAtt=useMemo(function(){
     var td=today(),out={v:"",holiday:false};
-    Object.values((attendanceDB&&attendanceDB.data)||{}).forEach(function(r){
+    Object.values(_attData).forEach(function(r){
       if(!r||!r.status||r.date!==td)return;
       if(cls&&String(r.cls||"")!==cls)return;
       var ms=String(_mySec||"").toUpperCase().trim(),rs=String(r.section||"").toUpperCase().trim();
@@ -8918,17 +8961,17 @@ function ParentView({user,testsDB,examsDB,studentsDB,academicRosterDB,attendance
       else if(r.holiday)out.holiday=true;
     });
     return out;
-  },[attendanceDB&&attendanceDB.data,student,padm,cls,_mySec]);
+  },[_attData,student,padm,cls,_mySec]);
   const[childPhoto]=useOnePhoto(padm);   // returns a [photo,setPhoto] TUPLE — assigning it whole yields a
                                          // always-truthy array that renders as a broken <img> and hides the real photo.
   // Is this class kept in the app at all? Greencity's academic modules are configured Class 6-12, so a Class 3
   // child has fees and a name but no register, tests or exams. Showing them a blue "register not taken yet" every
   // single day implies the school forgot to mark it — say plainly that the class isn't recorded here instead.
   const attKept=useMemo(function(){
-    var d=(attendanceDB&&attendanceDB.data)||{};
+    var d=_attData;
     for(var k in d){var r=d[k];if(r&&r.status&&cls&&String(r.cls||"")===cls)return true;}
     return false;
-  },[attendanceDB&&attendanceDB.data,cls]);
+  },[_attData,cls]);
   // This child's OWN published fee balance (portalFees/{admNo}) + the school UPI config — exactly the parent-pay path StudentMyReport uses.
   const[portalFee,setPortalFee]=useState(null);const[feeLoaded,setFeeLoaded]=useState(false);
   useEffect(()=>{let cancel=false;const load=async()=>{if(!padm||!window.__db||!window.__fbGetDoc||!window.__fbDoc){setFeeLoaded(true);return;}try{const snap=await window.__fbGetDoc(window.__fbDoc(window.__db,"portalFees",String(padm)));if(!cancel&&snap&&snap.exists&&snap.exists())setPortalFee(snap.data());}catch(e){}if(!cancel)setFeeLoaded(true);};if(window.__fbReady)load();else window.addEventListener("fbready",load,{once:true});return()=>{cancel=true;};},[padm]);
@@ -9019,7 +9062,8 @@ function ParentView({user,testsDB,examsDB,studentsDB,academicRosterDB,attendance
           : S==="A" ? {bg:"var(--bg-red)",fg:"var(--tx-red)",g:"A",t:"Absent today",s:"Not in today's register. Please tell the class teacher if this is unexpected."}
           : S==="L" ? {bg:"var(--bg-amb)",fg:"var(--tx-org2)",g:"L",sm:true,t:"On leave today",s:"Recorded as approved leave in today's register."}
           : todayAtt.holiday ? {bg:"var(--c-f7)",fg:"var(--ap-ink)",g:"",t:"School holiday",s:"No attendance is taken today."}
-          : !attKept ? {bg:"var(--c-f7)",fg:"var(--ap-ink)",g:"",t:"Attendance not kept online for "+(cls||"this class"),s:"Daily attendance for this class is maintained in the class register. Please ask the class teacher for it."}
+          : (!attKept&&scoped!==null) ? {bg:"var(--c-f7)",fg:"var(--ap-ink)",g:"",t:"Attendance not kept online for "+(cls||"this class"),s:"Daily attendance for this class is maintained in the class register. Please ask the class teacher for it."}
+          : scoped===null ? {bg:"var(--c-f7)",fg:"var(--ap-muted)",g:"",t:"Checking today's register…",s:"One moment."}
           : {bg:"var(--bg-blu)",fg:"var(--tx-blu)",g:"",t:"Register not taken yet",s:"Today's attendance has not been marked so far. Please check again a little later."};
         return <div style={{background:st.bg,borderRadius:16,overflow:"hidden"}}>
           <div style={{display:"flex",alignItems:"center",gap:8,padding:"11px 16px",borderBottom:"1px solid rgba(128,128,128,.16)"}}>
@@ -9654,7 +9698,7 @@ h3{font-size:12.5px;color:#0d1b2a;margin:14px 0 4px;text-transform:uppercase;let
 .sign{margin-top:34px;display:flex;justify-content:space-between;font-size:12px;color:#333;text-align:center}
 @media print{.card{padding:12px}}`;
 
-function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,examClasses=SCHOOL.classes,reportsOnly=false}){
+function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,examClasses=__academicClasses(),reportsOnly=false}){
   const[tab,setTab]=useState(reportsOnly?"reports":"exams");
   const[selId,setSelId]=useState("");
   const[markDraft,setMarkDraft]=useState({});const markDirty=useRef({}); // cells THIS teacher edited — so a save merges only those over the live doc, never clobbering another teacher's subject
@@ -13374,9 +13418,42 @@ function BranchSetup({user}){
       </div>
       {!canEdit&&<div style={{background:"var(--bg-amb)",color:"var(--tx-org2)",borderRadius:12,padding:"10px 14px",fontSize:13}}>Only the Director can change these settings.</div>}
       <div className="ap-subnav" style={{width:"fit-content"}}>
-        {[["subjects","Subjects"],["exam","Exam structure"]].map(t=>{var on=stab===t[0];return <button key={t[0]} onClick={()=>setStab(t[0])} className={"ap-pill"+(on?" on":"")}>{t[1]}</button>;})}
+        {[["subjects","Subjects"],["exam","Exam structure"],["classes","Classes"]].map(t=>{var on=stab===t[0];return <button key={t[0]} onClick={()=>setStab(t[0])} className={"ap-pill"+(on?" on":"")}>{t[1]}</button>;})}
       </div>
 
+      {stab==="classes"&&(
+        <div className="ap-panel" style={{padding:18}}>
+          <div style={{fontSize:13.5,fontWeight:700,color:"var(--ap-ink)",marginBottom:3}}>Which classes are tracked in the app?</div>
+          <div style={{fontSize:12.5,color:"var(--ap-muted)",lineHeight:1.55,marginBottom:14,maxWidth:640}}>
+            Students and fees always work for every class. Turn a class OFF here when the school keeps its attendance,
+            tests and exams on paper — it then disappears from the attendance register, the test and exam pickers, and
+            stops being counted as "not marked" on the dashboard. Nothing is deleted; turn it back on whenever you are ready.
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:1,background:"var(--ap-line)",border:"1px solid var(--ap-line)",borderRadius:12,overflow:"hidden",maxWidth:520}}>
+            {classList.map(function(c){
+              var off=((cfg.academicsOff||[]).indexOf(c)>=0);
+              return <div key={c} style={{display:"flex",alignItems:"center",gap:12,background:"var(--c-fff)",padding:"10px 14px"}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13.5,fontWeight:600,color:"var(--ap-ink)"}}>{c}</div>
+                  <div style={{fontSize:11.5,color:off?"var(--tx-org2)":"var(--tx-grn2)",marginTop:1}}>{off?"Students & fees only":"Attendance, tests & exams"}</div>
+                </div>
+                <button disabled={!canEdit||busy} onClick={async function(){
+                    var cur=(cfg.academicsOff||[]).slice();
+                    var ix=cur.indexOf(c); if(ix>=0)cur.splice(ix,1); else cur.push(c);
+                    setBusy(true);setMsg("");
+                    try{await save({academicsOff:cur});setMsg("\u2713 "+c+(ix>=0?" is now tracked in full.":" is now students & fees only."));}
+                    catch(e){setMsg("Could not save — "+((e&&e.message)||"try again"));}
+                    setBusy(false);
+                  }}
+                  style={{flex:"none",width:52,height:30,borderRadius:99,border:"1px solid "+(off?"var(--ap-line2)":"var(--tx-grn2)"),background:off?"var(--c-f5)":"var(--bg-grn)",cursor:canEdit?"pointer":"default",position:"relative",transition:".15s"}}
+                  title={off?("Turn "+c+" on"):("Turn "+c+" off")}>
+                  <span style={{position:"absolute",top:3,left:off?3:25,width:22,height:22,borderRadius:"50%",background:off?"var(--ap-muted)":"var(--tx-grn2)",transition:".15s"}}/>
+                </button>
+              </div>;})}
+          </div>
+          <div style={{fontSize:11.5,color:"var(--ap-muted)",marginTop:10}}>Parents of an untracked class see their child, fees and school notices — and are told attendance is kept in the class register.</div>
+        </div>
+      )}
       {stab==="subjects"&&(
         <div className="ap-panel" style={{padding:18}}>
           <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",marginBottom:14}}>
@@ -14330,7 +14407,7 @@ function BulkParentAccounts({dirDB,usersDB,accountsDB}){
   );
 }
 
-function AdminPanel({testsDB,studentsDB,usersDB,wrongDB}){
+function AdminPanel({testsDB,studentsDB,usersDB,wrongDB,user,academicRosterDB}){
   const logsDB=useFirestore("loginLogs");
   const[activeTab,setActiveTab]=useState("tests");
   const[resetUser,setResetUser]=useState("");
@@ -14436,7 +14513,7 @@ function AdminPanel({testsDB,studentsDB,usersDB,wrongDB}){
   };
 
   if(testsDB.loading)return<Spinner/>;
-  const tabs=[{id:"tests",label:"Tests"},{id:"reset",label:"Reset Password"},{id:"parents",label:"Add Parents"},{id:"users",label:"All Users"},{id:"logs",label:"Login Logs"},{id:"wrong",label:"Wrong Answers"}];
+  const tabs=[{id:"accounts",label:"Accounts"},{id:"tests",label:"Tests"},{id:"reset",label:"Reset Password"},{id:"parents",label:"Add Parents"},{id:"users",label:"All Users"},{id:"logs",label:"Login Logs"},{id:"wrong",label:"Wrong Answers"}];
   return(
     <div className="fi" style={{display:"flex",flexDirection:"column",gap:18}}>
       <div>
@@ -14457,6 +14534,9 @@ function AdminPanel({testsDB,studentsDB,usersDB,wrongDB}){
         ))}
       </div>
 
+      {/* Accounts lives INSIDE Admin now (it used to be its own Settings entry). AdminPanel had no `user` prop
+          before this, so user/dirDB/academicRosterDB are threaded in from the shell. */}
+      {activeTab==="accounts"&&<AccountsPanel user={user} usersDB={usersDB} studentsDB={studentsDB} dirDB={dirDB} academicRosterDB={academicRosterDB} canManage={true}/>}
       {activeTab==="tests"&&(
         <Card>
           <div style={{padding:"14px 20px",borderBottom:"1px solid var(--c-e6)",background:"var(--c-f7)"}}><div style={{fontWeight:700,fontSize:14,color:"var(--c-0d)"}}>All Saved Tests</div></div>
@@ -18662,11 +18742,15 @@ function App(){
     return()=>{cancelled=true;clearTimeout(t);};
   },[]);
   const doLogout=()=>{ setUser(null); setTab("dashboard"); try{window.__authSignOut&&window.__authSignOut();}catch(e){} };
-  const testsDBraw=useFirestore("tests");
+  // Parents do NOT subscribe to the whole-school tests/attendance collections — a full-collection listener
+  // bills one read per document per session, so 600 parents downloading every class's register blew the
+  // Firestore free quota. ParentView fetches just its own child's class instead (scoped query below).
+  const _heavyOK=!!user&&user.role!=="parent";
+  const testsDBraw=useFirestore("tests",_heavyOK);
   const topicsDB=useFirestore("topics");
   const syllabusDB=useFirestore("syllabus", !!user&&user.role!=="parent"&&user.role!=="student");
   const studentsDB=useFirestore("students");
-  const attendanceDBraw=useFirestore("attendance");
+  const attendanceDBraw=useFirestore("attendance",_heavyOK);
   const usersDB=useFirestore("users");
   const wrongDB=useFirestore("wrongAnswers", !!user&&user.role!=="parent"); // students practice + staff review — parents never read it
   const feesDBraw=useFirestore("fees", !!user&&((user.role==="admin"&&user.fees!==false)||user.role==="office"));
@@ -18836,12 +18920,13 @@ function App(){
     {id:"attendance-grp", label:"Attendance", sec:"MAIN", single:"attendance"},
     {id:"calendar-grp", label:"Calendar", sec:"MAIN", single:"calendar"},
     {id:"discipline-grp", label:"Discipline", sec:"MAIN", single:"discipline"},
+    // Admin moved OUT of Resources onto the top level, and now CONTAINS Accounts as its first tab.
+    ...(isAdmin?[{id:"admin-grp", label:"Admin", sec:"MAIN", single:"admin"}]:[]),
     {id:"resources-grp", label:"Resources", sec:"MAIN", children:[
       {id:"students",  label:"Class Roster"},
       ...((isAdmin||isTeacher)?[{id:"cnotes", label:"Concept Notes"}]:[]),
       ...(isDirector?[{id:"studynotes", label:"Study Notes"}]:[]),
       ...((isAdmin||user.qbank===true)?[{id:"qbank", label:"Question Bank"}]:[]),
-      ...(isAdmin?[{id:"admin", label:"Admin"}]:[]),
     ]},
     // ═══ MANAGE ═══
     ...((isAdmin||user.role==="vp")?[{id:"staffatt-grp", label:"Staff", sec:"MANAGE", children:[
@@ -18856,7 +18941,6 @@ function App(){
     // ═══ SETTINGS ═══
     ...(isDirector?[
       {id:"datacenter-grp", label:"Data Center",      sec:"Settings", single:"datacenter"},
-      {id:"accounts-grp",   label:"Accounts",         sec:"Settings", single:"accounts"},
       {id:"security-grp",   label:"Roles & Security", sec:"Settings", single:"security"},
       {id:"trash-grp",      label:"Recently Deleted", sec:"Settings", single:"trash"},
     ]:[]),
@@ -19026,7 +19110,7 @@ function App(){
         {tab==="admitcard"&&(isAdmin||isOffice)&&<AdmitCard user={user} dirDB={dirDB} setTab={setTab}/>}
         {tab==="exams"&&(isAdmin||isTeacher||isOffice||user.role==="vp")&&<Exams user={user} studentsDB={studentsDB} examsDB={examsDB} attendanceDB={attendanceDB} dirDB={dirDB} academicRosterDB={academicRosterDB} examClasses={(isOffice||isAdmin||user.role==="vp")?SCHOOL.classes:getTeacherClasses(user)} reportsOnly={false}/>}
         {tab==="ai"&&isDirector&&<AIPanel testsDB={testsDB} studentsDB={studentsDB} topicsDB={topicsDB} dirDB={dirDB} feesDB={feesDB} attendanceDB={attendanceDB} usersDB={usersDB} academicRosterDB={academicRosterDB} examsDB={examsDB} canFees={canFees}/>}
-        {tab==="admin"&&isAdmin&&<AdminPanel testsDB={testsDB} studentsDB={studentsDB} usersDB={usersDB} wrongDB={wrongDB}/>}
+        {tab==="admin"&&isAdmin&&<AdminPanel testsDB={testsDB} studentsDB={studentsDB} usersDB={usersDB} wrongDB={wrongDB} user={user} academicRosterDB={academicRosterDB}/>}
         {tab==="parent"&&isParent&&<ParentView user={user} testsDB={testsDB} examsDB={examsDB} studentsDB={studentsDB} academicRosterDB={academicRosterDB} attendanceDB={attendanceDB} noticesDB={noticesDB}/>}
         {tab==="account"&&<AccountSettings user={user} usersDB={usersDB} onUpdate={handleUpdateUser}/> }
         {tab==="teacherlog"&&!isParent&&<TeacherLogPanel user={user}/>}
