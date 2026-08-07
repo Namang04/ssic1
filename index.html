@@ -2734,6 +2734,12 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
     const perClass=[];
     Object.values(byCS).forEach(g=>{if(g.t>0){const _k=g.cls+"|"+g.section;const _tot=rosterCnt[_k]||g.rc||g.t;perClass.push({id:g.cls+"|"+g.section,cls:g.cls,section:g.section,label:lab(g.cls,g.section),marked:true,pct:Math.round(g.p/g.t*100),p:g.p,t:g.t,mk:g.mk||0,rc:g.rc||0,total:_tot});}});
     Object.values(expected).forEach(m=>{const k=m.cls+"|"+m.section;if(markedKeys.has(k)||holidayKeys.has(k))return;if(!m.section&&markedClasses.has(m.cls))return;perClass.push({id:m.cls+"|"+m.section,cls:m.cls,section:m.section,label:lab(m.cls,m.section),marked:false,pct:null,p:0,t:0,total:rosterCnt[k]||0});});
+    // Classes the Director has set to "students & fees only" (Branch Setup -> Classes) are dropped here, so they
+    // never appear as "unmarked sections — chase the class teacher" for a register the school keeps on paper.
+    // Filtering at the SOURCE also keeps them out of the below-80% and marked-sections lists and the overall %.
+    var _perClassAll=perClass.slice();
+    perClass.length=0;
+    _perClassAll.forEach(function(x){ if(typeof __isAcademicCls!=="function"||__isAcademicCls(x.cls))perClass.push(x); });
     perClass.sort((a,b)=>{if(a.marked&&b.marked)return a.pct-b.pct;if(a.marked!==b.marked)return a.marked?-1:1;return a.label.localeCompare(b.label,undefined,{numeric:true});});
     return {present,total,sections:Object.values(byCS).filter(g=>g.t>0).length,pct:total?Math.round(present/total*100):0,perClass,unmarked:perClass.filter(x=>!x.marked).length};
   },[attendanceDB.data,dirDB&&dirDB.data,today]);
@@ -3129,7 +3135,7 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
     const bad=[];if(riskGrid)riskGrid.rows.forEach(r=>r.cells.forEach(c=>{if(c.avg!=null&&c.avg<40)bad.push({cls:r.cls,subj:c.subj,avg:c.avg});}));
     bad.sort((a,b)=>a.avg-b.avg);
     const tested={};Object.values((testsDB&&testsDB.data)||{}).forEach(t=>{if(t&&t.cls&&String(t.testDate||"").slice(0,7)===month)tested[t.cls]=1;});
-    const untested=SCHOOL.classes.filter(c=>{const rec=studentsDB.data[safeId(c)];return rec&&(rec.list||[]).length>0&&!tested[c];});
+    const untested=__academicClasses().filter(c=>{const rec=studentsDB.data[safeId(c)];return rec&&(rec.list||[]).length>0&&!tested[c];});
     return{bad:bad.slice(0,8),untested};
   },[riskGrid,testsDB&&testsDB.data,studentsDB.data,month]);
 
@@ -5078,7 +5084,7 @@ function LinkTestNames({user, studentsDB, academicRosterDB, studentLinksDB}){
   const[busy,setBusy]=useState("");
   const linkedKeys=useMemo(()=>{const s={};Object.values(studentLinksDB.data||{}).forEach(l=>{if(l&&l.testName)s[(l.cls||"")+"||"+nmKey(l.testName)]=l;});return s;},[studentLinksDB.data]);
   const disputed=useMemo(()=>{const out=[];
-    SCHOOL.classes.forEach(c=>{
+    __academicClasses().forEach(c=>{
       const testList=(studentsDB.data[safeId(c)]&&studentsDB.data[safeId(c)].list)||[];
       const rd=academicRosterDB.data&&academicRosterDB.data[safeId(c)];const roster=(rd&&rd.students)||[];
       if(!roster.length||!testList.length)return;
@@ -6269,8 +6275,8 @@ function ManageStudents({user,usersDB,studentsDB,testsDB,academicRosterDB,studen
 function ManageTopics({user,usersDB,topicsDB}){
   const{data,loading,set}=topicsDB;
   const mtCls=getTeacherClasses(user);
-  const[cls,setCls]=useState(mtCls[0]||SCHOOL.classes[0]);
-  const[subj,setSubj]=useState((getTeacherSubjects(user,mtCls[0]||SCHOOL.classes[0])[0])||"");
+  const[cls,setCls]=useState(mtCls[0]||__academicClasses()[0]);
+  const[subj,setSubj]=useState((getTeacherSubjects(user,mtCls[0]||__academicClasses()[0])[0])||"");
   const[input,setInput]=useState("");
   useEffect(()=>{const s=getTeacherSubjects(user,cls);setSubj(s[0]||"");},[cls]);
   const key=`${cls}__${subj}`;
@@ -6368,8 +6374,8 @@ function SyllabusTracker({user,topicsDB,syllabusDB}){
   const isMgr=user.role==="admin"||user.role==="vp";
   const canEdit=isMgr||user.role==="teacher"; // teachers update their own subjects; managers all
   const sCls=getTeacherClasses(user);
-  const[cls,setCls]=useState(sCls[0]||SCHOOL.classes[0]);
-  const[subj,setSubj]=useState(getTeacherSubjects(user,sCls[0]||SCHOOL.classes[0])[0]||"");
+  const[cls,setCls]=useState(sCls[0]||__academicClasses()[0]);
+  const[subj,setSubj]=useState(getTeacherSubjects(user,sCls[0]||__academicClasses()[0])[0]||"");
   const[input,setInput]=useState("");
   const[busy,setBusy]=useState(false);
   useEffect(()=>{const s=getTeacherSubjects(user,cls);setSubj(s[0]||"");},[cls]);
@@ -7139,7 +7145,7 @@ function TestTracker({user,testsDB,studentsDB,usersDB,dirDB,academicRosterDB}){
     return s;
   },[isTeacherTT,user,teachClassSet]);
   const teacherUnassigned=isTeacherTT&&(!teachClassSet||teachClassSet.size===0||!teachPairs||teachPairs.size===0);
-  const classes=useMemo(()=>SCHOOL.classes.filter(c=>(!teachClassSet||teachClassSet.has(c))&&rosterForCls(dirDB,studentsDB,c,academicRosterDB).length>0),[studentsDB.data,dirDB&&dirDB.data,academicRosterDB&&academicRosterDB.data,teachClassSet]);
+  const classes=useMemo(()=>__academicClasses().filter(c=>(!teachClassSet||teachClassSet.has(c))&&rosterForCls(dirDB,studentsDB,c,academicRosterDB).length>0),[studentsDB.data,dirDB&&dirDB.data,academicRosterDB&&academicRosterDB.data,teachClassSet]);
   const __brTT=useBranch();
   const allUsers=useMemo(()=>_branchUsers((usersDB&&usersDB.data)||{},__brTT),[usersDB&&usersDB.data,__brTT]);
   const teacherFor=(cls,subj)=>{const names=[];Object.entries(allUsers).forEach(([uname,u])=>{if(!u||u.role!=="teacher"||!u.classes||!u.classes.length||!u.subjects||!u.subjects.length)return;if(getTeacherClasses(u).includes(cls)&&getTeacherSubjects(u,cls).includes(subj))names.push(u.name||uname);});return names;};
@@ -7148,9 +7154,9 @@ function TestTracker({user,testsDB,studentsDB,usersDB,dirDB,academicRosterDB}){
   // for an unrelated class isn't cluttered with subjects it doesn't run.
   const customSubjects=useMemo(()=>(((usersDB&&usersDB.data&&usersDB.data.__subjects)||{}).list)||[],[usersDB&&usersDB.data]);
   const customByCls=useMemo(()=>{
-    const m={};SCHOOL.classes.forEach(c=>m[c]=[]);
+    const m={};__academicClasses().forEach(c=>m[c]=[]);
     if(customSubjects.length){
-      const cs=new Set(customSubjects),seen={};SCHOOL.classes.forEach(c=>seen[c]={});
+      const cs=new Set(customSubjects),seen={};__academicClasses().forEach(c=>seen[c]={});
       const add=(c,s)=>{if(m[c]&&!seen[c][s]){seen[c][s]=1;m[c].push(s);}};
       Object.values(allUsers).forEach(u=>{if(!u||u.role!=="teacher"||!u.classes||!u.subjects)return;const tc=getTeacherClasses(u);(u.subjects||[]).forEach(s=>{if(cs.has(s))tc.forEach(c=>add(c,s));});});
       Object.values(testsDB.data||{}).forEach(t=>{if(t&&t.cls&&t.subj&&cs.has(t.subj))add(t.cls,t.subj);});
@@ -7741,7 +7747,7 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB,academicRost
   // make the filter default to "A" and hide a whole class whose students carry blank sections in the record.
   const _mySecs=(c)=>{var want=String(c).split("-")[0].trim();return [...new Set((user.classes||[]).filter(function(cc){return cc.split("-")[0].trim()===want;}).map(function(cc){var p=cc.split("-");return p.length>1?p.slice(1).join("-").trim():"";}).filter(Boolean))];};
   const defSec=(c)=>{if(canViewAllSec)return "";var r=_mySecs(c);return r.length?r[0]:"";};
-  const[cls,setCls]=useState(aC[0]||SCHOOL.classes[0]);
+  const[cls,setCls]=useState(aC[0]||__academicClasses()[0]);
   const aS=useMemo(()=>getTeacherSubjects(user,cls),[cls,user]);
   const[subj,setSubj]=useState(aS[0]||"");
   const[total,setTotal]=useState(20);
@@ -9503,7 +9509,7 @@ table{width:100%;border-collapse:collapse;font-size:12.5px}th,td{border:1px soli
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
           <select value={fCls} onChange={e=>setFCls(e.target.value)} className="ss-input" style={{padding:"9px 12px",borderRadius:10,fontSize:13,fontWeight:600,minWidth:140}}>
             <option value="all">All classes</option>
-            {SCHOOL.classes.map(c=><option key={c} value={c}>{c}</option>)}
+            {__academicClasses().map(c=><option key={c} value={c}>{c}</option>)}
           </select>
           <Btn v="ghost" onClick={printSummary}>Print report</Btn>
         </div>
@@ -9710,7 +9716,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
   const[msSec,setMsSec]=useState(""); // marksheet scope: "" = whole class, else one section
   const[rcTog,setRcTog]=useState({rank:true,coscholastic:true,attendance:true,remarks:true}); // sections shown on the card
   // ── Term Result composer state ──
-  const[trCls,setTrCls]=useState(examClasses[0]||SCHOOL.classes[0]);
+  const[trCls,setTrCls]=useState(examClasses[0]||__academicClasses()[0]);
   const[trTerm,setTrTerm]=useState("Term 1");
   const[trSubj,setTrSubj]=useState("");
   const[trUtId,setTrUtId]=useState("");      // chosen Unit Test exam id
@@ -9745,7 +9751,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
     setPubBusy(false);
   };
   // create-exam form
-  const[nClass,setNClass]=useState(examClasses[0]||SCHOOL.classes[0]);
+  const[nClass,setNClass]=useState(examClasses[0]||__academicClasses()[0]);
   const[nTerm,setNTerm]=useState("Term 1");
   const[progCls,setProgCls]=useState(examClasses[0]);
   const[nName,setNName]=useState("Half-Yearly Examination");
@@ -13059,7 +13065,7 @@ function StudyNotesPanel({user}){
         <InsPanel title="Pick a chapter">
           <div style={{display:"flex",flexDirection:"column",gap:12}}>
             <div style={{display:"flex",gap:10}}>
-              <div style={{flex:1}}><Lbl c="Class"/><Sel value={cls} onChange={setCls} options={ALL_CLASSES}/></div>
+              <div style={{flex:1}}><Lbl c="Class"/><Sel value={cls} onChange={setCls} options={__academicClasses()}/></div>
               <div style={{flex:1}}><Lbl c="Subject"/><Sel value={subj} onChange={setSubj} options={subjects}/></div>
             </div>
             <div><Lbl c="Chapter"/><Sel value={chapter} onChange={v=>{setChapter(v);setNewChap("");}} options={chapters}/></div>
