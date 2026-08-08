@@ -7796,8 +7796,13 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB,academicRost
   const myTests=useMemo(()=>Object.entries(testsDB.data).map(([id,t])=>({id,...t})).filter(t=>t&&t.cls===cls&&t.subj===subj).sort((a,b)=>String(b.testDate||"").localeCompare(String(a.testDate||""))||((b.week||0)-(a.week||0))),[testsDB.data,cls,subj]);
   useEffect(()=>{setTestSel("new");},[cls,subj]);
   const editing=testSel!=="new"?myTests.find(t=>t.id===testSel):null;
-  const week=editing?editing.week:(myTests.reduce((m,t)=>Math.max(m,parseInt(t.week,10)||0),0)+1); // auto sequence, hidden from teacher (parseInt: imported tests may carry a string week like "week1")
-  const testKey=`${cls}__${subj}__week${week}`;
+  // Sections are tested on DIFFERENT DAYS under the current rotation (e.g. Class 6 Computer: Sec A Wed, Sec B Fri),
+  // so each section gets its OWN test document. Sharing one meant the date, total and topic belonged to whoever
+  // saved last. Legacy tests carry no section and keep their original id untouched.
+  const _secKey=String(emFilterSec||"").trim();
+  const _sameSec=(t)=>!_secKey||!t.section||String(t.section)===_secKey;
+  const week=editing?editing.week:(myTests.filter(_sameSec).reduce((m,t)=>Math.max(m,parseInt(t.week,10)||0),0)+1); // auto sequence, hidden from teacher (parseInt: imported tests may carry a string week like "week1")
+  const testKey=_secKey?`${cls}__${subj}__sec${_secKey}__week${week}`:`${cls}__${subj}__week${week}`;
   const existing=editing;
   useEffect(()=>{
     const testChanged=lastTestSelRef.current!==testSel;lastTestSelRef.current=testSel;
@@ -7843,6 +7848,9 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB,academicRost
   })();
   const toggleTopic=t=>setSelTopics(p=>p.includes(t)?p.filter(x=>x!==t):[...p,t]);
   const setMark=(s,v)=>{dirtyRef.current[s]=true;setRows(p=>({...p,[s]:v}));};
+  const[newTopic,setNewTopic]=useState("");   // typed-in topic — teachers should never have to leave this page
+  const addTypedTopic=()=>{const t=newTopic.trim().replace(/\s+/g," ");if(!t)return;
+    setSelTopics(p=>p.includes(t)?p:[...p,t]);setNewTopic("");};
   const[saveErr,setSaveErr]=useState("");
   const handleSave=async()=>{
     setSaveErr("");
@@ -7864,7 +7872,13 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB,academicRost
         if(v===undefined||v===""){delete mergedRows[nm];if(a)delete mergedByAdm[a];var _ak=Object.keys(mergedRows).filter(function(k){return a&&__admInBrack(k)===a;});if(!_ak.length&&!/\(/.test(nm)){var _nk=nmKey(nm);var _lm=Object.keys(mergedRows).filter(function(k){return nmKey(k)===_nk;});if(_lm.length===1)_ak=_lm;}_ak.forEach(function(k){delete mergedRows[k];});}
         else{mergedRows[nm]=v;if(a)mergedByAdm[a]=v;}
       });
-      await testsDB.set(docId,{cls,subj,week,total,testDate,topics:selTopics,name:(selTopics[0]||"Test"),by:user.name,at:new Date().toISOString(),rows:mergedRows,rowsByAdm:mergedByAdm});
+      await testsDB.set(docId,{cls,subj,section:(editing&&editing.section!==undefined&&!_secKey)?editing.section:_secKey,week,total,testDate,topics:selTopics,name:(selTopics[0]||"Test"),by:user.name,at:new Date().toISOString(),rows:mergedRows,rowsByAdm:mergedByAdm});
+      // Any topic typed here joins the saved list, so the next teacher taps it instead of retyping.
+      try{
+        var _tk=safeId(cls+"__"+subj), _cur=((topicsDB.data||{})[_tk]||{}).list||[];
+        var _add=selTopics.filter(function(t){return _cur.indexOf(t)<0;});
+        if(_add.length&&topicsDB.set)await topicsDB.set(_tk,{cls:cls,subj:subj,list:_cur.concat(_add)});
+      }catch(e){/* topic list is a convenience — never fail the marks save over it */}
       dirtyRef.current={};
       if(testSel==="new")setTestSel(docId); // keep editing the test we just created
       setSaved(true);setTimeout(()=>setSaved(false),2500);
@@ -7901,7 +7915,7 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB,academicRost
         <div style={{marginTop:14,display:"flex",gap:14,flexWrap:"wrap",alignItems:"flex-end"}}>
           <div style={{flex:1,minWidth:260}}>
             <Lbl c="Test (pick one to edit, or start a new one)"/>
-            <Sel value={testSel} onChange={setTestSel} options={[{v:"new",l:"New test"},...myTests.map(t=>({v:t.id,l:((t.topics&&t.topics.length)?t.topics.join(", "):(t.name||"Test"))+" · "+(t.testDate?fmtDate(t.testDate):"no date")}))]}/>
+            <Sel value={testSel} onChange={setTestSel} options={[{v:"new",l:"New test"},...myTests.map(t=>({v:t.id,l:((t.topics&&t.topics.length)?t.topics.join(", "):(t.name||"Test"))+" · "+(t.testDate?fmtDate(t.testDate):"no date")+(t.section?(" · Sec "+t.section):"")}))]}/>
           </div>
           <div style={{minWidth:170}}>
             <Lbl c="Test Date"/>
@@ -7925,9 +7939,18 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB,academicRost
       {/* Topics */}
       <div className="ap-panel" style={{padding:18}}>
         <div style={{fontWeight:650,fontSize:15,color:"var(--ap-ink)"}}>Topics tested</div>
-        {availableTopics.length===0?(
-          <div style={{background:"var(--bg-org)",border:"1px solid var(--bd-amb)",borderRadius:11,padding:"12px 15px",marginTop:10,fontSize:13,color:"var(--tx-org2)"}}>No topics for <strong>{cls} — {subj}</strong> yet. Add them under Topics first.</div>
-        ):(
+        <div style={{fontSize:12.5,color:"var(--ap-muted)",marginTop:3}}>Type what this test covered. It is saved for next time, so the list below fills up as the year goes on.</div>
+        {/* Type a topic right here — going to a different screen to create one first was the main reason tests
+            ended up with no topic at all, which is what parents then see against their child's marks. */}
+        <div style={{display:"flex",gap:8,marginTop:11,flexWrap:"wrap"}}>
+          <input value={newTopic} onChange={e=>setNewTopic(e.target.value)}
+            onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addTypedTopic();}}}
+            placeholder={"e.g. "+((availableTopics[0])||"Light — reflection")}
+            className="ss-input" style={{flex:1,minWidth:220,padding:"10px 12px",borderRadius:10,border:"1px solid var(--c-d2)",fontSize:13,outline:"none",background:"var(--c-fff)",color:"var(--ap-ink)"}}/>
+          <button onClick={addTypedTopic} disabled={!newTopic.trim()} className="ss-press"
+            style={{background:newTopic.trim()?"var(--btn-pri-bg)":"var(--c-f0)",color:newTopic.trim()?"#fff":"var(--ap-faint)",border:"none",borderRadius:10,padding:"10px 18px",fontSize:13,fontWeight:600,cursor:newTopic.trim()?"pointer":"default",fontFamily:"var(--ss-font)"}}>Add topic</button>
+        </div>
+        {availableTopics.length===0?null:(
           <>
             <div style={{display:"flex",flexWrap:"wrap",gap:8,marginTop:11}}>
               {availableTopics.map(t=>{const on=selTopics.includes(t);return(
@@ -7944,7 +7967,7 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB,academicRost
         <div className="ap-panel" style={{padding:"24px 18px",textAlign:"center"}}>
           <div style={{fontSize:30,marginBottom:8,display:"flex",alignItems:"center",justifyContent:"center"}}><Icon name="edit" size={30}/></div>
           <div style={{fontSize:15,fontWeight:650,color:"var(--ap-ink)"}}>Select a topic to start entering marks</div>
-          <div style={{fontSize:13,color:"var(--ap-muted)",marginTop:6,maxWidth:440,margin:"6px auto 0"}}>{availableTopics.length===0?`No topics exist for ${cls} — ${subj||"this subject"} yet. Add them under the Topics tab first, then come back.`:"Choose at least one topic above. Marks entry unlocks once a topic is selected."}</div>
+          <div style={{fontSize:13,color:"var(--ap-muted)",marginTop:6,maxWidth:440,margin:"6px auto 0"}}>"Type what the test covered in the box above (or tap one you have used before). Marks entry opens as soon as a topic is set."</div>
         </div>
        ):(
         <>
@@ -18926,7 +18949,7 @@ function App(){
     {id:"exams-grp",       label:"Exams",       sec:"MAIN", single:"exams"},
     {id:"tracker-grp",     label:"My Classes",  sec:"MAIN", children:[
       {id:"overview",      label:"Overview"},
-      {id:"topics",        label:"Topics"},
+      // "Topics" removed from the teacher menu — they type the topic directly in Enter Marks now.
       {id:"enter",         label:"Enter Marks"},
       {id:"tracker",       label:"Test Tracker"},
       {id:"participation", label:"Participation"},
