@@ -86,14 +86,14 @@
   --c-fff:#ffffff;--c-f7:#f7f7f9;--c-f0:#f0f0f3;--c-ec:#ececef;--c-f5:#f5f5f7;
   --c-e6:#e6e6eb;--c-ecf:#ececf0;--c-d2:#d2d2d7;
   --c-1d:#1d1d1f;--c-1e:#1e293b;--c-0d:#0d1b2a;--c-47:#475569;
-  --c-64:#64748b;--c-94:#94a3b8;--c-cb:#cbd5e1;--c-ae:#aeaeb2;
+  --c-64:#4a5768;--c-94:#5e6c81;--c-cb:#cbd5e1;--c-ae:#6e6e73;
   --c-blur:rgba(255,255,255,.78);--c-blur2:rgba(245,245,247,.72);
   /* status soft backgrounds + text (light = original values) */
   --bg-grn:#e7f6ec;--bg-red:#fdecea;--bg-org:#fdf0e0;--bg-amb:#fef3c7;--bg-pur:#eeedfd;
-  --tx-grn:#15803d;--tx-grn2:#1f9d55;--tx-grn3:#14532d;--tx-red:#dc2626;--tx-red2:#991b1b;--tx-org:#c2710c;--tx-org2:#b45309;--tx-pur:#5b54d6;
+  --tx-grn:#137537;--tx-grn2:#1a7c44;--tx-grn3:#14532d;--tx-red:#c81e1e;--tx-red2:#991b1b;--tx-org:#94550a;--tx-org2:#a94e08;--tx-pur:#5b54d6;
   /* status banner BORDERS — pastel 1px lines around --bg-* panels; must flip WITH them in dark */
   --bd-red:#f3c9c4;--bd-amb:#f0d59a;--bd-grn:#c6ebd4;
-  --tx-gold:#8a6d1f; /* text-safe gold — raw #c9a84c is ~2:1 on white at small sizes */
+  --tx-gold:#7d631b; /* text-safe gold — raw #c9a84c is ~2:1 on white at small sizes */
   --c-shadow:16,24,40;
   /* timetable brand chrome (navy header rides white text in both themes) */
   --tt-hdr:#0d1b2a;--tt-hdr-tx:#ffffff;--tt-gold:#c9a84c;--tt-gold-tx:#0d1b2a;
@@ -114,7 +114,7 @@ html[data-theme="dark"]{
   --c-fff:#0c0c0e;--c-f7:#161618;--c-f0:#1c1c1f;--c-ec:#1c1c1f;--c-f5:#000000;
   --c-e6:#36363d;--c-ecf:#36363d;--c-d2:#46464f;
   --c-1d:#f3f3f6;--c-1e:#e9e9ee;--c-0d:#eef1f6;--c-47:#c4c4cc;
-  --c-64:#9a9aa4;--c-94:#7f7f89;--c-cb:#5c5c66;--c-ae:#6b6b75;
+  --c-64:#a8a8b2;--c-94:#91919c;--c-cb:#5c5c66;--c-ae:#a0a0a8;
   --c-blur:rgba(0,0,0,.72);--c-blur2:rgba(0,0,0,.72);
   --bg-grn:#15291d;--bg-red:#2a1718;--bg-org:#2a2014;--bg-amb:#2e2613;--bg-pur:#1f1e33;
   --tx-grn:#5ed98f;--tx-grn2:#45c97e;--tx-grn3:#bdf0cf;--tx-red:#f0726a;--tx-red2:#f1a39b;--tx-org:#e0a45f;--tx-org2:#e0a45f;--tx-pur:#9d97ee;
@@ -3562,7 +3562,7 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
               <table style={{borderCollapse:"collapse",fontSize:11}}>
                 <thead><tr><th style={{padding:"3px 7px",textAlign:"left",color:"var(--ap-muted)",fontWeight:600}}></th>{riskGrid.subjects.map(s=><th key={s.key} style={{padding:"3px 7px",color:"var(--ap-muted)",fontWeight:600}}>{s.label}</th>)}</tr></thead>
                 <tbody>{riskGrid.rows.map(r=>(<tr key={r.cls}><td style={{padding:"3px 7px",fontWeight:700,color:"var(--ap-ink)",whiteSpace:"nowrap"}}>{String(r.cls).replace("Class ","Cl ")}</td>
-                  {r.cells.map((c,i)=>(<td key={i} style={{padding:"2px 3px"}}>{c.avg==null?<span style={{color:"var(--c-d2)"}}>–</span>:
+                  {r.cells.map((c,i)=>(<td key={i} style={{padding:"2px 3px"}}>{c.avg==null?<span style={{color:"var(--c-94)"}}>–</span>:
                     <button onClick={()=>go("insights","__insightsJump",{cls:r.cls})} title={r.cls+" · "+c.subj+" · "+c.avg+"%"} style={{width:34,padding:"3px 0",borderRadius:6,border:"none",cursor:"pointer",fontWeight:700,fontFamily:"var(--ss-font)",fontSize:11.5,background:c.avg<40?"var(--bg-red)":c.avg<60?"var(--bg-amb)":"var(--bg-grn)",color:c.avg<40?"var(--tx-red)":c.avg<60?"var(--tx-org2)":"var(--tx-grn)"}}>{c.avg}</button>}</td>))}
                 </tr>))}</tbody>
               </table></div>}
@@ -7469,10 +7469,10 @@ function TestParticipation({user,testsDB,studentsDB,dirDB,academicRosterDB}){
                     <tr key={s.name} style={{borderTop:"1px solid var(--c-f0)",background:i%2===0?"var(--c-fff)":"var(--c-f7)"}}>
                       <td style={{padding:"10px 12px",textAlign:"center",fontSize:12,color:"var(--c-94)",fontWeight:700}}>{i+1}</td>
                       <td style={{padding:"10px 20px",fontWeight:500,fontSize:13,color:"var(--c-1e)",whiteSpace:"nowrap"}}>{s.name}</td>
-                      <td style={{padding:"10px 12px",textAlign:"center"}}>{s.sec!=="-"?<span className="ss-secpill">{s.sec}</span>:<span style={{color:"var(--c-cb)"}}>—</span>}</td>
+                      <td style={{padding:"10px 12px",textAlign:"center"}}>{s.sec!=="-"?<span className="ss-secpill">{s.sec}</span>:<span style={{color:"var(--c-94)"}}>—</span>}</td>
                       <td style={{padding:"10px 16px",textAlign:"center",fontFamily:"monospace",fontSize:13,fontWeight:700,color:"var(--tx-gold)"}}>{s.given}/{s.total}</td>
                       <td style={{padding:"10px 16px",textAlign:"center",fontFamily:"monospace",fontSize:13,fontWeight:700,color:s.missed===0?"var(--tx-gold)":"var(--tx-red)"}}>{s.missed===0?"✓ 0":s.missed}</td>
-                      <td style={{padding:"10px 16px",textAlign:"center"}}>{s.total>0?<span style={{background:s.pct>=85?"var(--bg-grn)":s.pct>=70?"var(--bg-amb)":"var(--bg-red)",color:s.pct>=85?"var(--tx-grn2)":s.pct>=70?"var(--tx-org2)":"var(--tx-red2)",borderRadius:6,padding:"2px 10px",fontSize:11,fontWeight:700}}>{s.pct}%</span>:<span style={{color:"var(--c-cb)"}}>—</span>}</td>
+                      <td style={{padding:"10px 16px",textAlign:"center"}}>{s.total>0?<span style={{background:s.pct>=85?"var(--bg-grn)":s.pct>=70?"var(--bg-amb)":"var(--bg-red)",color:s.pct>=85?"var(--tx-grn2)":s.pct>=70?"var(--tx-org2)":"var(--tx-red2)",borderRadius:6,padding:"2px 10px",fontSize:11,fontWeight:700}}>{s.pct}%</span>:<span style={{color:"var(--c-94)"}}>—</span>}</td>
                       <td style={{padding:"10px 20px",fontSize:12,color:s.missed>0?"var(--tx-red)":"var(--tx-gold)"}}>{s.missed===0?"✓ All tests given":s.missedTests.map(t=>`Wk ${t.week}`).join(", ")}</td>
                     </tr>
                   ))}
@@ -7998,7 +7998,7 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB,academicRost
                     {isOver&&<div style={{fontSize:11,color:"var(--tx-red)",marginTop:2}}>Exceeds {total}</div>}
                   </div>
                   <div style={{fontFamily:"var(--ss-font)",fontSize:13,fontWeight:700,color:p!==null?gcolor(p):"var(--c-cb)"}}>{p!==null?p+"%":"—"}</div>
-                  <div className="em-col-grade">{g?<span style={{background:g.bg,color:g.c,borderRadius:6,padding:"3px 9px",fontSize:11,fontWeight:700}}>{g.l}</span>:<span style={{color:"var(--c-cb)",fontSize:13}}>—</span>}</div>
+                  <div className="em-col-grade">{g?<span style={{background:g.bg,color:g.c,borderRadius:6,padding:"3px 9px",fontSize:11,fontWeight:700}}>{g.l}</span>:<span style={{color:"var(--c-94)",fontSize:13}}>—</span>}</div>
                 </div>
               );
             })}
@@ -8401,9 +8401,9 @@ function ClassProgress({user,testsDB,studentsDB,dirDB,academicRosterDB,jumpStude
                     <tr key={ss.name} style={{borderTop:"1px solid var(--c-f0)",background:i%2===0?"var(--c-fff)":"var(--c-f7)"}}>
                       <td style={{padding:"10px 12px",textAlign:"center",fontSize:12,color:"var(--c-94)",fontWeight:700}}>{ss.roll}</td>
                       <td style={{padding:"10px 20px",fontWeight:500,fontSize:13,color:"var(--c-1e)",whiteSpace:"nowrap"}}>{ss.name}</td>
-                      <td style={{padding:"8px 12px",textAlign:"center"}}>{ss.sec!=="-"?<span className="ss-secpill">{ss.sec}</span>:<span style={{color:"var(--c-cb)",fontSize:11}}>—</span>}</td>
-                      {rTests.map((test,idx)=>{const sc=ss.sc.find(x=>x.week===test.week);const g=sc?gradeOf(sc.p):null;return<td key={idx} style={{padding:"10px 12px",textAlign:"center"}}>{sc?<span style={{fontFamily:"monospace",fontSize:12,fontWeight:700,color:g.c}}>{sc.p}%</span>:<span style={{color:"var(--c-e6)",fontSize:12}}>A</span>}</td>;})}
-                      <td style={{padding:"10px 16px",textAlign:"center"}}>{ss.avg!==null?<GBadge p={ss.avg}/>:<span style={{color:"var(--c-cb)"}}>—</span>}</td>
+                      <td style={{padding:"8px 12px",textAlign:"center"}}>{ss.sec!=="-"?<span className="ss-secpill">{ss.sec}</span>:<span style={{color:"var(--c-94)",fontSize:11}}>—</span>}</td>
+                      {rTests.map((test,idx)=>{const sc=ss.sc.find(x=>x.week===test.week);const g=sc?gradeOf(sc.p):null;return<td key={idx} style={{padding:"10px 12px",textAlign:"center"}}>{sc?<span style={{fontFamily:"monospace",fontSize:12,fontWeight:700,color:g.c}}>{sc.p}%</span>:<span style={{color:"var(--c-94)",fontSize:12}}>A</span>}</td>;})}
+                      <td style={{padding:"10px 16px",textAlign:"center"}}>{ss.avg!==null?<GBadge p={ss.avg}/>:<span style={{color:"var(--c-94)"}}>—</span>}</td>
                       <td style={{padding:"10px 16px",textAlign:"center",fontFamily:"monospace",fontSize:13,fontWeight:700,color:ss.missed===0?"#c9a84c":"var(--tx-red)"}} title={ss.missed>0?`Missed weeks: ${ss.missedWeeks.join(", ")}`:"All tests given"}>{ss.missed===0?"✓":`${ss.missed}/${rTests.length}`}</td>
                       <td style={{padding:"10px 16px",textAlign:"center",fontSize:12,fontWeight:700,color:ss.trend==null?"var(--c-cb)":ss.trend>5?"#c9a84c":ss.trend<-5?"var(--tx-red)":"var(--c-64)"}} title={ss.trend==null?"Needs 3+ tests to show a trend":""}>{ss.trend==null?"—":ss.trend>5?`↑ +${ss.trend}%`:ss.trend<-5?`↓ ${ss.trend}%`:"→ Stable"}</td>
                     </tr>
@@ -8648,7 +8648,7 @@ ${sd.map(s=>`<tr><td class="subj">${esc(s.subj)}</td><td>${s.sc.length}</td><td 
               </div>
               <div style={{display:"flex",gap:13,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
                 {s.sc.map(sc=><TestChip key={sc.week} sc={sc} w={62} big={true}/>)}
-                {s.avg!==null?<GBadge p={s.avg}/>:<span style={{fontSize:12,color:"var(--c-cb)"}}>No data</span>}
+                {s.avg!==null?<GBadge p={s.avg}/>:<span style={{fontSize:12,color:"var(--c-94)"}}>No data</span>}
                 {s.trend!==null&&<span style={{fontSize:12,fontWeight:700,color:s.trend>0?"var(--tx-grn2)":s.trend<-5?"#d2342a":"var(--ap-muted)"}}>{s.trend>0?`↑ +${s.trend}%`:s.trend<-5?`↓ ${s.trend}%`:"→"}</span>}
               </div>
             </div>
@@ -8921,7 +8921,7 @@ th{background:#0d1b2a;color:#fff;font-weight:600}td.l{text-align:left;font-weigh
               </div>
               <div style={{display:"flex",gap:13,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
                 {s.sc.map(sc=><TestChip key={sc.week} sc={sc} w={62} big={true}/>)}
-                {s.avg!==null?<GBadge p={s.avg}/>:<span style={{fontSize:12,color:"var(--c-cb)"}}>No data</span>}
+                {s.avg!==null?<GBadge p={s.avg}/>:<span style={{fontSize:12,color:"var(--c-94)"}}>No data</span>}
                 {s.trend!==null&&<span style={{fontSize:12,fontWeight:700,color:s.trend>0?"var(--tx-grn2)":s.trend<-5?"#d2342a":"var(--ap-muted)"}}>{s.trend>0?`↑ +${s.trend}%`:s.trend<-5?`↓ ${s.trend}%`:"→"}</span>}
               </div>
             </div>
@@ -13410,12 +13410,12 @@ function AccountsPanel({user,usersDB,studentsDB,dirDB,academicRosterDB,canManage
                 <td style={{...td}}><span style={{background:isDisabled?"var(--bg-red)":(acct?"var(--bg-grn)":"var(--c-f5)"),color:isDisabled?"var(--tx-red)":(acct?"var(--tx-grn)":"var(--c-94)"),padding:"3px 9px",borderRadius:8,fontSize:11,fontWeight:700}}>{isDisabled?"Disabled":(acct?"Active":"No login")}</span></td>
                 <td style={{...td,textAlign:"right",paddingRight:18}}>
                   {working===u.username?<span style={{fontSize:12,color:"var(--c-94)"}}>…</span>:
-                   isSelf?<span style={{fontSize:11.5,color:"var(--c-cb)"}}>—</span>:
+                   isSelf?<span style={{fontSize:11.5,color:"var(--c-94)"}}>—</span>:
                    <div style={{display:"inline-flex",gap:6,alignItems:"center",justifyContent:"flex-end"}}>
-                   {isSpecial&&!acct?<span style={{fontSize:11.5,color:"var(--c-cb)"}}>protected</span>:
+                   {isSpecial&&!acct?<span style={{fontSize:11.5,color:"var(--c-94)"}}>protected</span>:
                     acct?<button onClick={()=>toggleDisabled(u)} style={{background:isDisabled?"var(--bg-grn)":"var(--bg-red)",color:isDisabled?"var(--tx-grn)":"var(--tx-red)",border:"none",borderRadius:6,padding:"5px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>{isDisabled?"Enable":"Disable"}</button>:
                     isStaff?<button onClick={()=>giveLogin(u)} style={{background:"var(--c-fff)",border:"1px solid var(--c-d2)",color:"var(--ap-ink)",borderRadius:6,padding:"5px 12px",fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Give login →</button>:
-                    <span style={{fontSize:11.5,color:"var(--c-cb)"}}>—</span>}
+                    <span style={{fontSize:11.5,color:"var(--c-94)"}}>—</span>}
                    {isStaff&&!isSpecial&&<button onClick={()=>removeStaff(u)} title="Permanently remove this person from every list" style={{background:"none",border:"1px solid var(--bd-red)",color:"var(--tx-red)",borderRadius:6,padding:"5px 10px",fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:"var(--ss-font)",display:"inline-flex",alignItems:"center",gap:4}}><Icon name="trash" size={13}/>Remove</button>}
                    </div>}
                 </td>
@@ -16281,7 +16281,7 @@ function TeacherTimetable({timetables,scheds,liveUsers,selTeacher,setSelTeacher,
                   {c?<button onClick={()=>onJumpClass&&onJumpClass(c.cls,c.sec)} title={"Open Class "+c.cls+(c.sec?" "+c.sec:"")+" timetable"} style={{display:"block",width:"100%",background:"var(--bg-blu)",border:"1px solid var(--tx-blu)",borderRadius:6,padding:"6px 5px",cursor:"pointer",fontFamily:"var(--ss-font)"}}>
                     <div style={{fontSize:12,fontWeight:800,color:"var(--tx-blu)",lineHeight:1.1}}>{c.cls}{c.sec?"-"+c.sec:""}</div>
                     {c.subject?<div style={{fontSize:11.5,color:"var(--ap-ink2)",marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.subject}</div>:null}
-                  </button>:<span style={{fontSize:11,color:"var(--c-cb)",fontWeight:600}}>Free</span>}
+                  </button>:<span style={{fontSize:11,color:"var(--c-94)",fontWeight:600}}>Free</span>}
                 </td>);})}
             </tr>);})}
           </tbody>
@@ -18212,7 +18212,7 @@ function StaffCheckIn({user}){
         <div style={badge("var(--bg-grn)","var(--tx-grn2)")}>{pinIcon}</div>
         <div style={{flex:1,minWidth:0}}>
           <div style={{fontWeight:700,fontSize:15.5,color:"var(--ap-ink,#1d1d1f)",letterSpacing:"-0.01em"}}>Mark today&#39;s attendance</div>
-          <div style={{fontSize:12.5,color:"var(--ap-muted,#86868b)",marginTop:2}}>{niceDate} · tap once when you&#39;re on campus</div>
+          <div style={{fontSize:12.5,color:"var(--ap-muted)",marginTop:2}}>{niceDate} · tap once when you&#39;re on campus</div>
         </div>
         <button onClick={mark} disabled={busy} className="ss-press"
           style={{display:"flex",alignItems:"center",gap:7,background:busy?"#9ccfb1":"#16a34a",color:"#fff",border:"none",borderRadius:8,padding:"11px 22px",fontSize:14,fontWeight:600,cursor:busy?"default":"pointer",fontFamily:"var(--ss-font)",boxShadow:busy?"none":"0 1px 2px rgba(22,163,74,.3),0 6px 16px rgba(22,163,74,.22)",whiteSpace:"nowrap",letterSpacing:"-0.01em"}}>
@@ -18931,7 +18931,7 @@ function App(){
     if(!authChecked)return(
       <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,background:"var(--c-f5)"}}>
         <img src={LOGO} alt="" style={{width:74,height:74,objectFit:"contain",opacity:.92}}/>
-        <div style={{fontSize:13,fontWeight:600,color:"var(--ap-muted,#86868b)"}}>Restoring your session…</div>
+        <div style={{fontSize:13,fontWeight:600,color:"var(--ap-muted)"}}>Restoring your session…</div>
       </div>
     );
     return<Login onLogin={u=>{setUser(u);setTab(u.role==="parent"?"parent":u.role==="student"?"student":u.role==="office"?"fees":"dashboard");}} usersDB={usersDB}/>;
@@ -19271,12 +19271,12 @@ function App(){
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <img src={LOGO} alt="logo" style={{width:24,height:24,objectFit:"contain",opacity:0.55}}/>
             <div>
-              <div style={{fontSize:11,color:"#86868b"}}>Stepping Stone School, {BRANCH_LABEL}</div>
+              <div style={{fontSize:11,color:"var(--ap-muted)"}}>Stepping Stone School, {BRANCH_LABEL}</div>
               <div style={{fontSize:11,color:"var(--c-ae)",marginTop:1}}>Academic Portal</div>
             </div>
           </div>
           <div className="ap-foot-credit">
-            <div style={{fontSize:11,color:"#86868b"}}>Designed &amp; Built by</div>
+            <div style={{fontSize:11,color:"var(--ap-muted)"}}>Designed &amp; Built by</div>
             <div style={{fontSize:13,fontWeight:700,color:"var(--c-1d)"}}>Rajvansh Gupta</div>
             <div style={{fontSize:11,color:"var(--c-ae)",textTransform:"uppercase",letterSpacing:0.5}}>Director, Stepping Stone</div>
           </div>
