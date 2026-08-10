@@ -2989,17 +2989,23 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
       return arr.sort((a,b)=>a.sMin-b.sMin);
     };
     // one entry per schedule (junior/senior run different clocks) + a class-token → schedule index
-    const scheds=gs.schedules.map(sc=>({classes:(sc.assignedClasses||[]).map(String),periods:mkPeriods(sc)})).filter(sc=>sc.periods.length);
+    const scheds=gs.schedules.map(sc=>({name:sc.name||"",classes:(sc.assignedClasses||[]).map(String),periods:mkPeriods(sc)})).filter(sc=>sc.periods.length);
     if(!scheds.length)return null;
-    scheds.forEach(sc=>{sc.cur=sc.periods.find(p=>nowMin>=p.sMin&&nowMin<p.eMin)||null;});
+    scheds.forEach(sc=>{sc.cur=sc.periods.find(p=>nowMin>=p.sMin&&nowMin<p.eMin)||null;
+      const t=sc.periods.filter(p=>!p.isBreak);sc.total=t.length;
+      sc.idx=(sc.cur&&!sc.cur.isBreak)?t.indexOf(sc.cur)+1:null;
+      sc.short=String(sc.name||"").split(/[\s(–-]/)[0]||"";});
     const main=scheds.slice().sort((a,b)=>b.classes.length-a.classes.length)[0];
-    const byClass={};scheds.forEach(sc=>sc.classes.forEach(c=>{byClass[c]=sc;}));
+    // Key by the CANONICAL class token. assignedClasses may be Roman ("XI") while timetable docs are keyed
+    // "11_C" — an unnormalised key missed, every senior class fell back to `main` (the junior 8-period bell)
+    // and got judged at a period its own bell doesn't have, so all of 11/12 read "no teacher on the timetable".
+    const byClass={};scheds.forEach(sc=>sc.classes.forEach(c=>{byClass[__ttClsKey(c)]=sc;}));
     const periods=main.periods;const cur=main.cur;
     const teach=periods.filter(p=>!p.isBreak);
     const idx=cur&&!cur.isBreak?teach.indexOf(cur)+1:null;
     const next=periods.find(p=>p.sMin>nowMin);
     const fixedCount=scheds.reduce((a,sc)=>a+sc.periods.filter(p=>p.fixed).length,0);
-    return{periods,cur,next,idx,total:teach.length,byClass,main,fixedCount,before:nowMin<periods[0].sMin,after:nowMin>=periods[periods.length-1].eMin};
+    return{periods,cur,next,idx,total:teach.length,byClass,main,bells:scheds,fixedCount,before:nowMin<periods[0].sMin,after:nowMin>=periods[periods.length-1].eMin};
   },[ttSetDB&&ttSetDB.data,nowMin]);
   const liveNow=!isPastView&&isSchoolDay&&nowPeriod&&nowPeriod.cur;
 
@@ -3021,7 +3027,7 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
       if(!clsTok)return;
       const day=grid[dayLong]||grid[dayShort]||{};
       // this CLASS's schedule decides which slot is live right now (junior vs senior clocks differ)
-      const sch=(nowPeriod.byClass&&nowPeriod.byClass[String(clsTok)])||nowPeriod.main;
+      const sch=(nowPeriod.byClass&&nowPeriod.byClass[__ttClsKey(clsTok)])||nowPeriod.main;
       const myCur=sch&&sch.cur;
       if(!myCur||myCur.isBreak)return; // this class is between periods / on break right now
       const cell=day[myCur.no];rooms++;
@@ -3216,8 +3222,20 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
   const sparkAtt=(()=>{const a=attTrend.arr;if(a.length<2)return null;const W=120,H=30;const X=i=>i/(a.length-1)*W;const Y=v=>H-2-((v-Math.min(...a.map(x=>x.pct))+2)/(Math.max(...a.map(x=>x.pct))-Math.min(...a.map(x=>x.pct))+4))*(H-6);
     return(<svg width={W} height={H} viewBox={"0 0 "+W+" "+H} style={{display:"block"}}><path d={a.map((x,i)=>(i?"L":"M")+X(i).toFixed(1)+" "+Y(x.pct).toFixed(1)).join(" ")} fill="none" stroke="var(--ap-accent)" strokeWidth="2" strokeLinecap="round"/></svg>);})();
 
+  // Junior and senior run different bells. The headline used to report ONLY the main (most-assigned) bell,
+  // so at 14:10 it read "Period 8 of 8" while Classes 9-12 were in their own Period 6 — which reads as though
+  // seniors had periods they don't. Name the bell, and say where the other one is whenever they diverge.
+  const multiBell=!!(nowPeriod&&nowPeriod.bells&&nowPeriod.bells.length>1);
+  const bellPrefix=multiBell&&nowPeriod.main&&nowPeriod.main.short?nowPeriod.main.short+" · ":"";
+  const otherBells=!multiBell?"":nowPeriod.bells.filter(b=>b!==nowPeriod.main).map(b=>{
+    const nm=b.short||"other classes";
+    if(!b.cur)return nm+" done for the day";
+    if(b.cur.isBreak)return nm+" on "+(b.cur.name||"break").toLowerCase();
+    if(b.idx===nowPeriod.idx&&b.total===nowPeriod.total)return "";
+    return nm+" in Period "+b.idx+" of "+b.total;
+  }).filter(Boolean).join(" · ");
   const periodLabel=!isSchoolDay?"Sunday — no classes":
-    nowPeriod&&nowPeriod.cur?(nowPeriod.cur.isBreak?((nowPeriod.cur.name||"Break")+" · "+nowPeriod.cur.start+"–"+nowPeriod.cur.end+(nowPeriod.next?" · resumes "+nowPeriod.next.start:"")):("Period "+(nowPeriod.idx||nowPeriod.cur.no)+" of "+nowPeriod.total+" · "+nowPeriod.cur.start+"–"+nowPeriod.cur.end+(nowPeriod.cur.eMin!=null?" · ends in "+Math.max(0,nowPeriod.cur.eMin-nowMin)+" min":""))):
+    nowPeriod&&nowPeriod.cur?(nowPeriod.cur.isBreak?((nowPeriod.cur.name||"Break")+" · "+nowPeriod.cur.start+"–"+nowPeriod.cur.end+(nowPeriod.next?" · resumes "+nowPeriod.next.start:"")+(otherBells?" · "+otherBells:"")):(bellPrefix+"Period "+(nowPeriod.idx||nowPeriod.cur.no)+" of "+nowPeriod.total+" · "+nowPeriod.cur.start+"–"+nowPeriod.cur.end+(nowPeriod.cur.eMin!=null?" · ends in "+Math.max(0,nowPeriod.cur.eMin-nowMin)+" min":"")+(otherBells?" · "+otherBells:""))):
     nowPeriod&&nowPeriod.before?("School opens · first period "+(nowPeriod.periods[0]||{}).start):
     nowPeriod&&nowPeriod.after?"School day over":"No period times set";
 
@@ -15695,7 +15713,7 @@ function __ttHM(t){var x=String(t||"").split(":");if(x.length<2)return null;var 
 // numerals (I–VIII) while the code looks classes up by ARABIC ("6"), so "6" matched nothing and the
 // class fell back to the first schedule (the senior 6-period bell). Normalise BOTH sides via __clsNum
 // (VI→6, IX→9, "Class VI"→6, Nursery→Nursery) so Roman/Arabic/prefixed tokens all compare equal.
-function __ttClsKey(c){return String((typeof __clsNum==="function")?__clsNum(c):c);}
+function __ttClsKey(c){var k=String((typeof __clsNum==="function")?__clsNum(c):c);return /^\d+$/.test(k)?String(parseInt(k,10)):k;} // "09"→"9": a zero-padded token used to match NO schedule and inherit the junior 8-period bell (phantom Periods 7–8 on a senior class). Narrowed to the timetable matcher on purpose — __clsNum also builds dir_ keys.
 function __ttHasClass(assignedClasses,cls){var t=__ttClsKey(cls);return (assignedClasses||[]).some(function(x){return __ttClsKey(x)===t;});}
 function __ttSchedFor(schedules,clsNum){var sc=schedules||[];var hit=sc.find(function(s){return __ttHasClass(s.assignedClasses,clsNum);});if(hit)return hit;return sc.slice().sort(function(a,b){return ((b.assignedClasses||[]).length)-((a.assignedClasses||[]).length);})[0]||null;}
 // The actual calendar dates (YYYY-MM-DD) of a given weekday within a leave range [from,to]. Used so a
