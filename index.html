@@ -19159,6 +19159,11 @@ function App(){
       {id:"student",       label:"Report"},
       {id:"profile",       label:"Profile 360°"},
       {id:"students",      label:"Class Roster"},
+      // Syllabus carries the per-chapter COPY-CHECKING list, so teachers need it on their own menu —
+      // it was reachable only from the director's Academics group, which made copy checking invisible
+      // to the very people who fill it in. SyllabusTracker already renders for teachers (canEdit
+      // includes role "teacher"); only this nav link was missing.
+      {id:"syllabus",      label:"Syllabus"},
       {id:"testschedule",  label:"Test Schedule"},
     ]},
     {id:"discipline-grp",  label:"Discipline",  sec:"MAIN", single:"discipline"},
