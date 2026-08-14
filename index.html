@@ -1456,7 +1456,34 @@ function __subjectsFor(cls){
 // Progress, Syllabus) split it; exams, report cards and term results keep "Science" and are untouched.
 // Override per branch with cfg.testSubjects[cls] if a campus wants something else.
 var __SUBJ_SPLIT={"Science":["Physics","Chemistry","Biology"]};
-var __SPLIT_CLASSES=/^Class (9|10)$/;
+// 2026-08-14, director: Classes 9 and 10 go back to a single "Science" for CLASS TESTS and the SYLLABUS,
+// as exams and report cards always were. Nothing matches now, so __testSubjectsFor returns the exam list
+// unchanged. __SUBJ_SPLIT is deliberately KEPT — it is the map that folds already-saved Physics/Chemistry/
+// Biology tests back into Science on read (see __canonTestSubj), and re-enabling the split is a one-line revert.
+// WAS: var __SPLIT_CLASSES=/^Class (9|10)$/;
+var __SPLIT_CLASSES=/^$/;
+var __MERGE_CLASSES=/^Class (9|10)$/;   // classes whose old split marks must read back as the parent subject
+// Parent subject a split part belongs to — "Physics" on Class 9 reads as "Science". Anything else is returned
+// untouched, so this is safe to call on every test in the collection.
+var __SPLIT_PARENT={};Object.keys(__SUBJ_SPLIT).forEach(function(p){__SUBJ_SPLIT[p].forEach(function(c){__SPLIT_PARENT[c]=p;});});
+function __canonTestSubj(cls,subj){
+  if(!__MERGE_CLASSES.test(String(cls)))return subj;
+  return __SPLIT_PARENT[subj]||subj;
+}
+// Fold split subjects back at the SOURCE. Every screen reads tests through this one wrapper, so a class test
+// saved last term under "Physics" shows up under "Science" everywhere at once — the roster matrix, the
+// visibility filter, breakdowns, the parent portal — with no data migration and no chance of missing a caller.
+// Writes pass straight through untouched.
+function __wrapMergedSubj(db){
+  if(!db)return db;
+  var out={},d=db.data||{};
+  Object.keys(d).forEach(function(k){
+    var t=d[k];
+    if(t&&t.cls&&t.subj){var c=__canonTestSubj(t.cls,t.subj);if(c!==t.subj){out[k]=Object.assign({},t,{subj:c,subjOrig:t.subj});return;}}
+    out[k]=t;
+  });
+  return Object.assign({},db,{data:out});
+}
 function __testSubjectsFor(cls){
   var c=(typeof _bcfg==="function")?_bcfg():{};
   var v=c&&c.testSubjects&&c.testSubjects[cls];
@@ -1492,6 +1519,10 @@ const getTeacherSubjects=(user,cls)=>{
   const want=[];
   subjs.forEach(function(s){
     var parts=(__SPLIT_CLASSES.test(String(cls))&&__SUBJ_SPLIT[s])?__SUBJ_SPLIT[s]:[s];
+    // Cl 9/10 no longer split, so a teacher still assigned "Physics" must resolve to "Science" — otherwise
+    // the intersection below is empty, the fallback returns ["Physics"], and they see a subject that is no
+    // longer on the class list while Science (with all their old marks) is missing.
+    parts=parts.map(function(p){return __canonTestSubj(cls,p);});
     parts.forEach(function(p){if(want.indexOf(p)<0)want.push(p);});
   });
   const filtered=all.filter(function(s){return want.indexOf(s)>=0;});
@@ -6443,8 +6474,12 @@ function CopyCheckPanel({user,cls,sec,subj,chapter,roster,copyChecksDB,onClose})
   const checked=doc.checked||{};
   const[busy,setBusy]=useState("");
   const idOf=(s)=>String(s.admNo||s.name||"");
-  const done=roster.filter(s=>checked[idOf(s)]).length;
-  const left=roster.length-done;
+  // Alphabetical by name — a teacher works down the pile of copies by name, not by roll number.
+  // localeCompare so case and accents sort naturally; the roster prop itself is left untouched.
+  const rows=useMemo(()=>roster.slice().sort((a,b)=>
+    String(a.name||"").localeCompare(String(b.name||""),undefined,{sensitivity:"base"})),[roster]);
+  const done=rows.filter(s=>checked[idOf(s)]).length;
+  const left=rows.length-done;
   const save=async(next)=>{
     try{ await copyChecksDB.set(key,{cls,sec,subj,chapter,checked:next,by:user.name,updatedAt:new Date().toISOString()}); }
     catch(e){ window.__toast&&window.__toast("Could not save — "+((e&&e.message)||"try again"),"err"); }
@@ -6452,9 +6487,9 @@ function CopyCheckPanel({user,cls,sec,subj,chapter,roster,copyChecksDB,onClose})
   const toggle=async(s)=>{ const id=idOf(s); if(!id)return; setBusy(id);
     const next=Object.assign({},checked); if(next[id])delete next[id]; else next[id]={at:new Date().toISOString(),by:user.name};
     await save(next); setBusy(""); };
-  const allOn=async()=>{ const next=Object.assign({},checked); roster.forEach(s=>{const id=idOf(s); if(id&&!next[id])next[id]={at:new Date().toISOString(),by:user.name};}); await save(next); };
+  const allOn=async()=>{ const next=Object.assign({},checked); rows.forEach(s=>{const id=idOf(s); if(id&&!next[id])next[id]={at:new Date().toISOString(),by:user.name};}); await save(next); };
   const clearAll=async()=>{ if(!(await window.__confirm({title:"Clear every tick for this chapter?",body:"The record of whose copy was checked for “"+chapter+"” will be emptied. Nothing else is affected.",confirmText:"Clear",danger:true})))return; await save({}); };
-  const pct=roster.length?Math.round(done/roster.length*100):0;
+  const pct=rows.length?Math.round(done/rows.length*100):0;
   return(
     <div className="ap-panel" style={{padding:0,marginTop:12,overflow:"hidden",border:"1px solid var(--ap-accent)"}}>
       <div style={{background:"var(--c-f7)",padding:"12px 16px",borderBottom:"1px solid var(--ap-line)",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
@@ -6464,14 +6499,14 @@ function CopyCheckPanel({user,cls,sec,subj,chapter,roster,copyChecksDB,onClose})
           <div style={{fontSize:12,color:"var(--ap-muted)",marginTop:2}}>{cls} · Section {sec} · {subj}</div>
         </div>
         <div style={{textAlign:"right",flex:"none"}}>
-          <div style={{fontSize:19,fontWeight:800,color:left===0?"var(--tx-grn2)":"var(--ap-ink)",fontVariantNumeric:"tabular-nums"}}>{done} of {roster.length}</div>
+          <div style={{fontSize:19,fontWeight:800,color:left===0?"var(--tx-grn2)":"var(--ap-ink)",fontVariantNumeric:"tabular-nums"}}>{done} of {rows.length}</div>
           <div style={{fontSize:11.5,color:left===0?"var(--tx-grn2)":"var(--tx-org2)",fontWeight:600}}>{left===0?"all checked":left+" left to check"}</div>
         </div>
         <button onClick={onClose} className="ss-press" style={{flex:"none",background:"none",border:"1px solid var(--c-d2)",borderRadius:6,padding:"6px 12px",fontSize:12,fontWeight:600,color:"var(--ap-ink2)",cursor:"pointer",fontFamily:"var(--ss-font)"}}>Close</button>
       </div>
       <div style={{height:4,background:"var(--c-e6)"}}><div style={{height:"100%",width:pct+"%",background:left===0?"var(--tx-grn2)":"var(--ap-accent)",transition:"width .2s"}}/></div>
       <div style={{padding:"12px 16px"}}>
-        {roster.length===0
+        {rows.length===0
           ? <div style={{fontSize:13,color:"var(--ap-muted)",padding:"10px 0"}}>No pupils on this section&rsquo;s roster yet.</div>
           : <>
             <div style={{display:"flex",gap:8,marginBottom:11,flexWrap:"wrap"}}>
@@ -6479,7 +6514,7 @@ function CopyCheckPanel({user,cls,sec,subj,chapter,roster,copyChecksDB,onClose})
               <button onClick={clearAll} className="ss-press" style={{background:"var(--c-fff)",color:"var(--ap-ink2)",border:"1px solid var(--c-d2)",borderRadius:6,padding:"7px 13px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Clear all</button>
             </div>
             <div style={{display:"grid",gridTemplateColumns:isMob?"1fr":"1fr 1fr",gap:6}}>
-              {roster.map((s,i)=>{const id=idOf(s);const on=!!checked[id];return(
+              {rows.map((s,i)=>{const id=idOf(s);const on=!!checked[id];return(
                 <button key={id||i} onClick={()=>toggle(s)} disabled={busy===id} className="ss-press"
                   style={{display:"flex",alignItems:"center",gap:9,textAlign:"left",padding:"9px 11px",borderRadius:6,cursor:"pointer",fontFamily:"var(--ss-font)",
                     border:"1px solid "+(on?"var(--bd-grn)":"var(--c-d2)"),background:on?"var(--bg-grn)":"var(--c-fff)"}}>
@@ -19070,7 +19105,7 @@ function App(){
   function _fsess(data){var o={};Object.keys(data||{}).forEach(function(k){var d=data[k];if(String(k).indexOf("__")===0){o[k]=d;return;}if(((d&&d.session)||"2026-27")===vSess)o[k]=d;});return o;}
   function _wrapSess(db){return{data:_fsess(db.data),trash:db.trash,allData:db.allData,loading:db.loading,collName:db.collName,patch:db.patch,set:function(id,v){return db.set(id,(String(id).indexOf("__")===0||(v&&v.session))?v:Object.assign({},v,{session:curSession}));},del:db.del,restore:db.restore,raw:db};}
   const feesDB=_wrapSess(feesDBraw);
-  const testsDB=_wrapSess(testsDBraw);
+  const testsDB=__wrapMergedSubj(_wrapSess(testsDBraw)); // Cl 9/10: old Physics/Chemistry/Biology tests read back as Science
   const attendanceDB=_wrapSess(attendanceDBraw);
   const examsDB=_wrapSess(examsDBraw); // C7: term exams are session-scoped like fees/tests/attendance — the Apr 2027 rollover no longer mixes two years' exams & report cards
   const registrationsDB=useFirestore("registrations", !!user&&["admin","office","vp"].indexOf(user.role)>=0); // pre-admission enquiry intake (CRM screens only)
