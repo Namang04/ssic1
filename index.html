@@ -2395,7 +2395,10 @@ function Login({onLogin,usersDB}){
     const baseData=DEFAULT_USERS[uKey];
     const extraData=usersDB.data&&(usersDB.data[uKey]||usersDB.data[safeId(uKey)]);
     const userData=baseData?{...baseData,...(extraData||{}),username:uKey,password:baseData.password}:(extraData?{...extraData,username:uKey}:null);
-    const legacyOk=userData&&userData.password===p;
+    // The legacy password path must respect Disable too. `disabled` above is read from the accounts doc
+    // and is only set after a SUCCESSFUL Firebase sign-in, so before this a disabled teacher who knew their
+    // legacy password walked straight in. The toggle now mirrors loginOff onto the users doc.
+    const legacyOk=userData&&userData.password===p&&userData.loginOff!==true;
     setBusy(false);
     if(disabled){setErr("This account has been disabled. Please contact the office.");try{await window.__authSignOut();}catch(e){}return;}
     if(authed||legacyOk){
@@ -13464,8 +13467,8 @@ function AccountsPanel({user,usersDB,studentsDB,dirDB,academicRosterDB,canManage
     setWorking(uRow.username);setMsg(null);
     try{
       const{uid,...a}=acct;
-      if(a.role==="disabled"){const liveRole=((usersDB.data&&usersDB.data[safeId(uRow.username)])||{}).role;await window.__fbSetDoc(window.__fbDoc(window.__db,"accounts",uid),{...a,role:a.prevRole||liveRole||uRow.role||"teacher",prevRole:null});logAudit("login-enable","accounts",uRow.username,{role:"disabled"},{role:a.prevRole||liveRole||uRow.role||"teacher"});}
-      else {await window.__fbSetDoc(window.__fbDoc(window.__db,"accounts",uid),{...a,role:"disabled",prevRole:a.role});logAudit("login-disable","accounts",uRow.username,{role:a.role},{role:"disabled"});}
+      if(a.role==="disabled"){const liveRole=((usersDB.data&&usersDB.data[safeId(uRow.username)])||{}).role;await window.__fbSetDoc(window.__fbDoc(window.__db,"accounts",uid),{...a,role:a.prevRole||liveRole||uRow.role||"teacher",prevRole:null});logAudit("login-enable","accounts",uRow.username,{role:"disabled"},{role:a.prevRole||liveRole||uRow.role||"teacher"});try{const _uk=(usersDB.data&&usersDB.data[safeId(uRow.username)])?safeId(uRow.username):uRow.username;const _ex=usersDB.data&&usersDB.data[_uk];if(_ex)await usersDB.set(_uk,Object.assign({},_ex,{loginOff:false}));}catch(e2){}}
+      else {await window.__fbSetDoc(window.__fbDoc(window.__db,"accounts",uid),{...a,role:"disabled",prevRole:a.role});logAudit("login-disable","accounts",uRow.username,{role:a.role},{role:"disabled"});try{const _uk=(usersDB.data&&usersDB.data[safeId(uRow.username)])?safeId(uRow.username):uRow.username;const _ex=usersDB.data&&usersDB.data[_uk];if(_ex)await usersDB.set(_uk,Object.assign({},_ex,{loginOff:true}));}catch(e2){}}
     }catch(e){setMsg({ok:false,text:"Could not update login: "+((e&&(e.code||e.message))||"error")});}
     setWorking("");
   };
@@ -13612,7 +13615,7 @@ function AccountsPanel({user,usersDB,studentsDB,dirDB,academicRosterDB,canManage
         {manageRows.length>300&&<div style={{marginTop:8,fontSize:11.5,color:"var(--tx-org2)"}}>Showing the first 300 of {manageRows.length} — narrow with search or filters to see the rest.</div>}
         <div style={{...INS_CARD,padding:14,marginTop:14,background:"var(--bg-amb)",border:"1px solid var(--bd-amb)"}}>
           <div style={{fontWeight:700,fontSize:13,color:"var(--tx-org2)",marginBottom:6}}>Forgot a password?</div>
-          <div style={{fontSize:12.5,color:"var(--ap-ink2)",lineHeight:1.6}}>For security, passwords can't be reset from here. Two ways to fix a forgotten password: <b>(1)</b> the person signs in (with any working password) and changes it under <b>Account</b>; or <b>(2)</b> <b>Disable</b> their login here, then <b>Remove &amp; re-add</b> the account with a new password — their records stay safe (matched by admission number). <b>Disable</b> instantly blocks a login (reversible with <b>Enable</b>); Director/VP accounts are protected here.</div>
+          <div style={{fontSize:12.5,color:"var(--ap-ink2)",lineHeight:1.6}}>Use <b>Reset a password</b> above: type their username and a new password, and tell them what it is. They can sign in with it straight away and will be asked to choose their own. <b>One limitation, so you are not surprised:</b> this sets a recovery password — it cannot erase the one they had, so their old password keeps working until they change it. If an account may have been misused, <b>Disable</b> it instead (that blocks every way in, reversible with <b>Enable</b>). Director/VP accounts are protected here.</div>
         </div>
       </>}
       <div style={{height:24}}/>
@@ -14720,14 +14723,19 @@ function AdminPanel({testsDB,studentsDB,usersDB,wrongDB,user,academicRosterDB}){
     if(newPass.length<6){setResetMsg("Password must be 6+ characters.");return;}
     const existing=allUsers[resetUser];
     if(!existing){setResetMsg("Username not found.");return;}
-    if(_secureUsers[resetUser]){
-      // Honest: don't pretend to reset a Firebase login we can't actually change from the client.
-      setResetMsg("\""+resetUser+"\" has a secure login. It can't be reset from here — the app has no admin key to change someone else's Firebase password. Ask them to set a new one on their own device, or have support reset it server-side.");
-      return;
-    }
-    await usersDB.set(resetUser,{...existing,password:newPass});
+    // A secure (Firebase) login CAN be recovered from here after all. Sign-in accepts EITHER a Firebase
+    // password OR the legacy one on the users doc (`authed||legacyOk`), so writing a new legacy password
+    // genuinely restores access. The old guard refused, which left the school with no way at all to help a
+    // teacher who had forgotten their password — the documented workaround ("Remove & re-add") cannot work
+    // either, because __authCreateOrGetUid falls back to signing IN with the new password and the real one
+    // is the forgotten one. Deleting the users doc does not delete the Firebase Auth user.
+    const wasSecure=!!_secureUsers[resetUser];
+    await usersDB.set(resetUser,{...existing,password:newPass,pwdTemp:true,loginOff:false});
     logAudit("password-reset","users",resetUser,null,null); // never log the password itself
-    setResetMsg("✓ Legacy password updated for \""+resetUser+"\" (applies to accounts without a secure Firebase login).");setNewPass("");
+    setResetMsg(wasSecure
+      ? "✓ New password set for \""+resetUser+"\". They can sign in with it now, and will be asked to choose their own. NOTE: their previous password still works until they change it — this sets a recovery password, it cannot erase the old Firebase one."
+      : "✓ Password updated for \""+resetUser+"\". They can sign in with it now.");
+    setNewPass("");
     setTimeout(()=>setResetMsg(""),4500);
   };
 
