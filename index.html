@@ -753,6 +753,22 @@ function ToastHost(){
   };
 })();
 
+function ReadOnlySessionBanner({user}){
+  // A "recovery password" sign-in authenticates against the users doc, not Firebase, so request.auth is null
+  // and every rule needing signedIn() denies the write. The person can look around and then lose their work
+  // the moment they press Save — so say it up front rather than let them find out mid-register.
+  if(!user||user.secureSession!==false)return null;
+  return(
+    <div style={{position:"sticky",top:0,zIndex:60,background:"var(--bg-amb)",borderBottom:"1px solid var(--bd-amb)",
+      padding:"9px 16px",display:"flex",gap:10,alignItems:"center",justifyContent:"center",flexWrap:"wrap"}}>
+      <b style={{fontSize:12,color:"var(--tx-org2)",letterSpacing:.4}}>VIEW ONLY</b>
+      <span style={{fontSize:12.5,color:"var(--ap-ink2)"}}>
+        You signed in with a recovery password, so nothing you change here can be saved.
+        Sign in with your original password, or ask the office to issue you a new login.
+      </span>
+    </div>
+  );
+}
 function OfflineBanner(){
   const[off,setOff]=useState(typeof navigator!=="undefined"&&navigator.onLine===false);
   const[back,setBack]=useState(false); // brief "back online" flash so the recovery is visible too
@@ -2413,7 +2429,9 @@ function Login({onLogin,usersDB}){
       window.__fbSetDoc(window.__fbDoc(window.__db,"loginLogs",lk),
       {username:uKey,name:userData.name||uKey,role:userData.role||"teacher",secure:authed,
       timestamp:new Date().toISOString(),device:navigator.userAgent.substring(0,120)});}}catch(e){}
-      onLogin({username:uKey,...userData,branches:acctBranches||userData.branches});
+      // A legacy-only sign-in has NO Firebase session, so request.auth is null and every rule that needs
+      // signedIn() denies the write. Carry that fact into the session so the UI can say so plainly.
+      onLogin({username:uKey,...userData,branches:acctBranches||userData.branches,secureSession:!!authed});
     } else setErr("Invalid username or password.");
   };
   return(
@@ -6095,7 +6113,19 @@ function ManageStudents({user,usersDB,studentsDB,testsDB,academicRosterDB,studen
     if(inDir){
       const cn=__clsNum(cls);
       const students2=ddoc.students.map(s=>(s&&((adm&&String(s.admNo)===adm&&s.name===inDir.name)||(!adm&&s.name===name)))?Object.assign({},s,{section:sec,updatedBy:user.name,updatedAt:new Date().toISOString()}):s);
-      await dirDB.set(_dirKeyMS(),{cls:ddoc.cls,clsNum:ddoc.clsNum||cn,students:students2,updatedAt:new Date().toISOString()});
+      try{
+        await dirDB.set(_dirKeyMS(),{cls:ddoc.cls,clsNum:ddoc.clsNum||cn,students:students2,updatedAt:new Date().toISOString()});
+      }catch(e){
+        // Name the collection AND the usual cause. A "recovery password" sign-in has no Firebase session
+        // (request.auth is null), so every rule that needs signedIn() denies the write — the student record
+        // is simply the first one a section change touches.
+        var _msg=String((e&&(e.code||e.message))||"");
+        window.__toast&&window.__toast(
+          /permission|insufficient/i.test(_msg)
+            ? "Could not save the section — the student record refused the write. If you signed in with a password the office reset for you, that sign-in cannot save anything. Sign out and sign in with your original password."
+            : "Could not save the section — "+(_msg||"try again"),"err");
+        return;
+      }
       await syncCachesForClass(studentsDB,academicRosterDB,cls,students2);
       try{logAudit("change-section","studentDirectory",String(adm||name),{section:(inDir.section||"—")},{section:sec});}catch(e){}
     }else{
@@ -13621,7 +13651,7 @@ function AccountsPanel({user,usersDB,studentsDB,dirDB,academicRosterDB,canManage
         {manageRows.length>300&&<div style={{marginTop:8,fontSize:11.5,color:"var(--tx-org2)"}}>Showing the first 300 of {manageRows.length} — narrow with search or filters to see the rest.</div>}
         <div style={{...INS_CARD,padding:14,marginTop:14,background:"var(--bg-amb)",border:"1px solid var(--bd-amb)"}}>
           <div style={{fontWeight:700,fontSize:13,color:"var(--tx-org2)",marginBottom:6}}>Forgot a password?</div>
-          <div style={{fontSize:12.5,color:"var(--ap-ink2)",lineHeight:1.6}}>Use <b>Reset a password</b> above: type their username and a new password, and tell them what it is. They can sign in with it straight away and will be asked to choose their own. <b>One limitation, so you are not surprised:</b> this sets a recovery password — it cannot erase the one they had, so their old password keeps working until they change it. If an account may have been misused, <b>Disable</b> it instead (that blocks every way in, reversible with <b>Enable</b>). Director/VP accounts are protected here.</div>
+          <div style={{fontSize:12.5,color:"var(--ap-ink2)",lineHeight:1.6}}><b>Reset a password</b> above gives them a <b>view-only</b> way back in: they can sign in and look around, but cannot save attendance or marks, because a recovery sign-in has no secure session. Their old password also keeps working — this cannot erase it. For someone who must ENTER data, the reliable fix today is a <b>new login</b> under a slightly different username, then <b>Disable</b> the old one. If an account may have been misused, <b>Disable</b> it (that blocks every route in, reversible with <b>Enable</b>). Director/VP accounts are protected here.</div>
         </div>
       </>}
       <div style={{height:24}}/>
@@ -14739,7 +14769,7 @@ function AdminPanel({testsDB,studentsDB,usersDB,wrongDB,user,academicRosterDB}){
     await usersDB.set(resetUser,{...existing,password:newPass,pwdTemp:true,loginOff:false});
     logAudit("password-reset","users",resetUser,null,null); // never log the password itself
     setResetMsg(wasSecure
-      ? "✓ New password set for \""+resetUser+"\". They can sign in with it now, and will be asked to choose their own. NOTE: their previous password still works until they change it — this sets a recovery password, it cannot erase the old Firebase one."
+      ? "⚠ Recovery password set for \""+resetUser+"\" — they can SIGN IN and LOOK, but cannot SAVE anything (attendance, marks) because a recovery sign-in has no secure session. Use it only to get them back in temporarily. Their old password also still works. For a teacher who must enter marks, issue a NEW login instead."
       : "✓ Password updated for \""+resetUser+"\". They can sign in with it now.");
     setNewPass("");
     setTimeout(()=>setResetMsg(""),4500);
@@ -19313,7 +19343,7 @@ function App(){
   const jumpStudent=(adm,name)=>{setJumpAdm(String(adm||name||""));setTab("directory");window.scrollTo(0,0);};
 
   return(
-    <div className="ap-shell"><ToastHost/><ConfirmHost/><OfflineBanner/><StaffPhonePrompt user={user} onSaved={ph=>setUser(u=>u?{...u,phone:ph}:u)}/>
+    <div className="ap-shell"><ToastHost/><ConfirmHost/><OfflineBanner/><ReadOnlySessionBanner user={user}/><StaffPhonePrompt user={user} onSaved={ph=>setUser(u=>u?{...u,phone:ph}:u)}/>
       <div className={"ap-scrim"+(navOpen?" open":"")} onClick={()=>setNavOpen(false)}/>
       {/* Mobile quick-bar — the 4 most-used screens, one thumb-tap away (phone widths only; parents keep their own nav) */}
       {!isParent&&(()=>{
