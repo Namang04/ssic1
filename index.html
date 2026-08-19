@@ -1499,9 +1499,21 @@ function __canonTestMap(d){
   });
   return out;
 }
+// The fold is a READ-TIME view. If a folded record is ever written back — Sync Test Tracker and the same-name
+// merge both do `testsDB.set(id,Object.assign({},t,{rows:nr}))` with a t taken from the folded map — it would
+// permanently rewrite a Physics doc to "Science" and persist the synthetic subjOrig. Undo the fold on the way
+// out, at the wrapper, so no caller can leak it no matter which screen performs the write.
+function __unfoldTest(v){
+  if(!v||typeof v!=="object"||v.subjOrig===undefined)return v;
+  var o=Object.assign({},v);o.subj=v.subjOrig;delete o.subjOrig;return o;
+}
 function __wrapMergedSubj(db){
   if(!db)return db;
-  return Object.assign({},db,{data:__canonTestMap(db.data)});
+  return Object.assign({},db,{
+    data:__canonTestMap(db.data),
+    set:function(id,v){return db.set(id,__unfoldTest(v));},
+    patch:db.patch?function(id,v){return db.patch(id,__unfoldTest(v));}:db.patch
+  });
 }
 function __testSubjectsFor(cls){
   var c=(typeof _bcfg==="function")?_bcfg():{};
@@ -7582,7 +7594,7 @@ function TestParticipation({user,testsDB,studentsDB,dirDB,academicRosterDB}){
   const students=filterSec?allStudents.filter(s=>classSections[s]===filterSec):allStudents;
   const _has=(t,s)=>{var v=_markOf(t,admOf[s],_realOf[s]||s);return v!==undefined&&v!=="";};
   // All tests for this class+subject, sorted by week
-  const rTests=useMemo(()=>Object.values(testsDB.data).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week),[testsDB.data,cls,subj]);
+  const rTests=useMemo(()=>Object.entries(testsDB.data).map(([_i,_t])=>Object.assign({__id:_i},_t)).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week),[testsDB.data,cls,subj]);
   // Per-student participation stats
   const stats=useMemo(()=>students.map(s=>{
     const given=rTests.filter(t=>_has(t,s)).length;
@@ -7696,7 +7708,7 @@ function TestParticipation({user,testsDB,studentsDB,dirDB,academicRosterDB}){
                 </tr></thead>
                 <tbody>
                   {testStats.map((t,i)=>(
-                    <tr key={t.week} style={{borderTop:"1px solid var(--c-f0)",background:i%2===0?"var(--c-fff)":"var(--c-f7)"}}>
+                    <tr key={t.__id||t.week} style={{borderTop:"1px solid var(--c-f0)",background:i%2===0?"var(--c-fff)":"var(--c-f7)"}}>
                       <td style={{padding:"10px 16px",textAlign:"left",fontWeight:600,fontSize:12.5,color:"var(--c-0d)"}}>{t.topics&&t.topics.length?t.topics.join(", "):"Test "+(i+1)}</td>
                       <td style={{padding:"10px 16px",textAlign:"center",fontSize:12,color:"var(--c-64)"}}>{fmtDate(t.date)||"—"}</td>
                       <td style={{padding:"10px 16px",textAlign:"center",fontFamily:"monospace",fontSize:13,fontWeight:700,color:t.absentCount===0?"var(--tx-gold)":"var(--tx-red)"}}>{t.absentCount===0?"✓ 0":t.absentCount}</td>
@@ -8511,7 +8523,7 @@ function ClassProgress({user,testsDB,studentsDB,dirDB,academicRosterDB,jumpStude
   const availSections=["A","B","C","D"];
   const[filterSec,setFilterSec]=useState("");
   const students=filterSec?allStudents.filter(s=>classSections[s]===filterSec):allStudents;
-  const rTests=useMemo(()=>Object.values(testsDB.data).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week),[testsDB.data,cls,subj]);
+  const rTests=useMemo(()=>Object.entries(testsDB.data).map(([_i,_t])=>Object.assign({__id:_i},_t)).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week),[testsDB.data,cls,subj]);
   const stats=useMemo(()=>students.map(s=>{const sc=rTests.map(t=>({t,v:_val(t,s)})).filter(x=>x.v!==undefined&&x.v!=="").map(x=>({week:x.t.week,p:pct(Number(x.v),x.t.total),date:x.t.testDate}));const avg=sc.length?Math.round(sc.reduce((a,b)=>a+b.p,0)/sc.length):null;const trend=trendOf(sc.map(x=>x.p));const sec=classSections[s]||"-";const roll=allStudents.filter(n=>(classSections[n]||"-")===sec).sort((a,b)=>String(a).localeCompare(String(b))).indexOf(s)+1;const given=sc.length;const missed=rTests.length-given;const missedWeeks=rTests.filter(t=>{var v=_val(t,s);return v===undefined||v==="";}).map(t=>t.week);return{name:s,sc,avg,trend,roll,sec,given,missed,missedWeeks};}),[students,rTests,allStudents,classSections]);
   const absentPerTest=useMemo(()=>rTests.map(test=>students.filter(s=>{var v=_val(test,s);return v===undefined||v==="";}).length),[rTests,students]);
   const classAvg=useMemo(()=>{const all=stats.flatMap(s=>s.sc.map(x=>x.p));return all.length?Math.round(all.reduce((a,b)=>a+b,0)/all.length):null;},[stats]);
@@ -8544,7 +8556,7 @@ function ClassProgress({user,testsDB,studentsDB,dirDB,academicRosterDB,jumpStude
     w.document.write(`<html><head><title>Report</title><style>body{font-family:Arial,sans-serif;padding:20px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:8px;text-align:center}th{background:#0d1b2a;color:#fff}h2{color:#0d1b2a}</style></head><body>`);
     w.document.write(`<h2>Stepping Stone Inter College</h2><p><strong>${esc(cls)} — ${esc(subj)}</strong> | ${rTests.length} Tests | Class Avg: ${classAvg??'—'}%</p>`);
     w.document.write(`<table><tr><th>Roll</th><th>Student</th>${rTests.map(t=>`<th>Wk ${esc(t.week)}<br/><small>${fmtDate(t.testDate)}</small>${t.topics&&t.topics.length?`<br/><small style="font-weight:400;color:#bcd">${esc(t.topics.join(", "))}</small>`:""}</th>`).join("")}<th>Average</th><th>Trend</th><th>Section</th></tr>`);
-    rows.forEach((ss,i)=>{w.document.write(`<tr><td>${i+1}</td><td style="text-align:left">${esc(ss.name)}</td>${rTests.map(test=>{const sc=ss.sc.find(x=>x.week===test.week);return sc?`<td style="color:${gradeOf(sc.p).c}">${sc.p}%</td>`:`<td style="color:#cbd5e1">A</td>`;}).join("")}<td><strong>${ss.avg??'—'}%</strong></td><td>${ss.trend==null?"—":ss.trend>5?"↑ Improving":ss.trend<-5?"↓ Declining":"→ Stable"}</td><td>${ss.sec||"—"}</td></tr>`);});
+    rows.forEach((ss,i)=>{w.document.write(`<tr><td>${i+1}</td><td style="text-align:left">${esc(ss.name)}</td>${rTests.map(test=>{const sc=ss.sc.find(x=>(test.__id&&x.id)?x.id===test.__id:x.week===test.week);return sc?`<td style="color:${gradeOf(sc.p).c}">${sc.p}%</td>`:`<td style="color:#cbd5e1">A</td>`;}).join("")}<td><strong>${ss.avg??'—'}%</strong></td><td>${ss.trend==null?"—":ss.trend>5?"↑ Improving":ss.trend<-5?"↓ Declining":"→ Stable"}</td><td>${ss.sec||"—"}</td></tr>`);});
     w.document.write(`<tr style="background:#FEF2F2"><td colspan="2"><strong>Absent</strong></td>${absentPerTest.map(n=>`<td style="color:${n>0?"var(--tx-red)":"var(--tx-grn)"};font-weight:700">${n>0?n:"✓"}</td>`).join("")}<td><strong>${absentPerTest.reduce((a,b)=>a+b,0)} total</strong></td><td></td></tr>`);
     w.document.write(`</table>`);
     if(problemTopics.length){w.document.write(`<h3 style="color:#dc2626">Problem Topics</h3><ul>${problemTopics.map(([t,c])=>`<li>${esc(t)} — flagged in ${c} tests</li>`).join("")}</ul>`);}
@@ -8616,7 +8628,7 @@ function ClassProgress({user,testsDB,studentsDB,dirDB,academicRosterDB,jumpStude
                 <thead><tr style={{background:"var(--c-f7)"}}>
                   <th style={{padding:"8px 12px",textAlign:"center",fontSize:11,fontWeight:700,color:"var(--c-64)",textTransform:"uppercase"}}>Roll</th>
                   <th style={{padding:"10px 20px",textAlign:"left",fontSize:11,fontWeight:700,color:"var(--c-64)",textTransform:"uppercase",whiteSpace:"nowrap"}}>Student</th><th style={{padding:"8px 12px",textAlign:"center",fontSize:11,fontWeight:700,color:"var(--c-64)",textTransform:"uppercase"}}>Sec</th>
-                  {rTests.map(t=><th key={t.week} style={{padding:"8px 12px",textAlign:"center",fontSize:11,fontWeight:700,color:"var(--c-64)",textTransform:"uppercase",whiteSpace:"nowrap",verticalAlign:"top"}}><span style={{fontSize:11,fontWeight:700}}>{fmtDate(t.testDate)||("Test "+t.week)}</span>{t.topics&&t.topics.length>0&&<span style={{display:"block",fontSize:11.5,fontWeight:500,color:"var(--c-94)",textTransform:"none",whiteSpace:"normal",maxWidth:96,margin:"3px auto 0",lineHeight:1.25}} title={t.topics.join(", ")}>{t.topics.join(", ")}</span>}</th>)}
+                  {rTests.map(t=><th key={t.__id||t.week} style={{padding:"8px 12px",textAlign:"center",fontSize:11,fontWeight:700,color:"var(--c-64)",textTransform:"uppercase",whiteSpace:"nowrap",verticalAlign:"top"}}><span style={{fontSize:11,fontWeight:700}}>{fmtDate(t.testDate)||("Test "+t.week)}</span>{t.topics&&t.topics.length>0&&<span style={{display:"block",fontSize:11.5,fontWeight:500,color:"var(--c-94)",textTransform:"none",whiteSpace:"normal",maxWidth:96,margin:"3px auto 0",lineHeight:1.25}} title={t.topics.join(", ")}>{t.topics.join(", ")}</span>}</th>)}
                   <th style={{padding:"10px 16px",textAlign:"center",fontSize:11,fontWeight:700,color:"var(--c-64)",textTransform:"uppercase"}}>Avg</th>
                   <th style={{padding:"10px 16px",textAlign:"center",fontSize:11,fontWeight:700,color:"var(--tx-red)",textTransform:"uppercase"}}>Missed</th>
                   <th style={{padding:"10px 16px",textAlign:"center",fontSize:11,fontWeight:700,color:"var(--c-64)",textTransform:"uppercase"}}>Trend</th>
@@ -8627,7 +8639,7 @@ function ClassProgress({user,testsDB,studentsDB,dirDB,academicRosterDB,jumpStude
                       <td style={{padding:"10px 12px",textAlign:"center",fontSize:12,color:"var(--c-94)",fontWeight:700}}>{ss.roll}</td>
                       <td style={{padding:"10px 20px",fontWeight:500,fontSize:13,color:"var(--c-1e)",whiteSpace:"nowrap"}}>{ss.name}</td>
                       <td style={{padding:"8px 12px",textAlign:"center"}}>{ss.sec!=="-"?<span className="ss-secpill">{ss.sec}</span>:<span style={{color:"var(--c-94)",fontSize:11}}>—</span>}</td>
-                      {rTests.map((test,idx)=>{const sc=ss.sc.find(x=>x.week===test.week);const g=sc?gradeOf(sc.p):null;return<td key={idx} style={{padding:"10px 12px",textAlign:"center"}}>{sc?<span style={{fontFamily:"monospace",fontSize:12,fontWeight:700,color:g.c}}>{sc.p}%</span>:<span style={{color:"var(--c-94)",fontSize:12}}>A</span>}</td>;})}
+                      {rTests.map((test,idx)=>{const sc=ss.sc.find(x=>(test.__id&&x.id)?x.id===test.__id:x.week===test.week);const g=sc?gradeOf(sc.p):null;return<td key={idx} style={{padding:"10px 12px",textAlign:"center"}}>{sc?<span style={{fontFamily:"monospace",fontSize:12,fontWeight:700,color:g.c}}>{sc.p}%</span>:<span style={{color:"var(--c-94)",fontSize:12}}>A</span>}</td>;})}
                       <td style={{padding:"10px 16px",textAlign:"center"}}>{ss.avg!==null?<GBadge p={ss.avg}/>:<span style={{color:"var(--c-94)"}}>—</span>}</td>
                       <td style={{padding:"10px 16px",textAlign:"center",fontFamily:"monospace",fontSize:13,fontWeight:700,color:ss.missed===0?"#c9a84c":"var(--tx-red)"}} title={ss.missed>0?`Missed weeks: ${ss.missedWeeks.join(", ")}`:"All tests given"}>{ss.missed===0?"✓":`${ss.missed}/${rTests.length}`}</td>
                       <td style={{padding:"10px 16px",textAlign:"center",fontSize:12,fontWeight:700,color:ss.trend==null?"var(--c-cb)":ss.trend>5?"#c9a84c":ss.trend<-5?"var(--tx-red)":"var(--c-64)"}} title={ss.trend==null?"Needs 3+ tests to show a trend":""}>{ss.trend==null?"—":ss.trend>5?`↑ +${ss.trend}%`:ss.trend<-5?`↓ ${ss.trend}%`:"→ Stable"}</td>
@@ -8748,8 +8760,8 @@ function StudentReport({user,testsDB,studentsDB,dirDB,academicRosterDB,jumpStude
   const subjects=__testSubjectsWithLegacy(cls);
   const padm=String((_srRoster.find(s=>s.name===student)||{}).admNo||""); /* admission no. from the directory-first roster → marks read admNo-first */
   const sd=useMemo(()=>subjects.map(subj=>{
-    const rel=Object.values(testsDB.data).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week);
-    const sc=rel.map(t=>{const v=_markOf(t,padm,student);return{week:t.week,p:pct(Number(v??0),t.total),topics:t.topics||[],date:t.testDate,has:v!==undefined&&v!==""};}).filter(x=>x.has);
+    const rel=Object.entries(testsDB.data).map(([_i,_t])=>Object.assign({__id:_i},_t)).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week);
+    const sc=rel.map(t=>{const v=_markOf(t,padm,student);return{id:t.__id,week:t.week,p:pct(Number(v??0),t.total),topics:t.topics||[],date:t.testDate,has:v!==undefined&&v!==""};}).filter(x=>x.has);
     const avg=sc.length?Math.round(sc.reduce((a,b)=>a+b.p,0)/sc.length):null;
     const trend=trendOf(sc.map(x=>x.p));
     const weak=[...new Set(sc.filter(x=>x.p<50).flatMap(x=>x.topics))];
@@ -8872,7 +8884,7 @@ ${sd.map(s=>`<tr><td class="subj">${esc(s.subj)}</td><td>${s.sc.length}</td><td 
                 {s.weak.length>0?<div style={{fontSize:12,color:"var(--tx-org)",marginTop:3}}>Revise: {s.weak.join(", ")}</div>:<div style={{fontSize:12,color:"var(--ap-muted)",marginTop:3}}>{s.sc.length?`${s.sc.length} test${s.sc.length>1?"s":""} recorded`:"No tests yet"}</div>}
               </div>
               <div style={{display:"flex",gap:13,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
-                {s.sc.map(sc=><TestChip key={sc.week} sc={sc} w={62} big={true}/>)}
+                {s.sc.map(sc=><TestChip key={sc.id||sc.week} sc={sc} w={62} big={true}/>)}
                 {s.avg!==null?<GBadge p={s.avg}/>:<span style={{fontSize:12,color:"var(--c-94)"}}>No data</span>}
                 {s.trend!==null&&<span style={{fontSize:12,fontWeight:700,color:s.trend>0?"var(--tx-grn2)":s.trend<-5?"#d2342a":"var(--ap-muted)"}}>{s.trend>0?`↑ +${s.trend}%`:s.trend<-5?`↓ ${s.trend}%`:"→"}</span>}
               </div>
@@ -8927,8 +8939,8 @@ function StudentProfile({user,testsDB,examsDB,studentsDB,attendanceDB,wrongDB,fe
 
   const subjects=__testSubjectsWithLegacy(cls);
   const sd=useMemo(()=>subjects.map(subj=>{
-    const rel=Object.values(testsDB.data).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week);
-    const sc=rel.map(t=>{const v=_markOf(t,padm,student);return{week:t.week,p:pct(Number(v??0),t.total),topics:t.topics||[],date:t.testDate,has:v!==undefined&&v!==""};});
+    const rel=Object.entries(testsDB.data).map(([_i,_t])=>Object.assign({__id:_i},_t)).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week);
+    const sc=rel.map(t=>{const v=_markOf(t,padm,student);return{id:t.__id,week:t.week,p:pct(Number(v??0),t.total),topics:t.topics||[],date:t.testDate,has:v!==undefined&&v!==""};});
     const taken=sc.filter(x=>x.has);
     const avg=taken.length?Math.round(taken.reduce((a,b)=>a+b.p,0)/taken.length):null;
     const trend=taken.length>=2?taken[taken.length-1].p-taken[0].p:null;
@@ -9145,7 +9157,7 @@ th{background:#0d1b2a;color:#fff;font-weight:600}td.l{text-align:left;font-weigh
                 {s.weak.length>0?<div style={{fontSize:12,color:"var(--tx-org)",marginTop:3}}>Revise: {s.weak.join(", ")}</div>:<div style={{fontSize:12,color:"var(--ap-muted)",marginTop:3}}>{s.sc.length?`${s.sc.length} test${s.sc.length>1?"s":""} recorded`:"No tests yet"}{s.missed>0?` · ${s.missed} missed`:""}</div>}
               </div>
               <div style={{display:"flex",gap:13,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
-                {s.sc.map(sc=><TestChip key={sc.week} sc={sc} w={62} big={true}/>)}
+                {s.sc.map(sc=><TestChip key={sc.id||sc.week} sc={sc} w={62} big={true}/>)}
                 {s.avg!==null?<GBadge p={s.avg}/>:<span style={{fontSize:12,color:"var(--c-94)"}}>No data</span>}
                 {s.trend!==null&&<span style={{fontSize:12,fontWeight:700,color:s.trend>0?"var(--tx-grn2)":s.trend<-5?"#d2342a":"var(--ap-muted)"}}>{s.trend>0?`↑ +${s.trend}%`:s.trend<-5?`↓ ${s.trend}%`:"→"}</span>}
               </div>
@@ -9246,8 +9258,8 @@ function ParentView({user,testsDB,examsDB,studentsDB,academicRosterDB,attendance
   },[scoped,testsDB&&testsDB.data]);
   const subjects=__testSubjectsWithLegacy(cls);
   const sd=useMemo(()=>subjects.map(subj=>{
-    const rel=Object.values(_testData).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week);
-    const sc=rel.map(t=>{const v=_markOf(t,padm,student);return{week:t.week,p:pct(Number(v??0),t.total),topics:t.topics||[],date:t.testDate,has:v!==undefined&&v!==""};}).filter(x=>x.has);
+    const rel=Object.entries(_testData).map(([_i,_t])=>Object.assign({__id:_i},_t)).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week);
+    const sc=rel.map(t=>{const v=_markOf(t,padm,student);return{id:t.__id,week:t.week,p:pct(Number(v??0),t.total),topics:t.topics||[],date:t.testDate,has:v!==undefined&&v!==""};}).filter(x=>x.has);
     const avg=sc.length?Math.round(sc.reduce((a,b)=>a+b.p,0)/sc.length):null;
     const trend=trendOf(sc.map(x=>x.p));
     const weak=[...new Set(sc.filter(x=>x.p<50).flatMap(x=>x.topics))];
@@ -9570,7 +9582,7 @@ function ParentView({user,testsDB,examsDB,studentsDB,academicRosterDB,attendance
                 {s.sc.map(function(sc){
                   var g=gradeOf(sc.p);
                   var tp=(sc.topics||[]).filter(Boolean);
-                  return <div key={sc.week} style={{display:"flex",alignItems:"flex-start",gap:10,background:"var(--c-fff)",padding:"9px 11px"}}>
+                  return <div key={sc.id||sc.week} style={{display:"flex",alignItems:"flex-start",gap:10,background:"var(--c-fff)",padding:"9px 11px"}}>
                     <div style={{minWidth:0,flex:1}}>
                       <div style={{fontSize:12.5,fontWeight:600,color:"var(--ap-ink)",lineHeight:1.4,wordBreak:"break-word"}}>
                         {tp.length?tp.join(" · "):<span style={{color:"var(--ap-faint)",fontWeight:500}}>Topic not recorded by the teacher</span>}
@@ -12048,8 +12060,8 @@ function DirectoryProfile({stu, testsDB, examsDB, studentsDB, attendanceDB, wron
   const roll=rosterName?(rosterList.filter(n=>((_profSecs[n]||"")===_profSec)).sort((a,b)=>String(a).localeCompare(String(b))).indexOf(rosterName)+1)||null:null;
   const subjects=academicCls?(__testSubjectsWithLegacy(academicCls)):[];
   const sd=useMemo(()=>{ if(!academicCls)return []; return subjects.map(subj=>{
-    const rel=Object.values(testsDB.data||{}).filter(t=>t.cls===academicCls&&t.subj===subj).sort((a,b)=>a.week-b.week);
-    const sc=rel.map(t=>{const raw=_markOf(t,adm,testName);return{week:t.week,p:pct(Number(raw||0),t.total),topics:t.topics||[],date:t.testDate,has:(raw!==undefined&&raw!=="")};});
+    const rel=Object.entries(testsDB.data||{}).map(([_i,_t])=>Object.assign({__id:_i},_t)).filter(t=>t.cls===academicCls&&t.subj===subj).sort((a,b)=>a.week-b.week);
+    const sc=rel.map(t=>{const raw=_markOf(t,adm,testName);return{id:t.__id,week:t.week,p:pct(Number(raw||0),t.total),topics:t.topics||[],date:t.testDate,has:(raw!==undefined&&raw!=="")};});
     const taken=sc.filter(x=>x.has);
     const avg=taken.length?Math.round(taken.reduce((a,b)=>a+b.p,0)/taken.length):null;
     const trend=taken.length>=2?taken[taken.length-1].p-taken[0].p:null;
@@ -12459,7 +12471,7 @@ function DirectoryProfile({stu, testsDB, examsDB, studentsDB, attendanceDB, wron
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,flexWrap:"wrap"}}>
                         <div style={{minWidth:0}}><div style={{fontSize:13,fontWeight:650,color:"var(--ap-ink)"}}>{s.subj}</div>{s.weak.length>0?<div style={{fontSize:12,color:"var(--tx-org)",marginTop:3}}>Revise: {s.weak.join(", ")}</div>:<div style={{fontSize:12,color:"var(--ap-muted)",marginTop:3}}>{s.sc.length} test{s.sc.length>1?"s":""}{s.missed>0?" · "+s.missed+" missed":""}</div>}</div>
                         <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
-                          {s.sc.map(sc=><TestChip key={sc.week} sc={sc} w={62} big={false}/>)}
+                          {s.sc.map(sc=><TestChip key={sc.id||sc.week} sc={sc} w={62} big={false}/>)}
                           {s.avg!==null&&<GBadge p={s.avg}/>}
                           {s.trend!==null&&<span style={{fontSize:12,fontWeight:700,color:s.trend>0?"var(--tx-grn2)":s.trend<-5?"#d2342a":"var(--ap-muted)"}}>{s.trend>0?"↑ +"+s.trend+"%":s.trend<-5?"↓ "+s.trend+"%":"→"}</span>}
                         </div>
