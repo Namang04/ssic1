@@ -1490,15 +1490,18 @@ function __canonTestSubj(cls,subj){
 // saved last term under "Physics" shows up under "Science" everywhere at once — the roster matrix, the
 // visibility filter, breakdowns, the parent portal — with no data migration and no chance of missing a caller.
 // Writes pass straight through untouched.
-function __wrapMergedSubj(db){
-  if(!db)return db;
-  var out={},d=db.data||{};
-  Object.keys(d).forEach(function(k){
+function __canonTestMap(d){
+  var out={};
+  Object.keys(d||{}).forEach(function(k){
     var t=d[k];
     if(t&&t.cls&&t.subj){var c=__canonTestSubj(t.cls,t.subj);if(c!==t.subj){out[k]=Object.assign({},t,{subj:c,subjOrig:t.subj});return;}}
     out[k]=t;
   });
-  return Object.assign({},db,{data:out});
+  return out;
+}
+function __wrapMergedSubj(db){
+  if(!db)return db;
+  return Object.assign({},db,{data:__canonTestMap(db.data)});
 }
 function __testSubjectsFor(cls){
   var c=(typeof _bcfg==="function")?_bcfg():{};
@@ -9224,7 +9227,10 @@ function ParentView({user,testsDB,examsDB,studentsDB,academicRosterDB,attendance
         return out;
       };
       var a=await grab("attendance"), t=await grab("tests");
-      if(!cancel)setScoped({att:a,tests:t});
+      // Same fold as testsDB. This scoped result is PREFERRED over testsDB.data below, so without this a
+      // pupil's report showed old Physics/Chemistry/Biology tests under no subject at all, and Science
+      // showed only the handful genuinely saved as "Science".
+      if(!cancel)setScoped({att:a,tests:__canonTestMap(t)});
     };
     if(window.__fbReady)load();else window.addEventListener("fbready",load,{once:true});
     return function(){cancel=true;};
@@ -18806,7 +18812,7 @@ function StaffAttendanceRegister({user,isDirector,setTab:goTab}){
               </div>
               <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flex:"none"}}>
                 {u.phone?<a href={"tel:"+u.phone} style={{fontSize:11.5,color:"var(--ap-muted)",fontWeight:600,fontFamily:"var(--ss-font)",textDecoration:"none"}}>{u.phone}</a>:null}
-                <span style={{background:STK[k][2],color:STK[k][1],borderRadius:99,padding:"3px 10px",fontSize:11.5,fontWeight:700,whiteSpace:"nowrap"}}>{STK[k][0]}{st.noclock?" · no clock-in":""}</span>
+                <span style={{background:STK[k][2],color:STK[k][1],borderRadius:99,padding:"3px 10px",fontSize:11.5,fontWeight:700,whiteSpace:"nowrap"}}>{STK[k][0]}{(st.rec&&st.rec.hhmm)?" · "+st.rec.hhmm:""}{st.noclock?" · no clock-in":""}</span>
                 {isDirector&&<div style={{display:"flex",gap:4,marginTop:2}}>
                   {[["present","P",["var(--bg-grn)","var(--tx-grn2)"]],["late","L",["var(--bg-amb)","var(--tx-org2)"]],["absent","A",["var(--bg-red)","var(--tx-red)"]]].map(function(opt){
                     var on=!!st.rec&&k===opt[0];
@@ -18977,7 +18983,7 @@ function StaffAttendanceRegister({user,isDirector,setTab:goTab}){
                       <div style={{fontSize:11,color:"var(--c-94,#5e6c81)",textTransform:"capitalize"}}>{u.role==="admin"?(u.username==="director"||(DEFAULT_USERS[u.username]&&DEFAULT_USERS[u.username].fees!==false)?"Director":"Vice Principal"):u.role}</div>
                     </td>
                     <td style={{padding:"9px 14px",borderBottom:"1px solid var(--c-f0,#f0f2f5)"}}>
-                      <span style={{background:STK[k][2],color:STK[k][1],borderRadius:8,padding:"3px 11px",fontSize:11.5,fontWeight:700}}>{STK[k][0]}</span>
+                      <span style={{background:STK[k][2],color:STK[k][1],borderRadius:8,padding:"3px 11px",fontSize:11.5,fontWeight:700}}>{STK[k][0]}{rec&&rec.hhmm?" · "+rec.hhmm:""}</span>
                       {rec&&rec.source==="self"&&<span style={{marginLeft:7,fontSize:11,color:"var(--c-94,#5e6c81)"}}>self{rec.distM!=null?" · "+_attDistLabel(rec.distM):""}</span>}
                       {rec&&rec.source==="director"&&<span style={{marginLeft:7,fontSize:11,color:"var(--c-94,#5e6c81)"}}>by {honorific(rec.markedBy)||"Director Sir"}</span>}
                     </td>
