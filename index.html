@@ -2394,7 +2394,13 @@ function Login({onLogin,usersDB}){
     // Dotted logins like "aakash.singh" are stored under safeId() ("aakash_singh"), so check both keys.
     const baseData=DEFAULT_USERS[uKey];
     const extraData=usersDB.data&&(usersDB.data[uKey]||usersDB.data[safeId(uKey)]);
-    const userData=baseData?{...baseData,...(extraData||{}),username:uKey,password:baseData.password}:(extraData?{...extraData,username:uKey}:null);
+    // The LIVE user doc wins over the compiled-in seed, and that includes the password. This clause used to
+    // read `password:baseData.password`, forcing the seed value LAST — and no DEFAULT_USERS entry carries a
+    // password, so userData.password came out undefined for all 68 seeded staff. legacyOk compares it with
+    // what was typed, so it was permanently false and a Director password reset could never let them in.
+    // Seed stays the fallback for an account that has no doc-side password yet.
+    const userData=baseData?{...baseData,...(extraData||{}),username:uKey,
+      password:((extraData&&extraData.password!==undefined)?extraData.password:baseData.password)}:(extraData?{...extraData,username:uKey}:null);
     // The legacy password path must respect Disable too. `disabled` above is read from the accounts doc
     // and is only set after a SUCCESSFUL Firebase sign-in, so before this a disabled teacher who knew their
     // legacy password walked straight in. The toggle now mirrors loginOff onto the users doc.
