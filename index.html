@@ -27,6 +27,7 @@
   import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js";
   import { getFirestore,initializeFirestore,persistentLocalCache,persistentMultipleTabManager,collection,doc,setDoc,deleteDoc,onSnapshot,getDoc,getDocFromServer,serverTimestamp,runTransaction,updateDoc,arrayUnion,FieldPath,query,where,getDocs } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore.js";
   import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updatePassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-auth.js";
+  import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-functions.js";
   const FBCONFIG={apiKey:"AIzaSyChPpLsxkEc_rXBEcYK6rc-fVcBw0M0dFw",authDomain:"steppingstone-32aaf.firebaseapp.com",projectId:"steppingstone-32aaf",storageBucket:"steppingstone-32aaf.firebasestorage.app",messagingSenderId:"769826230279",appId:"1:769826230279:web:2c7981b0787b7d70859aa2"};
   const app = initializeApp(FBCONFIG);
   // Offline persistence: cache Firestore data in IndexedDB so repeat opens on a device are near-instant
@@ -45,6 +46,21 @@
   window.__authSignOut=()=>signOut(auth);
   window.__authUid=()=>auth.currentUser&&auth.currentUser.uid;
   window.__onAuthChanged=(cb)=>onAuthStateChanged(auth,cb);
+  // Real password reset, done server-side with the Admin SDK (functions/index.js). The browser cannot change
+  // someone else's Firebase password, which is why the old in-app "reset" could only write a recovery password
+  // that carried no session. Returns null when the function is not deployed, so the app falls back cleanly.
+  window.__fnResetPassword=async(username,newPassword)=>{
+    try{
+      const fns=getFunctions(app,"us-central1");
+      const call=httpsCallable(fns,"resetStaffPassword");
+      const r=await call({username,newPassword});
+      return (r&&r.data)||{ok:true};
+    }catch(e){
+      const c=(e&&(e.code||e.message))||"";
+      if(/not-found|internal|functions\/not-found|does not exist|CORS|Failed to fetch/i.test(String(c))&&!/no secure login/i.test(String(e&&e.message)))return null; // not deployed yet
+      throw e;
+    }
+  };
   window.__authUpdatePassword=(pwd)=>auth.currentUser?updatePassword(auth.currentUser,pwd):Promise.reject(new Error("Not signed in with secure login."));
   // Create (or fetch uid of) an account WITHOUT disturbing the current session, via a throwaway secondary app.
   window.__authCreateOrGetUid=async(email,pwd)=>{
@@ -14911,6 +14927,24 @@ function AdminPanel({testsDB,studentsDB,usersDB,wrongDB,user,academicRosterDB}){
     // either, because __authCreateOrGetUid falls back to signing IN with the new password and the real one
     // is the forgotten one. Deleting the users doc does not delete the Firebase Auth user.
     const wasSecure=!!_secureUsers[resetUser];
+    // Prefer the REAL reset (Cloud Function, Admin SDK): her username stays, her old password stops working,
+    // and nothing is stored in the clear. Falls back to the recovery password only when the function is not
+    // deployed — that fallback is view-only, and the message below says so.
+    let secureDone=false;
+    if(window.__fnResetPassword){
+      try{
+        const r=await window.__fnResetPassword(resetUser,newPass);
+        if(r&&r.ok)secureDone=true;
+      }catch(e){
+        setResetMsg("Could not reset — "+((e&&e.message)||"try again"));return;
+      }
+    }
+    if(secureDone){
+      logAudit("password-reset","users",resetUser,null,null);
+      setResetMsg("✓ Password changed for \""+resetUser+"\". They can sign in with it now and will be asked to choose their own. Their previous password no longer works.");
+      setNewPass("");setTimeout(()=>setResetMsg(""),6000);
+      return;
+    }
     await usersDB.set(resetUser,{...existing,password:newPass,pwdTemp:true,loginOff:false});
     logAudit("password-reset","users",resetUser,null,null); // never log the password itself
     setResetMsg(wasSecure

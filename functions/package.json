@@ -1,0 +1,11 @@
+{
+  "name": "ssic-functions",
+  "description": "Server-side actions for the Stepping Stone academic portal",
+  "private": true,
+  "engines": { "node": "20" },
+  "main": "index.js",
+  "dependencies": {
+    "firebase-admin": "^12.6.0",
+    "firebase-functions": "^6.1.0"
+  }
+}
