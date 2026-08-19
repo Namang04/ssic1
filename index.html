@@ -13650,7 +13650,30 @@ function AccountsPanel({user,usersDB,studentsDB,dirDB,academicRosterDB,canManage
         </div></div>
         {manageRows.length>300&&<div style={{marginTop:8,fontSize:11.5,color:"var(--tx-org2)"}}>Showing the first 300 of {manageRows.length} — narrow with search or filters to see the rest.</div>}
         <div style={{...INS_CARD,padding:14,marginTop:14,background:"var(--bg-amb)",border:"1px solid var(--bd-amb)"}}>
-          <div style={{fontWeight:700,fontSize:13,color:"var(--tx-org2)",marginBottom:6}}>Forgot a password?</div>
+          <div style={{...INS_CARD,padding:14,marginTop:14}}>
+          <div style={{fontWeight:700,fontSize:13,color:"var(--ap-ink)",marginBottom:2}}>Issue a new login</div>
+          <div style={{fontSize:12,color:"var(--ap-muted)",marginBottom:10,lineHeight:1.55}}>
+            For a teacher who has forgotten their password and needs to <b>work</b> — mark attendance, enter marks.
+            This creates a real new login, moves their profile and attendance history across, and disables the old one.
+          </div>
+          <div className="m1col" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr auto",gap:10,alignItems:"end"}}>
+            <div><Lbl c="Existing username"/>
+              <input className="ss-input" value={newLoginFor} placeholder="e.g. kuldeep"
+                onChange={e=>{const v=e.target.value;setNewLoginFor(v);if(v&&!newLoginUser)setNewLoginUser(v.trim().toLowerCase()+"2");}}/></div>
+            <div><Lbl c="New username"/>
+              <input className="ss-input" value={newLoginUser} placeholder="e.g. kuldeep2"
+                onChange={e=>setNewLoginUser(e.target.value)}/></div>
+            <div><Lbl c="New password"/>
+              <input className="ss-input" value={newLoginPass} placeholder="6+ characters"
+                onChange={e=>setNewLoginPass(e.target.value)}/></div>
+            <button className="ss-btn ss-press" disabled={newLoginBusy} onClick={handleIssueNewLogin}
+              style={{background:"var(--btn-pri-bg)",color:"var(--btn-pri-tx)",border:"none",borderRadius:6,padding:"9px 16px",fontWeight:700,fontSize:12.5}}>
+              {newLoginBusy?"Creating…":"Create login"}</button>
+          </div>
+          {newLoginMsg&&<div style={{marginTop:10,fontSize:12.5,lineHeight:1.55,
+            color:newLoginMsg.indexOf("✓")===0?"var(--tx-grn2)":"var(--tx-red)"}}>{newLoginMsg}</div>}
+        </div>
+        <div style={{fontWeight:700,fontSize:13,color:"var(--tx-org2)",marginBottom:6}}>Forgot a password?</div>
           <div style={{fontSize:12.5,color:"var(--ap-ink2)",lineHeight:1.6}}><b>Reset a password</b> above gives them a <b>view-only</b> way back in: they can sign in and look around, but cannot save attendance or marks, because a recovery sign-in has no secure session. Their old password also keeps working — this cannot erase it. For someone who must ENTER data, the reliable fix today is a <b>new login</b> under a slightly different username, then <b>Disable</b> the old one. If an account may have been misused, <b>Disable</b> it (that blocks every route in, reversible with <b>Enable</b>). Director/VP accounts are protected here.</div>
         </div>
       </>}
@@ -14753,6 +14776,55 @@ function AdminPanel({testsDB,studentsDB,usersDB,wrongDB,user,academicRosterDB}){
   const accountsDB=useFirestore("accounts");
   const dirDB=useFirestore("studentDirectory"); // to resolve a child's admission no. when creating a parent login — the portalFees/paymentIntents rules key on accounts.admNo
   const _secureUsers=useMemo(()=>{const m={};Object.values(accountsDB.data||{}).forEach(a=>{if(a&&a.username)m[a.username]=true;});return m;},[accountsDB.data]);
+
+  // ── Issue a NEW login ─────────────────────────────────────────────────────
+  // The only route that actually restores a WORKING account today. A reset writes a recovery password, which
+  // authenticates against the users doc and carries no Firebase session — so the person can look but cannot
+  // save. Firebase passwords can only be changed by the account holder or by the Admin SDK (server-side), and
+  // this app has neither. So: create a genuinely new Firebase login under a slightly different username, move
+  // the profile across, and disable the old one.
+  // attKey pins staff attendance and salary to the ORIGINAL username so nothing splits in two.
+  const[newLoginFor,setNewLoginFor]=useState("");
+  const[newLoginUser,setNewLoginUser]=useState("");
+  const[newLoginPass,setNewLoginPass]=useState("");
+  const[newLoginMsg,setNewLoginMsg]=useState("");
+  const[newLoginBusy,setNewLoginBusy]=useState(false);
+  const handleIssueNewLogin=async()=>{
+    const from=String(newLoginFor||"").trim(), to=String(newLoginUser||"").trim().toLowerCase();
+    if(!from||!to||!newLoginPass){setNewLoginMsg("Fill all three fields.");return;}
+    if(newLoginPass.length<6){setNewLoginMsg("Password must be 6+ characters.");return;}
+    const old=allUsers[from];
+    if(!old){setNewLoginMsg("\""+from+"\" not found.");return;}
+    if(allUsers[to]){setNewLoginMsg("\""+to+"\" is already taken — choose another.");return;}
+    if(!window.__authCreateOrGetUid){setNewLoginMsg("Not connected to the login service. Try again in a moment.");return;}
+    setNewLoginBusy(true);setNewLoginMsg("");
+    try{
+      const email=AUTH_EMAIL(to);
+      const uid=await window.__authCreateOrGetUid(email,newLoginPass);
+      const branches=old.branches||[__brAdmin||"greencity"];
+      await window.__fbSetDoc(window.__fbDoc(window.__db,"accounts",uid),
+        {username:to,role:old.role||"teacher",name:old.name||to,email:email,branches:branches});
+      // Everything that identifies the PERSON travels with them; only the login name changes.
+      const{password:_drop,...profile}=old;
+      await usersDB.set(to,Object.assign({},profile,{username:to,name:old.name||to,
+        attKey:old.attKey||from,   // ← attendance + salary continuity
+        branches:branches,pwdTemp:true,loginOff:false}));
+      // Retire the old one so there are not two live logins for one person.
+      const oldAcct=acctByUser[from];
+      if(oldAcct&&oldAcct.uid){const{uid:_u,...oa}=oldAcct;
+        try{await window.__fbSetDoc(window.__fbDoc(window.__db,"accounts",oldAcct.uid),Object.assign({},oa,{role:"disabled",prevRole:oa.role}));}catch(e2){}}
+      try{await usersDB.set(from,Object.assign({},old,{loginOff:true}));}catch(e3){}
+      logAudit("issue-new-login","users",to,{from:from},{to:to});
+      setNewLoginMsg("✓ New login created. Tell "+(old.name||from)+" to sign in as \""+to+"\" with the password you set — this one CAN save attendance and marks. Their old login \""+from+"\" is now disabled, and their attendance history has been carried over.");
+      setNewLoginPass("");setNewLoginUser("");setNewLoginFor("");
+    }catch(e){
+      const c=(e&&(e.code||e.message))||"error";
+      setNewLoginMsg(/email-already-in-use/.test(String(c))
+        ? "That username already has a login. Pick a different one."
+        : "Could not create the login — "+c);
+    }
+    setNewLoginBusy(false);
+  };
 
   const handleReset=async()=>{
     if(!resetUser||!newPass){setResetMsg("Fill both fields.");return;}
@@ -18260,6 +18332,10 @@ function __serverNow(){
 // Doc-id for a staff-attendance record. useFirestore.set() runs safeId() on the id (turning the
 // date's hyphens into underscores), so READS must build the SAME fully-sanitised key or they miss
 // the stored doc. This helper guarantees read key === stored key for both self check-in & register.
+// A staff member's attendance row is keyed by their login name. When a forgotten password forces a NEW
+// login (see "Issue a new login"), attKey pins the record to the ORIGINAL username so their history and
+// their salary deductions stay continuous instead of splitting across two identities.
+function __staffKey(u){return (u&&(u.attKey||u.username))||"";}
 function _attId(username,date){return safeId(safeId(username)+"__"+date);}
 // Should an UNMARKED staff member (no record, no approved leave) be displayed ABSENT for `dateStr`?
 // Yes on working days once the day is underway — any past weekday, or today after the late-cutoff —
@@ -18378,7 +18454,7 @@ function StaffCheckIn({user}){
   if(attDB.loading)return null;
   const today=_attTodayStr();
   const cfg=(attDB.data&&attDB.data["__config"])||null;
-  const myId=_attId(user.username,today);
+  const myId=_attId(__staffKey(user),today);
   const rec=attDB.data&&attDB.data[myId];
   const niceDate=new Date().toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"short"});
 
@@ -18400,7 +18476,7 @@ function StaffCheckIn({user}){
       __serverNow().then(function(snow){
         var dayStr=__attDateStrFrom(snow),hhmm=__attHHMMFrom(snow);
         var status=(cfg.lateAfter&&hhmm>cfg.lateAfter)?"late":"present";
-        var slotId=_attId(user.username,dayStr);
+        var slotId=_attId(__staffKey(user),dayStr);
         return attDB.set(slotId,{username:user.username,name:user.name,role:user.role,date:dayStr,time:snow.toISOString(),hhmm:hhmm,status:status,lat:lat,lng:lng,distM:Math.round(dist),accM:Math.round(acc),source:"self",serverAt:window.__fbServerTimestamp(),timeSource:"server"});
       }).then(function(){setBusy(false);}).catch(function(e){
         setBusy(false);
@@ -18595,7 +18671,7 @@ function StaffAttendanceRegister({user,isDirector,setTab:goTab}){
   // remove a person when staffing changes instead of needing the file edited.
   const _noClock=useMemo(function(){return (typeof __noClockList==="function")?__noClockList(attDB.data):[];},[attDB.data]);
   function statusFor(u){
-    var rec=attDB.data&&attDB.data[_attId(u.username,date)];
+    var rec=attDB.data&&attDB.data[_attId(__staffKey(u),date)];
     if(rec)return{key:rec.status||"present",rec:rec};
     var onLeave=Object.values(leaveDB.data||{}).some(function(l){return l&&l.status==="approved"&&__ttNorm(l.teacherName)===__ttNorm(u.name)&&l.from<=date&&l.to>=date;});
     if(onLeave)return{key:"leave",rec:null};
@@ -18614,7 +18690,7 @@ function StaffAttendanceRegister({user,isDirector,setTab:goTab}){
   }
   function setStatus(u,status){
     if(!isDirector)return;
-    var id=_attId(u.username,date);
+    var id=_attId(__staffKey(u),date);
     if(status==="__clear"){attDB.del(id);return;}
     var ex=attDB.data&&attDB.data[id];
     var now=new Date();
