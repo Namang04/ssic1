@@ -18,7 +18,17 @@ if ! $CLI login:list 2>/dev/null | grep -qi '@'; then
   echo "  Signing you in to Firebase — a browser window will open."
   echo "  Pick the Google account that owns the steppingstone-32aaf project."
   echo
-  $CLI login
+  # The CLI asks two unrelated questions first (Gemini features, usage analytics) and will sit waiting for an
+  # answer before it ever opens the browser — which looks exactly like a hang. Answer both automatically.
+  printf 'n\nn\n' | $CLI login || $CLI login
+  echo
+fi
+
+# The CLI analyses the function source before deploying and needs its dependencies present, otherwise it
+# fails with "Couldn't find firebase-functions package". Install them if they are missing.
+if [ ! -d functions/node_modules ]; then
+  echo "  Installing the function's dependencies (first run only)…"
+  ( cd functions && npm install --no-audit --no-fund >/dev/null 2>&1 )
   echo
 fi
 
