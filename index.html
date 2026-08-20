@@ -6689,17 +6689,24 @@ function SyllabusTracker({user,topicsDB,syllabusDB,copyChecksDB,dirDB,studentsDB
   const[input,setInput]=useState("");
   const[busy,setBusy]=useState(false);
   useEffect(()=>{const s=getTeacherSubjects(user,cls);setSubj(s[0]||"");},[cls]);
-  const key=`${cls}__${subj}`;
+  // The chapter LIST is shared across sections — every section follows one syllabus.
+  // PROGRESS is per section: 7-A and 7-B share a subject but not a pace, and a single shared status map meant
+  // "9 of 14 completed" was whichever teacher touched it last, hiding a section running three chapters behind
+  // — which is the entire reason the tracker exists.
+  const key=`${cls}__${subj}`;                       // chapter list (topics)
+  const progKey=ccSec?`${cls}__${ccSec}__${subj}`:key; // status (syllabus), per section
   const chapters=(topicsDB.data[safeId(key)]&&topicsDB.data[safeId(key)].list)||[];
   const ncertList=(typeof NCERT_SYLLABUS!=="undefined"&&NCERT_SYLLABUS[cls+"|"+subj])||[];
   // The school's OWN syllabus takes precedence over the generic NCERT list wherever we have it.
   const schoolList=(typeof __syllabusFor==="function"?__syllabusFor(cls,subj):[])||[];
-  const doc=syllabusDB.data[safeId(key)]||{};
+  // Fall back to the old shared record until this section has one of its own, so nothing looks lost before
+  // the one-off copy below has been run.
+  const doc=syllabusDB.data[safeId(progKey)]||syllabusDB.data[safeId(key)]||{};
   const status=doc.status||{};
   const stOf=(ch)=>{var v=status[ch];return v?(v.s||v):"todo";}; // supports {s,at,by} or a legacy plain string
-  const setCh=async(ch,st)=>{ if(!canEdit)return; const ns=Object.assign({},status); if(st==="todo")delete ns[ch]; else ns[ch]={s:st,at:new Date().toISOString(),by:user.name}; try{await syllabusDB.set(key,{cls,subj,status:ns,by:user.name,updatedAt:new Date().toISOString()});}catch(e){window.__toast&&window.__toast("Could not save — "+((e&&e.message)||"try again"),"err");} };
+  const setCh=async(ch,st)=>{ if(!canEdit)return; const ns=Object.assign({},status); if(st==="todo")delete ns[ch]; else ns[ch]={s:st,at:new Date().toISOString(),by:user.name}; try{await syllabusDB.set(progKey,{cls,sec:ccSec||"",subj,status:ns,by:user.name,updatedAt:new Date().toISOString()});}catch(e){window.__toast&&window.__toast("Could not save — "+((e&&e.message)||"try again"),"err");} };
   const addCh=async()=>{ const t=input.trim(); if(!t)return; const arr=[...new Set([...chapters,...t.split(",").map(x=>x.trim()).filter(Boolean)])]; try{await topicsDB.set(key,{key,list:arr});setInput("");}catch(e){window.__toast&&window.__toast("Could not add — "+((e&&e.message)||"try again"),"err");} };
-  const removeCh=async(ch)=>{ if(!(await window.__confirm({title:"Remove chapter?",body:'"'+ch+'" will be removed from this subject’s chapter list.',confirmText:"Remove",danger:true})))return; try{await topicsDB.set(key,{key,list:chapters.filter(x=>x!==ch)}); if(status[ch]!==undefined){const ns=Object.assign({},status);delete ns[ch];await syllabusDB.set(key,{cls,subj,status:ns,by:user.name,updatedAt:new Date().toISOString()});} }catch(e){window.__toast&&window.__toast("Could not remove — "+((e&&e.message)||"try again"),"err");} };
+  const removeCh=async(ch)=>{ if(!(await window.__confirm({title:"Remove chapter?",body:'"'+ch+'" will be removed from this subject’s chapter list.',confirmText:"Remove",danger:true})))return; try{await topicsDB.set(key,{key,list:chapters.filter(x=>x!==ch)}); if(status[ch]!==undefined){const ns=Object.assign({},status);delete ns[ch];await syllabusDB.set(progKey,{cls,sec:ccSec||"",subj,status:ns,by:user.name,updatedAt:new Date().toISOString()});} }catch(e){window.__toast&&window.__toast("Could not remove — "+((e&&e.message)||"try again"),"err");} };
   const pullNCERT=async()=>{ setBusy(true); try{ if(!ncertList.length){window.__toast&&window.__toast("No NCERT chapter list for "+cls+" · "+subj+" — add chapters manually below.","err");} else { var m=__mergeChapters(chapters,ncertList); var dropped=chapters.length-(m.list.length-m.added); if(!m.added&&!dropped){window.__toast&&window.__toast("All NCERT chapters already added.","ok");} else { await topicsDB.set(key,{key,list:m.list}); window.__toast&&window.__toast("Added "+m.added+" NCERT chapter"+(m.added===1?"":"s")+(dropped?" and removed "+dropped+" duplicate"+(dropped===1?"":"s"):"")+".","ok"); } } }catch(e){window.__toast&&window.__toast("Could not pre-fill — "+((e&&e.message)||"try again"),"err");} setBusy(false); };
   // ── copy checking: which section's copies we are ticking off, and that section's roster ──
   const[ccSec,setCcSec]=useState("");
@@ -6737,6 +6744,44 @@ function SyllabusTracker({user,topicsDB,syllabusDB,copyChecksDB,dirDB,studentsDB
     });
     return out;
   },[copyChecksDB&&copyChecksDB.data]);
+  // ── One-off: give each section its own copy of the syllabus progress ─────
+  // Progress used to be shared across every section of a class+subject. Copy the existing record to each
+  // section so nothing looks lost, then teachers diverge from there. Additive: a section that already has its
+  // own record is never overwritten, so this is safe to run twice.
+  const[spMsg,setSpMsg]=useState("");
+  const[spBusy,setSpBusy]=useState(false);
+  const spPending=useMemo(()=>{
+    if(!isMgr||!ccSecs.length)return [];
+    const out=[];
+    (getTeacherSubjects(user,cls)||[]).forEach(function(sj){
+      const shared=syllabusDB.data[safeId(cls+"__"+sj)];
+      if(!shared||!shared.status||!Object.keys(shared.status).length)return;   // nothing to copy
+      ccSecs.forEach(function(sc){
+        if(!syllabusDB.data[safeId(cls+"__"+sc+"__"+sj)])out.push({sj:sj,sc:sc,shared:shared});
+      });
+    });
+    return out;
+  },[isMgr,cls,ccSecs.join(","),syllabusDB.data,user]);
+  const runSplitProgress=async()=>{
+    if(!spPending.length)return;
+    if(!(await window.__confirm({
+      title:"Give each section its own syllabus progress?",
+      body:"Until now every section of a class shared one record, so the tracker showed whichever teacher updated it last. This copies the current progress to each section of "+cls+" as a starting point; from then on each section is tracked separately. Nothing is deleted, and a section that already has its own record is left alone.",
+      confirmText:"Set it up"})))return;
+    setSpBusy(true);let made=0,failed=0;
+    for(const r of spPending){
+      try{
+        await syllabusDB.set(cls+"__"+r.sc+"__"+r.sj,
+          {cls:cls,sec:r.sc,subj:r.sj,status:Object.assign({},r.shared.status),
+           by:user.name,updatedAt:new Date().toISOString(),splitFrom:cls+"__"+r.sj});
+        made++;
+      }catch(e){failed++;}
+    }
+    logAudit("syllabus-split-by-section","syllabus",cls,null,null);
+    setSpMsg("✓ "+made+" section record"+(made===1?"":"s")+" created"+(failed?" · "+failed+" failed":"")+". Each section of "+cls+" now tracks its own progress.");
+    setSpBusy(false);
+  };
+
   const runRekey=async()=>{
     if(!rkLegacy.length)return;
     if(!(await window.__confirm({
@@ -6771,7 +6816,7 @@ function SyllabusTracker({user,topicsDB,syllabusDB,copyChecksDB,dirDB,studentsDB
   }catch(e){window.__toast&&window.__toast("Could not load — "+((e&&e.message)||"try again"),"err");} setBusy(false); };
   const done=chapters.filter(c=>stOf(c)==="done").length, doing=chapters.filter(c=>stOf(c)==="doing").length;
   const pct=chapters.length?Math.round(done/chapters.length*100):0;
-  const overview=isMgr?getTeacherSubjects(user,cls).map(function(sj){var k=safeId(cls+"__"+sj);var chs=(topicsDB.data[k]&&topicsDB.data[k].list)||[];var stt=(syllabusDB.data[k]&&syllabusDB.data[k].status)||{};var d=chs.filter(function(c){var v=stt[c];return (v&&(v.s||v))==="done";}).length;var g=chs.filter(function(c){var v=stt[c];return (v&&(v.s||v))==="doing";}).length;return {subj:sj,total:chs.length,done:d,doing:g,pct:chs.length?Math.round(d/chs.length*100):0};}):[];
+  const overview=isMgr?getTeacherSubjects(user,cls).map(function(sj){var k=safeId(cls+"__"+sj);var chs=(topicsDB.data[k]&&topicsDB.data[k].list)||[];var _pk=safeId(cls+"__"+ccSec+"__"+sj);var stt=(syllabusDB.data[ccSec?_pk:k]&&syllabusDB.data[ccSec?_pk:k].status)||(syllabusDB.data[k]&&syllabusDB.data[k].status)||{};var d=chs.filter(function(c){var v=stt[c];return (v&&(v.s||v))==="done";}).length;var g=chs.filter(function(c){var v=stt[c];return (v&&(v.s||v))==="doing";}).length;return {subj:sj,total:chs.length,done:d,doing:g,pct:chs.length?Math.round(d/chs.length*100):0};}):[];
   // copyChecksDB MUST be in this gate. Without it the panel renders with checked={} on a slow phone, shows
   // "0 of 42", and the first tick writes a one-entry document over yesterday's work — silently.
   if(topicsDB.loading||syllabusDB.loading||(copyChecksDB&&copyChecksDB.loading))return<Spinner/>;
@@ -6787,6 +6832,18 @@ function SyllabusTracker({user,topicsDB,syllabusDB,copyChecksDB,dirDB,studentsDB
         </div>
         {!copiesMode&&chapters.length>0&&<div style={{flex:"none",textAlign:"center"}}><div style={{fontSize:30,fontWeight:800,letterSpacing:"-.03em",lineHeight:1}}>{pct}%</div><div style={{fontSize:11,color:"#9fb0c9",marginTop:2}}>complete</div></div>}
       </div>
+
+      {isMgr&&!copiesMode&&spPending.length>0&&<div style={{background:"var(--c-f7)",border:"1px solid var(--ap-line)",borderRadius:8,padding:14}}>
+        <div style={{fontWeight:700,fontSize:13,color:"var(--ap-ink)",marginBottom:2}}>Track each section separately</div>
+        <div style={{fontSize:12,color:"var(--ap-ink2)",marginBottom:10,lineHeight:1.55}}>
+          Every section of {cls} currently shares one progress record, so this screen shows whichever teacher
+          updated it last — a section running behind is invisible. This gives each section its own copy to start from.
+        </div>
+        <button className="ss-press" disabled={spBusy} onClick={runSplitProgress}
+          style={{background:"var(--btn-pri-bg)",color:"var(--btn-pri-tx)",border:"none",borderRadius:6,padding:"9px 16px",fontWeight:700,fontSize:12.5,cursor:"pointer"}}>
+          {spBusy?"Setting up…":"Set up "+spPending.length+" section record"+(spPending.length===1?"":"s")}</button>
+        {spMsg&&<div style={{marginTop:10,fontSize:12.5,color:spMsg.indexOf("✓")===0?"var(--tx-grn2)":"var(--tx-red)"}}>{spMsg}</div>}
+      </div>}
 
       {isMgr&&rkLegacy.length>0&&<div style={{background:"var(--bg-amb)",border:"1px solid var(--bd-amb)",borderRadius:8,padding:14}}>
         <div style={{fontWeight:700,fontSize:13,color:"var(--tx-org2)",marginBottom:2}}>{rkLegacy.length} copy-check record{rkLegacy.length===1?"":"s"} still in the old format</div>
@@ -6804,7 +6861,7 @@ function SyllabusTracker({user,topicsDB,syllabusDB,copyChecksDB,dirDB,studentsDB
         <div className="m1col" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,alignItems:"end"}}>
           <div><Lbl c="Class"/><Sel value={cls} onChange={setCls} options={sCls}/></div>
           <div><Lbl c="Subject"/><Sel value={subj} onChange={setSubj} options={getTeacherSubjects(user,cls)}/></div>
-          {ccSecs.length>0&&<div><Lbl c="Section (for copy checking)"/><Sel value={ccSec} onChange={v=>setCcSec(v)}   /* keep the chapter open: a teacher does one chapter across all their sections */ options={ccSecs}/></div>}
+          {ccSecs.length>0&&<div><Lbl c="Section"/><Sel value={ccSec} onChange={v=>setCcSec(v)}   /* keep the chapter open: a teacher does one chapter across all their sections */ options={ccSecs}/></div>}
           {canEdit&&schoolList.length>0&&<button onClick={pullSchool} disabled={busy} className="ss-press" style={{padding:"10px 12px",borderRadius:6,border:"1px solid var(--btn-pri-bg)",background:"var(--btn-pri-bg)",color:"var(--btn-pri-tx)",fontSize:12.5,fontWeight:600,cursor:busy?"default":"pointer",fontFamily:"var(--ss-font)",whiteSpace:"nowrap"}}>{busy?"Loading…":"↧ Load school syllabus ("+schoolList.length+")"}</button>}
           {canEdit&&!schoolList.length&&ncertList.length>0&&<button onClick={pullNCERT} disabled={busy} className="ss-press" style={{padding:"10px 12px",borderRadius:6,border:"1px solid var(--c-d2)",background:"var(--c-fff)",color:"var(--ap-ink2)",fontSize:12.5,fontWeight:600,cursor:busy?"default":"pointer",fontFamily:"var(--ss-font)",whiteSpace:"nowrap"}}>{busy?"Loading…":"↧ Pre-fill "+ncertList.length+" NCERT chapters"}</button>}
         </div>
