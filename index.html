@@ -19475,7 +19475,7 @@ function App(){
   // Firestore free quota. ParentView fetches just its own child's class instead (scoped query below).
   const _heavyOK=!!user&&user.role!=="parent";
   const testsDBraw=useFirestore("tests",_heavyOK);
-  const topicsDB=useFirestore("topics");
+  const topicsDB=useFirestore("topics", !!user&&user.role!=="parent"&&user.role!=="student"); // chapter lists — neither portal is passed topicsDB, so ~600 parent logins were pulling a collection they never render
   const syllabusDB=useFirestore("syllabus", !!user&&user.role!=="parent"&&user.role!=="student");
   const copyChecksDB=useFirestore("copyChecks", !!user&&user.role!=="parent"&&user.role!=="student");
   const studentsDB=useFirestore("students");
@@ -19488,7 +19488,7 @@ function App(){
      (Students likewise, for their own report.) */
   const examsDBraw=useFirestore("exams", !!user&&["admin","teacher","office","vp","parent","student"].includes(user.role));
   const noticesDB=useFirestore("notices");
-  const calendarDB=useFirestore("calendar"); // academic calendar — holidays + events (Director/Principal/VP edit, all read)
+  const calendarDB=useFirestore("calendar", !!user&&user.role!=="parent"&&user.role!=="student"); // AcademicCalendar sits in the staff nav only // academic calendar — holidays + events (Director/Principal/VP edit, all read)
   const leaveDB=useFirestore("leaves", !!user&&(user.role==="admin"||user.role==="vp")); // director/VP: substitute-needed prompt + Principal Control Room approvals
   const staffAttDB=useFirestore("staffAttendance", !!user&&user.role==="admin"); // director daily dashboard
   const admDB=useFirestore("admissions", !!user&&user.role==="admin");
@@ -19518,7 +19518,7 @@ function App(){
   const registrationsDB=useFirestore("registrations", !!user&&["admin","office","vp"].indexOf(user.role)>=0); // pre-admission enquiry intake (CRM screens only)
   const disciplineDB=useFirestore("discipline", !!user&&["admin","vp","office","teacher"].indexOf(user.role)>=0); // per-student behaviour incidents
   const complaintsDB=useFirestore("complaints", !!user&&["admin","vp","office"].indexOf(user.role)>=0);          // parent complaints / grievances
-  const conceptNotesDB=useFirestore("conceptNotes");
+  const conceptNotesDB=useFirestore("conceptNotes", !!user&&user.role!=="parent"); // StudentPortal renders these; no parent screen does
   useEffect(()=>{const d=conceptNotesDB.data;if(!d)return;window.__CONCEPT_NOTES=window.__CONCEPT_NOTES||{};window.__STUDY_NOTES=window.__STUDY_NOTES||{};Object.keys(d).forEach(id=>{const r=d[id];if(!r)return;if(r.key&&typeof r.note==="string"&&r.note.trim())window.__CONCEPT_NOTES[r.key]=r.note;if(r.studyKey&&typeof r.studyNote==="string"){if(r.studyNote.trim())window.__STUDY_NOTES[r.studyKey]=r.studyNote;else delete window.__STUDY_NOTES[r.studyKey];}});},[conceptNotesDB.data]);
   const handleUpdateUser=updated=>setUser(updated);
   if(!user){
