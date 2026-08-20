@@ -6594,13 +6594,20 @@ function CopyCheckPanel({user,cls,sec,subj,chapter,roster,copyChecksDB,onClose})
   const doc=copyChecksDB.data[key]||{};
   const checked=doc.checked||{};
   const[busy,setBusy]=useState("");
-  const idOf=(s)=>String(s.admNo||s.name||"");
+  // Admission number ONLY. Falling back to the name filed ticks under a display name, so the office later
+  // adding the admission number silently detached every tick, and a roster reshuffle could move one
+  // pupil's ticks onto another child. The school's standing rule since the fees work: admNo, never name.
+  const idOf=(s)=>String(s.admNo||"").trim();
   // Alphabetical by name — a teacher works down the pile of copies by name, not by roll number.
   // localeCompare so case and accents sort naturally; the roster prop itself is left untouched.
   const rows=useMemo(()=>roster.slice().sort((a,b)=>
     String(a.name||"").localeCompare(String(b.name||""),undefined,{sensitivity:"base"})),[roster]);
-  const done=rows.filter(s=>checked[idOf(s)]).length;
-  const left=rows.length-done;
+  // A pupil with no admission number cannot be recorded against anything stable, so they are shown but not
+  // counted — a denominator that silently excluded them would be a quieter lie than saying so on the row.
+  const tickable=rows.filter(s=>idOf(s));
+  const noAdm=rows.filter(s=>!idOf(s));
+  const done=tickable.filter(s=>checked[idOf(s)]).length;
+  const left=tickable.length-done;
   const save=async(next)=>{
     // Whole-document set() is only safe when we own the whole document. Two teachers on one section — or one
     // teacher whose offline tick is replayed on reconnect — would otherwise write a stale map over the other's
@@ -6621,24 +6628,27 @@ function CopyCheckPanel({user,cls,sec,subj,chapter,roster,copyChecksDB,onClose})
   const toggle=async(s)=>{ const id=idOf(s); if(!id)return; setBusy(id);
     const next=Object.assign({},checked); if(next[id])delete next[id]; else next[id]={at:new Date().toISOString(),by:user.name};
     await save(next); setBusy(""); };
-  const allOn=async()=>{ const next=Object.assign({},checked); rows.forEach(s=>{const id=idOf(s); if(id&&!next[id])next[id]={at:new Date().toISOString(),by:user.name};}); await save(next); };
+  const allOn=async()=>{ const next=Object.assign({},checked); tickable.forEach(s=>{const id=idOf(s); if(id&&!next[id])next[id]={at:new Date().toISOString(),by:user.name};}); await save(next); };
   const clearAll=async()=>{ if(!(await window.__confirm({title:"Clear every tick for this chapter?",body:"The record of whose copy was checked for “"+chapter+"” will be emptied. Nothing else is affected.",confirmText:"Clear",danger:true})))return; await save({}); };
-  const pct=rows.length?Math.round(done/rows.length*100):0;
+  const pct=tickable.length?Math.round(done/tickable.length*100):0;
   return(
     <div className="ap-panel" style={{padding:0,marginTop:12,overflow:"hidden",border:"1px solid var(--ap-accent)"}}>
-      <div style={{background:"var(--c-f7)",padding:"12px 16px",borderBottom:"1px solid var(--ap-line)",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+      {/* Sticky: this header carries the running count and the only Close button. On a 45-pupil list it
+          otherwise scrolls away around the 14th pupil — the count is the whole reason the panel exists,
+          and it was absent during the exact activity it measures. */}
+      <div style={{background:"var(--c-f7)",padding:"12px 16px",borderBottom:"1px solid var(--ap-line)",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",position:"sticky",top:0,zIndex:5}}>
         <div style={{minWidth:0,flex:"1 1 220px"}}>
           <div style={{fontSize:11,letterSpacing:.7,textTransform:"uppercase",color:"var(--ap-muted)",fontWeight:700}}>Copy checking</div>
           <div style={{fontSize:14,fontWeight:700,color:"var(--ap-ink)",marginTop:2}}>{chapter}</div>
           <div style={{fontSize:12,color:"var(--ap-muted)",marginTop:2}}>{cls} · Section {sec} · {subj}</div>
         </div>
         <div style={{textAlign:"right",flex:"none"}}>
-          <div style={{fontSize:19,fontWeight:800,color:left===0?"var(--tx-grn2)":"var(--ap-ink)",fontVariantNumeric:"tabular-nums"}}>{done} of {rows.length}</div>
+          <div style={{fontSize:19,fontWeight:800,color:left===0?"var(--tx-grn2)":"var(--ap-ink)",fontVariantNumeric:"tabular-nums"}}>{done} of {tickable.length}</div>
           <div style={{fontSize:11.5,color:left===0?"var(--tx-grn2)":"var(--tx-org2)",fontWeight:600}}>{left===0?"all checked":left+" left to check"}</div>
         </div>
         <button onClick={onClose} className="ss-press" style={{flex:"none",background:"none",border:"1px solid var(--c-d2)",borderRadius:6,padding:"6px 12px",fontSize:12,fontWeight:600,color:"var(--ap-ink2)",cursor:"pointer",fontFamily:"var(--ss-font)"}}>Close</button>
       </div>
-      <div style={{height:4,background:"var(--c-e6)"}}><div style={{height:"100%",width:pct+"%",background:left===0?"var(--tx-grn2)":"var(--ap-accent)",transition:"width .2s"}}/></div>
+      <div style={{height:4,background:"var(--c-e6)",position:"sticky",top:64,zIndex:5}}><div style={{height:"100%",width:pct+"%",background:left===0?"var(--tx-grn2)":"var(--ap-accent)",transition:"width .2s"}}/></div>
       <div style={{padding:"12px 16px"}}>
         {rows.length===0
           ? <div style={{fontSize:13,color:"var(--ap-muted)",padding:"10px 0"}}>No pupils on this section&rsquo;s roster yet.</div>
@@ -6694,7 +6704,8 @@ function SyllabusTracker({user,topicsDB,syllabusDB,copyChecksDB,dirDB,studentsDB
   // section letter — _rosterSec is the existing translation both roster writers already use. Without it the
   // picker offers raw stream labels that match no pupil, and a senior copy list comes out empty.
   const ccSecs=useMemo(()=>[...new Set(ccAll.map(s=>String(_rosterSec(s.section,cls)||"").trim()).filter(Boolean))].sort(),[ccAll,cls]);
-  useEffect(()=>{setCcSec(p=>ccSecs.indexOf(p)>=0?p:(ccSecs[0]||""));setCcOpen("");},[cls,subj,ccSecs.join(",")]);
+  useEffect(()=>{setCcSec(p=>ccSecs.indexOf(p)>=0?p:(ccSecs[0]||""));},[cls,subj,ccSecs.join(",")]);
+  useEffect(()=>{setCcOpen("");},[cls,subj]);   // close only when the CLASS or SUBJECT changes, not the section
   const[ccAllSubj,setCcAllSubj]=useState(false);   // escape hatch: show every pupil regardless of stream
   const ccRosterAll=useMemo(()=>{const _m=s=>!ccSec||String(_rosterSec(s.section,cls)||"").trim()===ccSec;return __uniqRosterRows?__uniqRosterRows(ccAll.filter(_m)):ccAll.filter(_m);},[ccAll,cls,ccSec]);
   // Seniors: drop pupils whose stream does not take this subject (Commerce pupil in a Physics copy list).
@@ -6788,7 +6799,7 @@ function SyllabusTracker({user,topicsDB,syllabusDB,copyChecksDB,dirDB,studentsDB
         <div className="m1col" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,alignItems:"end"}}>
           <div><Lbl c="Class"/><Sel value={cls} onChange={setCls} options={sCls}/></div>
           <div><Lbl c="Subject"/><Sel value={subj} onChange={setSubj} options={getTeacherSubjects(user,cls)}/></div>
-          {ccSecs.length>0&&<div><Lbl c="Section (for copy checking)"/><Sel value={ccSec} onChange={v=>{setCcSec(v);setCcOpen("");}} options={ccSecs}/></div>}
+          {ccSecs.length>0&&<div><Lbl c="Section (for copy checking)"/><Sel value={ccSec} onChange={v=>setCcSec(v)}   /* keep the chapter open: a teacher does one chapter across all their sections */ options={ccSecs}/></div>}
           {canEdit&&schoolList.length>0&&<button onClick={pullSchool} disabled={busy} className="ss-press" style={{padding:"10px 12px",borderRadius:6,border:"1px solid var(--btn-pri-bg)",background:"var(--btn-pri-bg)",color:"var(--btn-pri-tx)",fontSize:12.5,fontWeight:600,cursor:busy?"default":"pointer",fontFamily:"var(--ss-font)",whiteSpace:"nowrap"}}>{busy?"Loading…":"↧ Load school syllabus ("+schoolList.length+")"}</button>}
           {canEdit&&!schoolList.length&&ncertList.length>0&&<button onClick={pullNCERT} disabled={busy} className="ss-press" style={{padding:"10px 12px",borderRadius:6,border:"1px solid var(--c-d2)",background:"var(--c-fff)",color:"var(--ap-ink2)",fontSize:12.5,fontWeight:600,cursor:busy?"default":"pointer",fontFamily:"var(--ss-font)",whiteSpace:"nowrap"}}>{busy?"Loading…":"↧ Pre-fill "+ncertList.length+" NCERT chapters"}</button>}
         </div>
@@ -6822,18 +6833,41 @@ function SyllabusTracker({user,topicsDB,syllabusDB,copyChecksDB,dirDB,studentsDB
                   {meta&&meta.at&&<div style={{fontSize:11.5,color:"var(--ap-faint)",marginTop:1}}>{ST[st][0]} · {fmtDate(String(meta.at).slice(0,10))}{meta.by?" · "+honorific(meta.by):""}</div>}
                 </div>
               </div>
+              {/* Which exam this chapter is examined in. __syllabusExamsFor and __EXAM_LABEL already
+                  existed; their only caller was a hover tooltip in Enter Marks, which an Android phone
+                  never shows. Teachers think "the Half-Yearly portion", not "chapter 23 of 41". */}
+              {(function(){
+                var ex=(typeof __syllabusExamsFor==="function")?__syllabusExamsFor(cls,subj,ch):[];
+                if(!ex||!ex.length)return null;
+                return(
+                  <div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:3}}>
+                    {ex.map(function(e){
+                      return(<span key={e} style={{fontSize:10,fontWeight:700,letterSpacing:.3,padding:"1px 6px",
+                        borderRadius:4,background:"var(--c-f0)",color:"var(--ap-muted)",
+                        border:"1px solid var(--ap-line2)"}}>{(typeof __EXAM_LABEL!=="undefined"&&__EXAM_LABEL[e])||e}</span>);
+                    })}
+                  </div>);
+              })()}
               <div style={{display:"flex",gap:5,flexShrink:0}}>
                 {[["todo","Not started"],["doing","Doing"],["done","Done"]].map(([sv,sl])=>{const on=st===sv;return(
                   <button key={sv} onClick={()=>canEdit&&setCh(ch,sv)} disabled={!canEdit} title={canEdit?ST[sv][0]:"View only"} style={{flex:isMob?1:"none",minHeight:34,padding:"6px 12px",borderRadius:6,fontSize:12,fontWeight:on?800:600,cursor:canEdit?"pointer":"default",fontFamily:"var(--ss-font)",transition:".12s",border:"1px solid "+(on?ST[sv][3]:"var(--ap-line2)"),background:on?ST[sv][2]:"var(--c-f7)",color:on?ST[sv][1]:"var(--ap-muted)"}}>{sl}</button>);})}
                 {(function(){ // copy-checking progress for this chapter, on the section chosen above
                   var k=__ccKey(cls,ccSec,subj,ch); var cd=(copyChecksDB&&copyChecksDB.data[k])||{}; var chk=cd.checked||{};
-                  var n=ccRoster.filter(function(s){return chk[String(s.admNo||s.name||"")];}).length;
-                  var full=ccRoster.length>0&&n===ccRoster.length;
+                  // Must match the panel's idOf exactly — admission number only. Counting with a name
+                  // fallback here while the panel ticks by admNo made the chip and the panel disagree.
+                  var _tick=ccRoster.filter(function(s){return String(s.admNo||"").trim();});
+                  var n=_tick.filter(function(s){return chk[String(s.admNo).trim()];}).length;
+                  var full=_tick.length>0&&n===_tick.length;
+                  // Amber = taught, copies still outstanding. Previously a chapter not yet taught and one
+                  // taught a fortnight ago looked identical, so "which do I still owe copies on" meant
+                  // reading up to 60 rows.
+                  var owed=!full&&st==="done";
                   return(<button onClick={()=>setCcOpen(ccOpen===ch?"":ch)} title="Whose copies have been checked"
                     style={{flexShrink:0,minHeight:34,padding:"6px 11px",borderRadius:6,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)",fontVariantNumeric:"tabular-nums",
-                      border:"1px solid "+(ccOpen===ch?"var(--ap-accent)":full?"var(--bd-grn)":"var(--ap-line2)"),
-                      background:full?"var(--bg-grn)":"var(--c-f7)",color:full?"var(--tx-grn2)":"var(--ap-muted)"}}>
-                    {ccRoster.length?("Copies "+n+"/"+ccRoster.length):"Copies"}</button>);
+                      border:"1px solid "+(ccOpen===ch?"var(--ap-accent)":full?"var(--bd-grn)":owed?"var(--bd-amb)":"var(--ap-line2)"),
+                      background:full?"var(--bg-grn)":owed?"var(--bg-amb)":"var(--c-f7)",
+                      color:full?"var(--tx-grn2)":owed?"var(--tx-org2)":"var(--ap-muted)"}}>
+                    {_tick.length?("Copies "+n+"/"+_tick.length):"Check copies"}</button>);
                 })()}
                 {canEdit&&<button onClick={()=>removeCh(ch)} title="Remove chapter" className="ap-mini" style={{flexShrink:0}}><Icon name="trash" size={14}/></button>}
               </div>
