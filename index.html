@@ -6578,7 +6578,16 @@ function __takesSubject(cls,sec,subj){
   if(!L)return true;                                         // unknown section — never hide
   return allow.indexOf(L)>=0;
 }
-function __ccKey(cls,sec,subj,ch){return safeId(cls+"__"+sec+"__"+subj+"__"+ch);}
+// The chapter must NOT go through safeId. safeId keeps only [a-zA-Z0-9], and Devanagari has none — so every
+// Hindi chapter collapses to a row of underscores whose only distinguishing feature is its LENGTH, and two
+// Hindi chapters of equal length share one document. Against the school's own syllabus that is 6 collisions
+// swallowing 14 chapters, all Hindi, five of them in Class 10. The teacher ticks 42 pupils for one chapter and
+// the other two instantly read 42 of 42; her next tick then overwrites the first record. Hash the RAW string
+// instead, so every distinct chapter — in any script — gets its own record.
+function __chHash(s){var h=5381,i=0;s=String(s==null?"":s).trim();for(;i<s.length;i++)h=((h*33)^s.charCodeAt(i))>>>0;return h.toString(36);}
+function __ccKey(cls,sec,subj,ch){return safeId(cls+"__"+sec+"__"+subj)+"__c"+__chHash(ch);}
+// The pre-2026-08-19 scheme, kept ONLY so the one-off re-key can find the old documents.
+function __ccKeyLegacy(cls,sec,subj,ch){return safeId(cls+"__"+sec+"__"+subj+"__"+ch);}
 function CopyCheckPanel({user,cls,sec,subj,chapter,roster,copyChecksDB,onClose}){
   const isMob=useIsMobile();
   const key=__ccKey(cls,sec,subj,chapter);
@@ -6593,7 +6602,20 @@ function CopyCheckPanel({user,cls,sec,subj,chapter,roster,copyChecksDB,onClose})
   const done=rows.filter(s=>checked[idOf(s)]).length;
   const left=rows.length-done;
   const save=async(next)=>{
-    try{ await copyChecksDB.set(key,{cls,sec,subj,chapter,checked:next,by:user.name,updatedAt:new Date().toISOString()}); }
+    // Whole-document set() is only safe when we own the whole document. Two teachers on one section — or one
+    // teacher whose offline tick is replayed on reconnect — would otherwise write a stale map over the other's
+    // work. patch() updates just the one pupil's field; the hook exposes it for exactly this reason.
+    try{
+      if(copyChecksDB.data[key]&&copyChecksDB.patch){
+        const fld={};
+        Object.keys(next).forEach(function(id){if(!checked[id])fld["checked."+id]=next[id];});
+        Object.keys(checked).forEach(function(id){if(!next[id])fld["checked."+id]=window.__fbDeleteField&&window.__fbDeleteField();});
+        fld.updatedAt=new Date().toISOString();fld.by=user.name;
+        await copyChecksDB.patch(key,fld);
+      }else{
+        await copyChecksDB.set(key,{cls,sec,subj,chapter,checked:next,by:user.name,updatedAt:new Date().toISOString()});
+      }
+    }
     catch(e){ window.__toast&&window.__toast("Could not save — "+((e&&e.message)||"try again"),"err"); }
   };
   const toggle=async(s)=>{ const id=idOf(s); if(!id)return; setBusy(id);
@@ -6668,10 +6690,13 @@ function SyllabusTracker({user,topicsDB,syllabusDB,copyChecksDB,dirDB,studentsDB
   const[ccSec,setCcSec]=useState("");
   const[ccOpen,setCcOpen]=useState("");
   const ccAll=useMemo(()=>rosterForCls(dirDB,studentsDB,cls,academicRosterDB)||[],[dirDB&&dirDB.data,studentsDB&&studentsDB.data,academicRosterDB&&academicRosterDB.data,cls]);
-  const ccSecs=useMemo(()=>[...new Set(ccAll.map(s=>String(s.section||"").trim()).filter(Boolean))].sort(),[ccAll]);
+  // Classes 11-12 hold the STREAM in the directory ("PCM", "COMM(COMP)") while everything else keys on the
+  // section letter — _rosterSec is the existing translation both roster writers already use. Without it the
+  // picker offers raw stream labels that match no pupil, and a senior copy list comes out empty.
+  const ccSecs=useMemo(()=>[...new Set(ccAll.map(s=>String(_rosterSec(s.section,cls)||"").trim()).filter(Boolean))].sort(),[ccAll,cls]);
   useEffect(()=>{setCcSec(p=>ccSecs.indexOf(p)>=0?p:(ccSecs[0]||""));setCcOpen("");},[cls,subj,ccSecs.join(",")]);
   const[ccAllSubj,setCcAllSubj]=useState(false);   // escape hatch: show every pupil regardless of stream
-  const ccRosterAll=useMemo(()=>__uniqRosterRows?__uniqRosterRows(ccAll.filter(s=>!ccSec||String(s.section||"").trim()===ccSec)):ccAll.filter(s=>!ccSec||String(s.section||"").trim()===ccSec),[ccAll,ccSec]);
+  const ccRosterAll=useMemo(()=>{const _m=s=>!ccSec||String(_rosterSec(s.section,cls)||"").trim()===ccSec;return __uniqRosterRows?__uniqRosterRows(ccAll.filter(_m)):ccAll.filter(_m);},[ccAll,cls,ccSec]);
   // Seniors: drop pupils whose stream does not take this subject (Commerce pupil in a Physics copy list).
   const ccRoster=useMemo(()=>ccAllSubj?ccRosterAll:ccRosterAll.filter(st=>__takesSubject(cls,ccSec||st.section,subj)),[ccRosterAll,ccAllSubj,cls,ccSec,subj]);
   const ccHidden=ccRosterAll.length-ccRoster.length;
@@ -6688,7 +6713,9 @@ function SyllabusTracker({user,topicsDB,syllabusDB,copyChecksDB,dirDB,studentsDB
   const done=chapters.filter(c=>stOf(c)==="done").length, doing=chapters.filter(c=>stOf(c)==="doing").length;
   const pct=chapters.length?Math.round(done/chapters.length*100):0;
   const overview=isMgr?getTeacherSubjects(user,cls).map(function(sj){var k=safeId(cls+"__"+sj);var chs=(topicsDB.data[k]&&topicsDB.data[k].list)||[];var stt=(syllabusDB.data[k]&&syllabusDB.data[k].status)||{};var d=chs.filter(function(c){var v=stt[c];return (v&&(v.s||v))==="done";}).length;var g=chs.filter(function(c){var v=stt[c];return (v&&(v.s||v))==="doing";}).length;return {subj:sj,total:chs.length,done:d,doing:g,pct:chs.length?Math.round(d/chs.length*100):0};}):[];
-  if(topicsDB.loading||syllabusDB.loading)return<Spinner/>;
+  // copyChecksDB MUST be in this gate. Without it the panel renders with checked={} on a slow phone, shows
+  // "0 of 42", and the first tick writes a one-entry document over yesterday's work — silently.
+  if(topicsDB.loading||syllabusDB.loading||(copyChecksDB&&copyChecksDB.loading))return<Spinner/>;
   const ST={todo:["Not started","var(--c-64)","var(--c-f7)","var(--c-d2)"],doing:["In progress","var(--tx-org2)","var(--bg-amb)","var(--bd-amb)"],done:["Completed","var(--tx-grn2)","var(--bg-grn)","var(--bd-grn)"]};
   const pc=pct>=80?["var(--tx-grn2)","var(--bg-grn)"]:pct>=40?["var(--tx-org2)","var(--bg-amb)"]:["var(--tx-red)","var(--bg-red)"];
   return(
@@ -13269,6 +13296,15 @@ service cloud.firestore {
         && request.resource.data.status == 'pending'
         && request.resource.data.amount is number && request.resource.data.amount > 0
         && request.resource.data.admNo == string(myAdmNo());
+    }
+    // copyChecks is in __BRANCH_SCOPED, so every campus but Greencity reads/writes "<branch>_copyChecks" — a
+    // name that appears in NEITHER list of the per-branch academic block above, so it falls through to the
+    // catch-all deny. The screen would render, show "Copies 0/42" on every chapter, and every tick would fail.
+    // Deliberately narrower than the academic block: NO signedIn()-only read, because parents must never see
+    // whose copies are outstanding.
+    match /{bccc}/{idccc} {
+      allow read, write: if signedIn() && inBranch(bccc) && baseOf(bccc) == 'copyChecks'
+        && isAny(['admin','vp','teacher']);
     }
     // A branch's VP / Principal may READ student records (no fees) — write/import stays Director + Office (above).
     match /{bcd}/{idd} {
