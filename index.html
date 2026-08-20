@@ -6703,6 +6703,49 @@ function SyllabusTracker({user,topicsDB,syllabusDB,copyChecksDB,dirDB,studentsDB
 
   // Load the school's own 2026-27 syllabus for this class+subject. Additive only: a chapter a teacher added
   // by hand is never removed, and re-pressing it is safe because we only append what is missing.
+  // ── One-off re-key of copy-check records ─────────────────────────────────
+  // Records written before 2026-08-19 used the chapter title run through safeId. Each record carries its own
+  // {cls,sec,subj,chapter}, so the correct new id can be recomputed and the ticks moved across.
+  // HONEST LIMIT: where several Hindi chapters collided into ONE record, that record can only be moved to the
+  // chapter it names. The ticks were never stored separately, so the other chapters correctly start empty —
+  // nothing can un-merge data that was merged before it was written.
+  const[rkMsg,setRkMsg]=useState("");
+  const[rkBusy,setRkBusy]=useState(false);
+  const rkLegacy=useMemo(()=>{
+    const out=[];
+    Object.keys((copyChecksDB&&copyChecksDB.data)||{}).forEach(function(id){
+      const d=copyChecksDB.data[id];
+      if(!d||!d.cls||!d.subj||!d.chapter)return;              // cannot re-key what does not say where it belongs
+      const want=__ccKey(d.cls,d.sec||"",d.subj,d.chapter);
+      if(want!==id)out.push({oldId:id,newId:want,d:d});
+    });
+    return out;
+  },[copyChecksDB&&copyChecksDB.data]);
+  const runRekey=async()=>{
+    if(!rkLegacy.length)return;
+    if(!(await window.__confirm({
+      title:"Move "+rkLegacy.length+" copy-check record"+(rkLegacy.length===1?"":"s")+" to the new format?",
+      body:"Ticks already made are carried across. Where several Hindi chapters had been sharing one record, that record moves to the chapter it names and the others start empty — those ticks were never stored separately, so they cannot be separated now.",
+      confirmText:"Move them"})))return;
+    setRkBusy(true);let moved=0,merged=0,failed=0;
+    for(const r of rkLegacy){
+      try{
+        const existing=(copyChecksDB.data||{})[r.newId];
+        if(existing&&existing.checked){
+          // never overwrite newer work — union the two tick maps
+          await copyChecksDB.set(r.newId,Object.assign({},existing,{checked:Object.assign({},r.d.checked||{},existing.checked)}));
+          merged++;
+        }else{
+          await copyChecksDB.set(r.newId,r.d);moved++;
+        }
+        await copyChecksDB.del(r.oldId);
+      }catch(e){failed++;}
+    }
+    logAudit("copychecks-rekey","copyChecks",String(moved+merged),null,null);
+    setRkMsg("✓ Moved "+moved+" record"+(moved===1?"":"s")+(merged?", merged "+merged+" into existing ones":"")+(failed?" · "+failed+" failed":"")+".");
+    setRkBusy(false);
+  };
+
   const pullSchool=async()=>{ setBusy(true); try{
     const m=__mergeChapters(chapters,schoolList);
     const dropped=chapters.length-(m.list.length-m.added);
@@ -6728,6 +6771,18 @@ function SyllabusTracker({user,topicsDB,syllabusDB,copyChecksDB,dirDB,studentsDB
         </div>
         {chapters.length>0&&<div style={{flex:"none",textAlign:"center"}}><div style={{fontSize:30,fontWeight:800,letterSpacing:"-.03em",lineHeight:1}}>{pct}%</div><div style={{fontSize:11,color:"#9fb0c9",marginTop:2}}>complete</div></div>}
       </div>
+
+      {isMgr&&rkLegacy.length>0&&<div style={{background:"var(--bg-amb)",border:"1px solid var(--bd-amb)",borderRadius:8,padding:14}}>
+        <div style={{fontWeight:700,fontSize:13,color:"var(--tx-org2)",marginBottom:2}}>{rkLegacy.length} copy-check record{rkLegacy.length===1?"":"s"} still in the old format</div>
+        <div style={{fontSize:12,color:"var(--ap-ink2)",marginBottom:10,lineHeight:1.55}}>
+          Ticks made before the Hindi chapter fix are stored under the old naming and will not show against their
+          chapters until they are moved. Nothing is lost by waiting, and nothing is lost by doing it now.
+        </div>
+        <button className="ss-press" disabled={rkBusy} onClick={runRekey}
+          style={{background:"var(--btn-pri-bg)",color:"var(--btn-pri-tx)",border:"none",borderRadius:6,padding:"9px 16px",fontWeight:700,fontSize:12.5,cursor:"pointer"}}>
+          {rkBusy?"Moving…":"Move them across"}</button>
+        {rkMsg&&<div style={{marginTop:10,fontSize:12.5,color:rkMsg.indexOf("✓")===0?"var(--tx-grn2)":"var(--tx-red)"}}>{rkMsg}</div>}
+      </div>}
 
       <Card style={{padding:isMob?16:22}}>
         <div className="m1col" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,alignItems:"end"}}>
