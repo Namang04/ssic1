@@ -25,7 +25,7 @@
 <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
 <script type="module">
   import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js";
-  import { getFirestore,initializeFirestore,persistentLocalCache,persistentMultipleTabManager,collection,doc,setDoc,deleteDoc,onSnapshot,getDoc,getDocFromServer,serverTimestamp,runTransaction,updateDoc,arrayUnion,FieldPath,query,where,getDocs } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore.js";
+  import { getFirestore,initializeFirestore,persistentLocalCache,persistentMultipleTabManager,collection,doc,setDoc,deleteDoc,deleteField,onSnapshot,getDoc,getDocFromServer,serverTimestamp,runTransaction,updateDoc,arrayUnion,FieldPath,query,where,getDocs } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore.js";
   import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updatePassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-auth.js";
   import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-functions.js";
   const FBCONFIG={apiKey:"AIzaSyChPpLsxkEc_rXBEcYK6rc-fVcBw0M0dFw",authDomain:"steppingstone-32aaf.firebaseapp.com",projectId:"steppingstone-32aaf",storageBucket:"steppingstone-32aaf.firebasestorage.app",messagingSenderId:"769826230279",appId:"1:769826230279:web:2c7981b0787b7d70859aa2"};
@@ -61,6 +61,7 @@
       throw e;
     }
   };
+  window.__fbDeleteField=deleteField;
   window.__authUpdatePassword=(pwd)=>auth.currentUser?updatePassword(auth.currentUser,pwd):Promise.reject(new Error("Not signed in with secure login."));
   // Create (or fetch uid of) an account WITHOUT disturbing the current session, via a throwaway secondary app.
   window.__authCreateOrGetUid=async(email,pwd)=>{
@@ -13739,7 +13740,20 @@ function AccountsPanel({user,usersDB,studentsDB,dirDB,academicRosterDB,canManage
         </div></div>
         {manageRows.length>300&&<div style={{marginTop:8,fontSize:11.5,color:"var(--tx-org2)"}}>Showing the first 300 of {manageRows.length} — narrow with search or filters to see the rest.</div>}
         <div style={{...INS_CARD,padding:14,marginTop:14,background:"var(--bg-amb)",border:"1px solid var(--bd-amb)"}}>
-          <div style={{...INS_CARD,padding:14,marginTop:14}}>
+          {purgeStats.stored>0&&<div style={{...INS_CARD,padding:14,marginTop:14,background:"var(--bg-red)",border:"1px solid var(--bd-red)"}}>
+          <div style={{fontWeight:700,fontSize:13,color:"var(--tx-red)",marginBottom:2}}>{purgeStats.stored} password{purgeStats.stored===1?" is":"s are"} stored in plain text</div>
+          <div style={{fontSize:12,color:"var(--ap-ink2)",marginBottom:10,lineHeight:1.55}}>
+            Before the secure reset existed, each staff password was written to their record where anyone able to
+            read the users collection could see it. Nothing needs them now — resets go through the server and
+            password changes no longer keep a copy.
+            {purgeStats.risky.length>0&&<> <b>{purgeStats.risky.length} of them have no secure login yet</b>, so clearing would lock those people out until you give them one.</>}
+          </div>
+          <button className="ss-press" disabled={purgeBusy} onClick={handlePurgePasswords}
+            style={{background:"var(--tx-red)",color:"#fff",border:"none",borderRadius:6,padding:"9px 16px",fontWeight:700,fontSize:12.5,cursor:"pointer"}}>
+            {purgeBusy?"Clearing…":"Clear stored passwords"}</button>
+          {purgeMsg&&<div style={{marginTop:10,fontSize:12.5,color:purgeMsg.indexOf("✓")===0?"var(--tx-grn2)":"var(--ap-ink2)"}}>{purgeMsg}</div>}
+        </div>}
+        <div style={{...INS_CARD,padding:14,marginTop:14}}>
           <div style={{fontWeight:700,fontSize:13,color:"var(--ap-ink)",marginBottom:2}}>Issue a new login</div>
           <div style={{fontSize:12,color:"var(--ap-muted)",marginBottom:10,lineHeight:1.55}}>
             For a teacher who has forgotten their password and needs to <b>work</b> — mark attendance, enter marks.
@@ -14878,6 +14892,42 @@ function AdminPanel({testsDB,studentsDB,usersDB,wrongDB,user,academicRosterDB}){
   const[newLoginPass,setNewLoginPass]=useState("");
   const[newLoginMsg,setNewLoginMsg]=useState("");
   const[newLoginBusy,setNewLoginBusy]=useState(false);
+  // ── Purge stored passwords ────────────────────────────────────────────────
+  // Until the Cloud Function existed, every staff password was written to their user document in plain text —
+  // readable by anyone who could read the users collection. That is no longer needed for anything: resets go
+  // through the Admin SDK and password changes no longer store a copy. This clears the ones already there.
+  // Deliberately NOT automatic: an account that has no secure login yet still signs in by this password, and
+  // clearing it would lock them out. The count of those is shown before anything is removed.
+  const[purgeMsg,setPurgeMsg]=useState("");
+  const[purgeBusy,setPurgeBusy]=useState(false);
+  const purgeStats=useMemo(()=>{
+    let stored=0,risky=[];
+    Object.keys(allUsers||{}).forEach(function(u){
+      const d=allUsers[u];
+      if(d&&d.password!==undefined&&d.password!==""){
+        stored++;
+        if(!_secureUsers[u])risky.push(u);   // no Firebase login → this password is their ONLY way in
+      }
+    });
+    return{stored,risky};
+  },[allUsers,_secureUsers]);
+  const handlePurgePasswords=async()=>{
+    if(!purgeStats.stored){setPurgeMsg("No stored passwords to clear.");return;}
+    const body=purgeStats.risky.length
+      ? purgeStats.risky.length+" of these accounts have NO secure login, so this password is the only way they can sign in: "+purgeStats.risky.slice(0,6).join(", ")+(purgeStats.risky.length>6?" and others":"")+". They will be locked out until you give them a login. Clear anyway?"
+      : "Every one of these accounts has a secure login, so nothing is lost. Clear "+purgeStats.stored+" stored password"+(purgeStats.stored===1?"":"s")+"?";
+    if(!(await window.__confirm({title:"Clear stored passwords?",body:body,confirmText:"Clear",danger:true})))return;
+    setPurgeBusy(true);let done=0,failed=0;
+    for(const u of Object.keys(allUsers||{})){
+      const d=allUsers[u];
+      if(!d||d.password===undefined||d.password==="")continue;
+      try{const{password:_drop,...rest}=d;await usersDB.set(u,rest);done++;}catch(e){failed++;}
+    }
+    logAudit("purge-stored-passwords","users",String(done),null,null);
+    setPurgeMsg("✓ Cleared "+done+" stored password"+(done===1?"":"s")+(failed?" · "+failed+" could not be cleared":"")+".");
+    setPurgeBusy(false);
+  };
+
   const handleIssueNewLogin=async()=>{
     const from=String(newLoginFor||"").trim(), to=String(newLoginUser||"").trim().toLowerCase();
     if(!from||!to||!newLoginPass){setNewLoginMsg("Fill all three fields.");return;}
@@ -19900,7 +19950,12 @@ function ChangePassword({user,onBack}){
           // pwdTemp MUST be cleared here. It was being carried straight through by the `...user` spread, so a
           // parent who had already set their own password kept seeing "Please change your password" forever —
           // and the printed login sheet kept claiming their password was still the child's date of birth.
-          ...user, password:newP, pwdTemp:false
+          // Do NOT store the password. It used to be written here in plain text, readable by anyone with
+          // access to the users collection — and it was only ever needed for the legacy sign-in path that the
+          // Cloud Function has now replaced. Firebase already holds the real password. This is a whole-document
+          // write, so simply OMITTING the key drops any copy left over from before: changing your password now
+          // also cleans up your own record.
+          ...(function(){const{password:_drop,...rest}=user;return rest;})(), pwdTemp:false
         });}catch(e2){/* legacy sync is best-effort — the Auth password above is what login checks */}}
         try{if(user)user.pwdTemp=false;}catch(e3){}   // hide the nudge immediately, without waiting for a re-login
         setMsg("✓ Password changed successfully! Use your new password next time you log in.");
