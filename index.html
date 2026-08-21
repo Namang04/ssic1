@@ -6718,6 +6718,9 @@ function SyllabusTracker({user,topicsDB,syllabusDB,copyChecksDB,dirDB,studentsDB
   // "9 of 14 completed" was whichever teacher touched it last, hiding a section running three chapters behind
   // — which is the entire reason the tracker exists.
   const key=`${cls}__${subj}`;                       // chapter list (topics)
+  // MUST be declared before progKey reads it. A const read above its declaration sits in the temporal
+  // dead zone and throws ReferenceError, which blanked the whole Copies screen in production.
+  const[ccSec,setCcSec]=useState("");
   const progKey=ccSec?`${cls}__${ccSec}__${subj}`:key; // status (syllabus), per section
   const chapters=(topicsDB.data[safeId(key)]&&topicsDB.data[safeId(key)].list)||[];
   const ncertList=(typeof NCERT_SYLLABUS!=="undefined"&&NCERT_SYLLABUS[cls+"|"+subj])||[];
@@ -6733,7 +6736,6 @@ function SyllabusTracker({user,topicsDB,syllabusDB,copyChecksDB,dirDB,studentsDB
   const removeCh=async(ch)=>{ if(!(await window.__confirm({title:"Remove chapter?",body:'"'+ch+'" will be removed from this subject’s chapter list.',confirmText:"Remove",danger:true})))return; try{await topicsDB.set(key,{key,list:chapters.filter(x=>x!==ch)}); if(status[ch]!==undefined){const ns=Object.assign({},status);delete ns[ch];await syllabusDB.set(progKey,{cls,sec:ccSec||"",subj,status:ns,by:user.name,updatedAt:new Date().toISOString()});} }catch(e){window.__toast&&window.__toast("Could not remove — "+((e&&e.message)||"try again"),"err");} };
   const pullNCERT=async()=>{ setBusy(true); try{ if(!ncertList.length){window.__toast&&window.__toast("No NCERT chapter list for "+cls+" · "+subj+" — add chapters manually below.","err");} else { var m=__mergeChapters(chapters,ncertList); var dropped=chapters.length-(m.list.length-m.added); if(!m.added&&!dropped){window.__toast&&window.__toast("All NCERT chapters already added.","ok");} else { await topicsDB.set(key,{key,list:m.list}); window.__toast&&window.__toast("Added "+m.added+" NCERT chapter"+(m.added===1?"":"s")+(dropped?" and removed "+dropped+" duplicate"+(dropped===1?"":"s"):"")+".","ok"); } } }catch(e){window.__toast&&window.__toast("Could not pre-fill — "+((e&&e.message)||"try again"),"err");} setBusy(false); };
   // ── copy checking: which section's copies we are ticking off, and that section's roster ──
-  const[ccSec,setCcSec]=useState("");
   const[ccOpen,setCcOpen]=useState("");
   const ccAll=useMemo(()=>rosterForCls(dirDB,studentsDB,cls,academicRosterDB)||[],[dirDB&&dirDB.data,studentsDB&&studentsDB.data,academicRosterDB&&academicRosterDB.data,cls]);
   // Classes 11-12 hold the STREAM in the directory ("PCM", "COMM(COMP)") while everything else keys on the
