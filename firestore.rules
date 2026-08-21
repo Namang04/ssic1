@@ -1,0 +1,380 @@
+rules_version = '2';
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Stepping Stone ERP — HARDENED Firestore security rules
+//  Firebase project: steppingstone-32aaf
+//  Roles (authoritative source = accounts/{uid}.role): admin, office, vp,
+//  teacher, parent, student, disabled.
+//
+//  WHAT CHANGED vs the in-app FIRESTORE_RULES template
+//  ───────────────────────────────────────────────────
+//  (1) studentDirectory — was readable by ANY signed-in user (full PII: Aadhaar,
+//      DOB, address, phones). Now READ + WRITE are restricted to admin + office.
+//      Teachers/VP read the PII-free 'academicRoster' instead (still broadly
+//      readable below).
+//  (2) portalFees — was readable by ANY signed-in user and keyed by a guessable
+//      admission number, so any student/parent could enumerate every family's
+//      balance. Now a parent/student may read ONLY the doc whose id matches their
+//      own accounts/{uid}.admNo; admin + office still read/write all.
+//  (3) users — was world-readable (to every signed-in user) and may still hold a
+//      plaintext 'password' field. Now a user reads ONLY their own users doc;
+//      admin + office may read any. NOTE: Firestore rules cannot hide a single
+//      field — the 'password' field MUST be purged from every users doc, because
+//      anyone allowed to read the doc reads the WHOLE doc including 'password'.
+//  (4) auditLogs — NEW append-only collection. admin/office may CREATE entries;
+//      NO update and NO delete from any client, so the trail is immutable.
+//  (5) Self-promotion block retained on accounts (write = admin only) and on
+//      users (a non-admin/office editor may not change the 'role' field).
+//  (6) Final catch-all deny retained: anything not matched above is locked.
+//
+//  Helpers: role() reads accounts/{uid}.role; isAny(list) is true when the
+//  caller is signed in AND their role is in 'list'.
+// ════════════════════════════════════════════════════════════════════════════
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+    function signedIn() { return request.auth != null; }
+    // Authoritative role lookup. Wrapped so a missing accounts doc => null role
+    // (which is never 'in' any allow-list, so access is denied by default).
+    function role() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/accounts/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/accounts/$(request.auth.uid)).data.role
+        : null;
+    }
+    function isAny(roles) { return signedIn() && (role() in roles); }
+    // The caller's own admission number from their account doc (null if none).
+    function myAdmNo() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/accounts/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/accounts/$(request.auth.uid)).data.get('admNo', null)
+        : null;
+    }
+    // The caller's own users-doc id. users docs are keyed by safeId(username) =
+    // username with every non-alphanumeric char replaced by '_'. The auth token
+    // carries only a synthetic email, so we read username from accounts/{uid} and
+    // apply the same transform to find "their own" profile doc id.
+    function myUserDocId() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/accounts/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/accounts/$(request.auth.uid))
+            .data.get('username', '').replace('[^a-zA-Z0-9]', '_')
+        : '';
+    }
+    // True when id is the caller's OWN profile doc or their own prog_<username>
+    // practice-progress doc — the only two users-collection ids a non-admin may touch.
+    function ownsUserDoc(id) {
+      return id != '' && (id == myUserDocId() || id == 'prog_' + myUserDocId());
+    }
+    // Greencity is the LIVE, UNPREFIXED branch. Its money/PII collections below check only ROLE, so without this
+    // guard a signed-in OFFICE / STAFF / PARENT account belonging to ANOTHER branch would reach Greencity's money
+    // and PII. The Director (admin) reaches every branch; everyone else must have 'greencity' (or 'all') in their
+    // branches. Default ['greencity'] keeps every existing Greencity account (which may predate the branches field).
+    function inGreencity() {
+      return role() == 'admin'
+        || (signedIn() && exists(/databases/$(database)/documents/accounts/$(request.auth.uid))
+            && get(/databases/$(database)/documents/accounts/$(request.auth.uid)).data.get('branches', ['greencity']).hasAny(['greencity','all']));
+    }
+
+    // ── Authoritative roles ────────────────────────────────────────────────
+    // accounts/{uid}.role is the rules-authoritative role. Readable by any
+    // signed-in user (the app reads its own role on login), but WRITABLE only by
+    // admin — this blocks self-promotion (a teacher cannot edit their own role
+    // to 'admin'), written during the one-time migration and by user management.
+    match /accounts/{id} {
+      // accounts holds username/role/name/email/admNo (+ a parent's child name/class). Staff need the full list;
+      // a family member reads ONLY their own account doc (keyed by uid) — no cross-branch enumeration of everyone.
+      allow read: if isAny(['admin','office','vp']) || (signedIn() && id == request.auth.uid);
+      // Director manages all. The VP may CREATE new (non-admin) logins only — not edit, disable or delete existing accounts.
+      allow create: if isAny(['admin']) || (isAny(['vp']) && request.resource.data.get('role','teacher') in ['teacher','office','student','parent']);
+      allow update, delete: if isAny(['admin']);
+    }
+
+    // ── Money — Director + Office only, and only within Greencity ────────────
+    // Cash ledger is tamper-EVIDENT: office may create receipts and update non-amount fields (idempotent
+    // re-imports, note/mode fixes, the __structure/__waivers config docs which carry no 'amount'), but
+    // CHANGING an amount or DELETING a receipt is Director-only. This closes the cashier cash-theft window.
+    match /fees/{id} {
+      allow read:   if isAny(['admin','office']) && inGreencity();
+      allow create: if isAny(['admin','office']) && inGreencity();
+      allow update: if inGreencity() && (isAny(['admin'])
+        || (isAny(['office']) && request.resource.data.get('amount', 0) == resource.data.get('amount', 0)));
+      allow delete: if isAny(['admin']) && inGreencity();
+    }
+
+    // Staff monthly salary (base pay per staff + payroll settings). Sensitive — Director + Office ONLY (hidden from teachers/VP).
+    match /salaries/{id} { allow read, write: if isAny(['admin','office']) && inGreencity(); }
+
+    // Monotonic counters (e.g. counters/feeReceipts) — allocated atomically in a transaction during fee
+    // collection so two simultaneous saves can't mint the same receipt number. Director + Office only.
+    match /counters/{id} { allow read, write: if isAny(['admin','office']) && inGreencity(); }
+
+    // (2) Fee summary published to the student/parent portal — portalFees/<admNo>.
+    // admin/office read & write everything. A parent/student may read ONLY the
+    // doc whose id equals their own accounts/{uid}.admNo (stringified), so they
+    // cannot enumerate other families' balances by guessing admission numbers.
+    // Parents/students never write.
+    match /portalFees/{id} {
+      allow read: if inGreencity() && (isAny(['admin','office'])
+        || (isAny(['parent','student']) && id == string(myAdmNo())));
+      allow write: if isAny(['admin','office']) && inGreencity();
+    }
+
+    // New-admission welcome slips — Director + Office only
+    match /admissions/{id} { allow read, write: if isAny(['admin','office']) && inGreencity(); }
+
+    // Discipline incidents (per-student behaviour log) — all staff read; admin/VP/teacher log them.
+    // Discipline cases are evidentiary — staff create/update (incl. the {deleted:true} soft-delete flag), only the Director hard-deletes.
+    match /discipline/{id} { allow read: if isAny(['admin','vp','office','teacher']); allow create, update: if isAny(['admin','vp','office','teacher']); allow delete: if isAny(['admin']); }
+    // Parent complaints / grievances — Director + VP + Office.
+    match /complaints/{id} { allow read, write: if isAny(['admin','vp','office']); }
+
+    // Term-exam marks & report cards — only markers write.
+    // READ also allows parent/student so the portal can show EXAM results next to class tests (it previously
+    // showed class tests only, because the tests collection is signedIn()-readable and this one was not).
+    // Same posture the app already uses for tests/attendance; the portal renders only the child's own marks.
+    match /exams/{id} {
+      allow read: if signedIn();
+      // Office does post-exam mark corrections after teachers — same write access as a marker.
+      allow write: if isAny(['admin','vp','teacher','office']);
+    }
+
+    // ── (1) Student records (FULL PII) — admin + office ONLY ──────────────────
+    // studentDirectory holds Aadhaar, DOB, address, phones, parent contacts, etc.
+    // Previously any signed-in user could read it. Now READ and WRITE are limited
+    // to admin + office. Teachers/VP must use academicRoster (no PII) below.
+    // VP / Principal may READ student records (full directory, no fees); only Director + Office can write/import.
+    match /studentDirectory/{id} { allow read: if isAny(['admin','vp','office']) && inGreencity(); allow write: if isAny(['admin','office']) && inGreencity(); }
+
+    // Academic data — any signed-in user reads; only staff write
+    match /tests/{id}             { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
+    match /topics/{id}            { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
+    match /syllabus/{id}          { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
+    // Copy checking: staff only. Deliberately NOT signedIn() on read - parents must not see which pupils'
+    // copies are outstanding, so this is narrower than the syllabus rule directly above.
+    match /copyChecks/{id}        { allow read, write: if isAny(['admin','vp','teacher']); }
+    match /attendance/{id}        { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
+    match /students/{id}          { allow read: if signedIn(); allow write: if isAny(['admin','vp','office','teacher']); }
+
+    // Student photos — one small JPEG per admission no. All staff may upload; any signed-in user reads.
+    match /studentPhotos/{id}     { allow read: if signedIn(); allow write: if isAny(['admin','vp','office','teacher']); }
+    // Sign-in helper: maps a parent's mobile -> the children linked to it, so a parent with more than one child
+    // can pick which child BEFORE typing that child's date of birth. Read is necessarily public (the parent is
+    // not signed in yet), so each entry carries the MINIMUM to recognise a child: first name + class only —
+    // no surname, no admission number, no phone, no date of birth.
+    // get is allowed (you must already know the full mobile number, which is the document id) but list is
+    // DENIED, so the collection cannot be enumerated to harvest families.
+    match /parentLookup/{id}      { allow get: if true; allow list: if false; allow write: if isAny(['admin','vp','office']); }
+
+    // Academic roster (admission no. + name + section + parent phone) — all staff read; Director/Office sync it.
+    // Deliberately broadly readable: this is the PII-free roster teachers/VP use instead of studentDirectory.
+    // Parent phone is included so class teachers can Call/WhatsApp absentees; Aadhaar/address are NOT here.
+    match /academicRoster/{id}    { allow read: if signedIn(); allow write: if isAny(['admin','vp','office']); }
+
+    // Test-name → admission-no. links for legacy marks — staff read; markers write
+    match /studentLinks/{id}      { allow read: if signedIn(); allow write: if isAny(['admin','vp','office','teacher']); }
+
+    // App config (current session etc.) — everyone signed-in reads; director/VP writes
+    match /meta/{id}              { allow read: if signedIn(); allow write: if isAny(['admin','vp']); }
+
+    // Pre-admission registration enquiries — office, VP & admin
+    match /registrations/{id}     { allow read, write: if isAny(['admin','vp','office']) && inGreencity(); }
+
+    // Online UPI payment claims: a signed-in parent submits their own (create only, can't read others);
+    // office/admin read the queue and confirm/reject. A claim is just a CLAIM — no money moves until the
+    // office verifies the credit and records the receipt, so a spoofed admNo achieves nothing.
+    match /paymentIntents/{id} {
+      allow read:           if isAny(['admin','office']) && inGreencity();
+      allow create:         if signedIn() && inGreencity()
+                              && request.resource.data.status == 'pending'
+                              && request.resource.data.admNo is string
+                              && request.resource.data.amount is number && request.resource.data.amount > 0
+                              && (isAny(['admin','office']) || request.resource.data.admNo == string(myAdmNo()));
+      allow update, delete: if isAny(['admin','office']) && inGreencity();
+    }
+
+    match /timetables/{id}        { allow read: if signedIn(); allow write: if isAny(['admin','vp']); }
+    match /timetableSettings/{id} { allow read: if signedIn(); allow write: if isAny(['admin','vp']); }
+    match /notices/{id} {
+      allow read: if signedIn();
+      allow create, delete: if isAny(['admin','vp','office']);
+      // Staff post/edit/delete; TEACHERS/PARENTS/STUDENTS may only acknowledge — an update touching nothing but readBy/ackAt.
+      allow update: if isAny(['admin','vp','office'])
+        || (isAny(['teacher','office','parent','student']) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readBy','ackAt']));
+    }
+    match /calendar/{id}          { allow read: if signedIn(); allow write: if isAny(['admin','vp']); }
+    match /lessonPlans/{id}       { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
+    match /teacherLogs/{id}       { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
+    match /leaves/{id}            { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
+    match /conceptNotes/{id}      { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
+    // Staff attendance. A SELF check-in must carry serverAt == request.time (the real server clock), so a teacher
+    // can't forge an on-time mark by changing their phone — even by hand. Office/director/biometric writes are exempt.
+    match /staffAttendance/{id}   { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher','office']) && (!('source' in request.resource.data) || request.resource.data.source != 'self' || request.resource.data.serverAt == request.time); }
+
+    // Practice mistakes — students log their own; staff manage
+    match /wrongAnswers/{id} {
+      allow read: if signedIn();
+      allow create: if signedIn();
+      allow update, delete: if isAny(['admin','vp','teacher']);
+    }
+
+    // Login history — staff read; any signed-in user adds their own entry
+    match /loginLogs/{id} {
+      allow read: if isAny(['admin','vp']);
+      allow create: if signedIn();
+    }
+
+    // ── (4) Audit log — APPEND-ONLY / IMMUTABLE ──────────────────────────────
+    // admin/office may CREATE an audit entry. No update and no delete are ever
+    // allowed from any client, so the trail cannot be tampered with or erased.
+    // (Reads limited to admin/office; tighten further to admin-only if desired.)
+    match /auditLogs/{id} {
+      allow read:   if isAny(['admin','office']);
+      allow create: if isAny(['admin','office']);
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    // ── (3) Profiles — own-doc read; password field MUST be purged ────────────
+    // SECURITY NOTE: Firestore rules grant access to the WHOLE document, never a
+    // subset of fields. Any plaintext 'password' field still present here is
+    // exposed to everyone allowed to read the doc. It MUST be purged from every
+    // users doc — no rule can hide a single field.
+    match /users/{id} {
+      // A user reads ONLY their own profile doc. users docs are keyed by
+      // safeId(username); the authoritative username for this uid lives in
+      // accounts/{uid}.username, so we match the requested id against the
+      // safeId-transformed username. admin/office may read any profile.
+      // EXCEPTION: the two SHARED config docs (__classTeachers map + __subjects list) are
+      // org-wide config, not personal data — every staff member must read them (e.g. a teacher
+      // needs the class-teacher map to know which sections they mark). They're read by a TARGETED
+      // single-doc get. The VP/Principal also lists the collection (the Timetable teacher picker + staff
+      // oversight need the full roster), so 'vp' is included; parents/students/teachers still can't list it.
+      allow read: if isAny(['admin','office','vp'])
+        || ((id.matches('.*__classTeachers') || id.matches('.*__subjects')) && isAny(['admin','office','vp','teacher']))
+        || (signedIn() && ownsUserDoc(id));
+
+      // Director/Office manage all profiles & create users. VP may edit the
+      // shared config docs (subjects list, class-teacher map). Everyone else may
+      // write ONLY their OWN docs: their profile (create or update — e.g. the
+      // one-time "add your phone" prompt) or their own prog_<username> practice
+      // doc, with the role field forced to equal their real account role (blocks
+      // self-promotion AND cross-user overwrites — the old "any existing doc if
+      // role unchanged" clause let any session rewrite any staff profile).
+      allow write: if isAny(['admin','office'])
+        || ((id.matches('.*__subjects') || id.matches('.*__classTeachers')) && isAny(['admin','vp']))
+        || (isAny(['vp']) && !id.matches('.*__subjects') && !id.matches('.*__classTeachers')
+            && resource != null && resource.data.get('role','') == 'teacher'
+            && request.resource.data.get('role','') == 'teacher')
+        || (isAny(['vp']) && !id.matches('.*__subjects') && !id.matches('.*__classTeachers')
+            && resource == null
+            && request.resource.data.get('role','teacher') in ['teacher','office','student','parent'])
+        || (!id.matches('.*__subjects') && !id.matches('.*__classTeachers')
+            && signedIn() && ownsUserDoc(id)
+            && request.resource.data.get('role', role()) == role());
+    }
+
+    // ── (5b) PER-BRANCH DATA — "<branch>_<base>" collections (Phase 2, Option B) ──────────────
+    // Greencity keeps the UNPREFIXED collections above (unchanged). Surajkund / Maniram / All-Girls
+    // live in "<branch>_<base>" collections. A user reaches ONLY their own branch(es); the DIRECTOR
+    // (accounts/{uid}.branches contains 'all') reaches every branch. Base names + branch ids have no
+    // '_', so split('_')[0]=branch and [1]=base. NOTE: parent/student per-branch PORTAL self-scoping
+    // (own portalFees / paymentIntents) is a later refinement — the three new branches start empty and
+    // are onboarded by the director/office first; Greencity's parent rules above are unchanged.
+    function myBranches() {
+      return signedIn() && exists(/databases/$(database)/documents/accounts/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/accounts/$(request.auth.uid)).data.get('branches', ['greencity'])
+        : [];
+    }
+    // The Director is the only 'admin' role (VP is 'vp', office is 'office'), so admin = reaches every branch.
+    // (Not gated on a branches:['all'] flag — that flag may be unset on older Director accounts and would wrongly lock the Director out of the new campuses.)
+    function isDirector() { return role() == 'admin'; }
+    function inBranch(coll) { return isDirector() || myBranches().hasAny([coll.split('_')[0]]); }
+    function baseOf(coll) { return coll.split('_').size() == 2 ? coll.split('_')[1] : ''; }
+
+    // Money + full-PII for a branch — that branch's Director/Office only (Director reaches any branch)
+    match /{bc}/{id} {
+      allow read, write: if signedIn() && inBranch(bc)
+        && (baseOf(bc) in ['studentDirectory','counters','portalFees','salaries','paymentIntents'])
+        && isAny(['admin','office']);
+    }
+    // A branch's cash ledger is tamper-EVIDENT exactly like Greencity's (/fees above): office may create
+    // receipts and fix non-amount fields, but CHANGING an amount or DELETING a receipt is Director-only.
+    match /{bcf}/{idf} {
+      allow read, create: if signedIn() && inBranch(bcf) && baseOf(bcf) == 'fees' && isAny(['admin','office']);
+      allow update: if signedIn() && inBranch(bcf) && baseOf(bcf) == 'fees' && (isAny(['admin'])
+        || (isAny(['office']) && request.resource.data.get('amount', 0) == resource.data.get('amount', 0)));
+      allow delete: if signedIn() && inBranch(bcf) && baseOf(bcf) == 'fees' && isAny(['admin']);
+    }
+    // A branch parent/student reads ONLY their own portalFees doc and may file ONLY their own UPI
+    // payment intent (mirrors the unprefixed Greencity rules — without this, branch parents see nothing).
+    match /{bcp}/{idp} {
+      allow read: if signedIn() && inBranch(bcp) && baseOf(bcp) == 'portalFees'
+        && isAny(['parent','student']) && idp == string(myAdmNo());
+    }
+    match /{bcpi}/{idpi} {
+      allow create: if signedIn() && inBranch(bcpi) && baseOf(bcpi) == 'paymentIntents'
+        && isAny(['parent','student'])
+        && request.resource.data.status == 'pending'
+        && request.resource.data.amount is number && request.resource.data.amount > 0
+        && request.resource.data.admNo == string(myAdmNo());
+    }
+    // copyChecks is in __BRANCH_SCOPED, so every campus but Greencity reads/writes "<branch>_copyChecks" — a
+    // name that appears in NEITHER list of the per-branch academic block above, so it falls through to the
+    // catch-all deny. The screen would render, show "Copies 0/42" on every chapter, and every tick would fail.
+    // Deliberately narrower than the academic block: NO signedIn()-only read, because parents must never see
+    // whose copies are outstanding.
+    match /{bccc}/{idccc} {
+      allow read, write: if signedIn() && inBranch(bccc) && baseOf(bccc) == 'copyChecks'
+        && isAny(['admin','vp','teacher']);
+    }
+    // A branch's VP / Principal may READ student records (no fees) — write/import stays Director + Office (above).
+    match /{bcd}/{idd} {
+      allow read: if signedIn() && inBranch(bcd) && baseOf(bcd) == 'studentDirectory' && isAny(['admin','vp','office']);
+    }
+    // Academic / operational / workflow for a branch — that branch's staff read; appropriate roles write
+    match /{bc2}/{id2} {
+      allow read: if signedIn() && inBranch(bc2)
+        && ((baseOf(bc2) in ['students','academicRoster','attendance','tests','topics','syllabus','studentLinks','studentPhotos','timetables','timetableSettings','notices','lessonPlans','teacherLogs','leaves','wrongAnswers'])
+          || ((baseOf(bc2) in ['exams','discipline','complaints','registrations','admissions']) && isAny(['admin','vp','office','teacher'])));
+      allow write: if signedIn() && inBranch(bc2)
+        && (baseOf(bc2) in ['students','academicRoster','attendance','exams','tests','topics','syllabus','studentLinks','studentPhotos','timetables','timetableSettings','notices','lessonPlans','teacherLogs','leaves','complaints','registrations','admissions'])
+        && isAny(['admin','vp','office','teacher']);
+    }
+    // Branch discipline cases are evidentiary: staff create/update (incl. the {deleted:true} soft-delete flag);
+    // hard delete is Director-only. Reads stay staff-gated via the academic block above.
+    match /{bcdc}/{iddc} {
+      allow create, update: if signedIn() && inBranch(bcdc) && baseOf(bcdc) == 'discipline' && isAny(['admin','vp','office','teacher']);
+      allow delete: if signedIn() && inBranch(bcdc) && baseOf(bcdc) == 'discipline' && isAny(['admin']);
+    }
+    // A branch parent/student may only ACKNOWLEDGE a notice — an update touching nothing but readBy/ackAt
+    // (mirrors the unprefixed /notices rule; staff writes are covered by the academic block above).
+    match /{bcn}/{idn} {
+      allow update: if signedIn() && inBranch(bcn) && baseOf(bcn) == 'notices' && isAny(['parent','student'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readBy','ackAt']);
+    }
+    // Per-branch staff attendance — same server-time anti-spoof guard as Greencity (a SELF check-in must carry serverAt==request.time).
+    match /{bcsa}/{idsa} {
+      allow read: if signedIn() && inBranch(bcsa) && baseOf(bcsa) == 'staffAttendance';
+      allow write: if signedIn() && inBranch(bcsa) && baseOf(bcsa) == 'staffAttendance' && isAny(['admin','vp','teacher','office'])
+        && (!('source' in request.resource.data) || request.resource.data.source != 'self' || request.resource.data.serverAt == request.time);
+    }
+    // Per-branch practice mistakes — any signed-in branch user (incl. students) creates their own; staff manage.
+    match /{bcw}/{idw} {
+      allow read: if signedIn() && inBranch(bcw) && baseOf(bcw) == 'wrongAnswers';
+      allow create: if signedIn() && inBranch(bcw) && baseOf(bcw) == 'wrongAnswers';
+      allow update, delete: if signedIn() && inBranch(bcw) && baseOf(bcw) == 'wrongAnswers' && isAny(['admin','vp','teacher']);
+    }
+
+    // Academic calendar (per branch) — that branch's staff read; only Director/Principal/VP write.
+    match /{bc3}/{id3} {
+      allow read:  if signedIn() && inBranch(bc3) && baseOf(bc3) == 'calendar';
+      allow write: if signedIn() && inBranch(bc3) && baseOf(bc3) == 'calendar' && isAny(['admin','vp']);
+    }
+
+    // ── (6) Everything else: locked ──────────────────────────────────────────
+    match /{document=**} { allow read, write: if false; }
+  }
+}

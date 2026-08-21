@@ -15182,7 +15182,13 @@ function AdminPanel({testsDB,studentsDB,usersDB,wrongDB,user,academicRosterDB}){
       setNewPass("");setTimeout(()=>setResetMsg(""),6000);
       return;
     }
-    await usersDB.set(resetUser,{...existing,password:newPass,pwdTemp:true,loginOff:false});
+    // The secure reset is deployed. If it could not be reached, refuse rather than silently fall back to a
+    // plaintext recovery password that cannot save anything anyway — a teacher told "done" who then cannot
+    // mark a register is worse than a teacher told to try again.
+    setResetMsg("Could not reach the secure reset just now. Please try again in a moment — nothing has been changed.");
+    return;
+    /* eslint-disable-next-line no-unreachable */
+    await usersDB.set(resetUser,{...existing,pwdTemp:true,loginOff:false});
     logAudit("password-reset","users",resetUser,null,null); // never log the password itself
     setResetMsg(wasSecure
       ? "⚠ Recovery password set for \""+resetUser+"\" — they can SIGN IN and LOOK, but cannot SAVE anything (attendance, marks) because a recovery sign-in has no secure session. Use it only to get them back in temporarily. Their old password also still works. For a teacher who must enter marks, issue a NEW login instead."
@@ -15539,9 +15545,15 @@ function AccountSettings({user,usersDB,onUpdate}){
     if(newPass&&newPass.length<6){setErr("Password must be 6+ characters.");return;}
     // Update the secure (Firebase Auth) password when signed in securely; keep legacy copy in sync for the transition.
     if(newPass){try{await window.__authUpdatePassword(newPass);}catch(e){if(e&&e.code==="auth/requires-recent-login"){setErr("Please sign out and back in, then change your password.");return;}}}
-    const updated={...stored,name:name||stored.name,password:newPass||stored.password};
-    try{await usersDB.set(user.username,updated);}catch(e){}
-    onUpdate({...user,name:updated.name,password:updated.password});
+    // Never store the password. Firebase Auth holds it; this document is readable by anyone who can read the
+    // users collection. The old line kept a "legacy copy in sync", which is exactly the exposure the secure
+    // reset was built to remove — and because this is a whole-document write, dropping the key also clears any
+    // copy left from before.
+    const{password:_dropPw,...restStored}=stored;
+    const updated={...restStored,name:name||stored.name};
+    try{await usersDB.set(user.username,updated);}
+    catch(e){setErr("Could not save — "+((e&&e.message)||"try again"));return;}
+    onUpdate({...user,name:updated.name,password:undefined});
     setSaved(true);setNewPass("");setConfirmPass("");setCurrentPass("");
     setTimeout(()=>setSaved(false),3000);
   };
@@ -19563,6 +19575,19 @@ function App(){
   window.__SESSION=curSession; /* publish for cross-block labels — REG/ prefix + print headers read it */
   // ── Per-session view: fees/attendance/marks are tagged with a session; the director can switch which
   // session's data they're looking at. Untagged (legacy) docs belong to the founding session 2026–27.
+  // The installed app's shortcuts (manifest.json) open "/?src=app&go=attendance" and the like. Nothing read
+  // that parameter, so all three landed on Home — a promise the app did not keep. Honour it once, after the
+  // profile is known, and only for a tab this user's role can actually open.
+  useEffect(()=>{
+    if(!user)return;
+    var go="";
+    try{go=new URLSearchParams(window.location.search).get("go")||"";}catch(e){}
+    if(!go)return;
+    try{window.history.replaceState({},"",window.location.pathname);}catch(e){}   // so a refresh does not re-jump
+    var allowed={attendance:!isParent&&!isStudent,enter:isTeacher||isAdmin||isVP,fees:canFees};
+    if(allowed[go])setTab(go);
+  },[user&&user.username]);
+
   const[viewSession,setViewSession]=useState(null);
   const vSess=viewSession||curSession;
   const allSessions=useMemo(function(){var s={};s[curSession]=1;[feesDBraw,testsDBraw,attendanceDBraw,examsDBraw].forEach(function(db){Object.keys(db.data||{}).forEach(function(k){var d=db.data[k];if(d&&d.session)s[d.session]=1;});});return Object.keys(s).sort();},[curSession,feesDBraw.data,testsDBraw.data,attendanceDBraw.data,examsDBraw.data]);
