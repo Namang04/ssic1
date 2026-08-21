@@ -2077,6 +2077,11 @@ const ALL_CLASSES=new Proxy([],{get:function(_t,p){var a=SCHOOL.classes||[];var 
 // and is called once per student inside the fee loops — caching makes 860 calls one compute + cache hits.
 let __tdCache="",__tdMin=-1;
 const today=()=>{const m=(Date.now()/60000)|0;if(m===__tdMin&&__tdCache)return __tdCache;__tdMin=m;__tdCache=new Date().toLocaleDateString("en-CA",{timeZone:"Asia/Kolkata"});return __tdCache;};
+// Same value as today(), under a name that cannot be shadowed. Many components declare their own local
+// `today` (a viewed date, a filter), so screens that need the REAL school day were reaching for
+// new Date().toISOString() instead — which is UTC, and before 05:30 IST returns YESTERDAY. Teachers were
+// filing daily logs and leave against the wrong day.
+function todayIST(){return today();}
 const fmtDate=d=>{if(!d)return"-";const p=d.split("-");return p[2]+"/"+p[1]+"/"+p[0];};
 const fmtTime=iso=>{if(!iso)return"";const d=new Date(iso);return d.toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"});};
 
@@ -17560,7 +17565,7 @@ function MyDailyLog({user,tlStyle}){
     : assigned.filter(a=>a.cls===cls).map(a=>a.section);
   const assignedSubjects = (user.subjects&&user.subjects.length>0)
     ? user.subjects.map(s=>(s==='English Language'||s==='English Literature')?'English':s) : TL_SUBJECTS;
-  const today=new Date().toISOString().split("T")[0];
+  const today=todayIST();   // was UTC: before 05:30 IST this returned YESTERDAY
   const[date,setDate]=useState(today);
   const[subject,setSubject]=useState(()=>{const s=user.subjects&&user.subjects.length>0?user.subjects[0]:null;return s&&s!=='English Language'&&s!=='English Literature'?s:(s?'English':TL_SUBJECTS[0]);});
   // Re-sync subject when Firebase user data loads
@@ -17734,7 +17739,7 @@ function LessonPlanForm({user,tlStyle}){
   const lpClassList = lpCanViewAll ? Object.keys(TL_CLASSES) : [...new Set(lpAssigned.map(a=>a.cls))];
   const lpAssignedSections = (cls) => lpCanViewAll ? (TL_CLASSES[cls]||["A"]) : lpAssigned.filter(a=>a.cls===cls).map(a=>a.section);
   const lpSubjects = (user.subjects&&user.subjects.length>0) ? user.subjects.map(s=>(s==='English Language'||s==='English Literature')?'English':s) : TL_SUBJECTS;
-  const today=new Date().toISOString().split("T")[0];
+  const today=todayIST();   // was UTC: before 05:30 IST this returned YESTERDAY
   const[form,setForm]=useState(()=>{const raw=(user.assignedClasses&&user.assignedClasses[0]);const a=raw?(typeof raw==="string"?{cls:raw.split("-")[0],section:raw.split("-").slice(1).join("-")}:raw):null;const s=user.subjects&&user.subjects[0];return {subject:s||TL_SUBJECTS[0],cls:a?a.cls:"10",section:a?a.section:"A",chapno:"",topic:"",periods:"",dateFrom:today,dateTo:"",aids:"",objectives:"",method:"",assignments:"",other:""};});
   const[saving,setSaving]=useState(false);
   const[msg,setMsg]=useState("");
@@ -17955,7 +17960,7 @@ function LPCard({lp, user}){
 
 // ─── Class Log View ──────────────────────────────────────
 function ClassLogView({user,tlStyle,isAdmin}){
-  const today=new Date().toISOString().split("T")[0];
+  const today=todayIST();   // was UTC: before 05:30 IST this returned YESTERDAY
   const[date,setDate]=useState(today);
   const[filterCls,setFilterCls]=useState("");
   const[filterSec,setFilterSec]=useState("");
@@ -22109,7 +22114,7 @@ function LeavePanel(props){
         <div className="ap-hisub">{isOffice?"Approved staff leave — view only.":isAdmin?"Review and track staff leave requests.":"Apply for leave and track your requests."}</div>
       </div>
       {isAdmin&&(function(){
-        var todayStr=new Date().toISOString().split("T")[0];
+        var todayStr=todayIST();  // was UTC: before 05:30 IST this returned YESTERDAY
         var arr=Object.values(leaveDB.data||{}).filter(Boolean);
         var pending=arr.filter(function(l){return l.status==="pending";}).length;
         var onLeave=arr.filter(function(l){return l.status==="approved"&&l.from<=todayStr&&l.to>=todayStr;});
@@ -22141,7 +22146,7 @@ function LeavePanel(props){
 
 function LeaveApply(props){
   var user=props.user; var leaveDB=props.leaveDB;
-  var td=new Date().toISOString().split("T")[0];
+  var td=todayIST();        // was UTC: before 05:30 IST this returned YESTERDAY
   var s1=useState(td); var from=s1[0]; var setFrom=s1[1];
   var s2=useState(td); var to=s2[0]; var setTo=s2[1];
   var s3=useState("Sick Leave"); var type=s3[0]; var setType=s3[1];
@@ -22745,7 +22750,7 @@ function LeaveCalendar(props){
   function pad(n){return (n<10?"0":"")+n;}
   function ds(d){return year+"-"+pad(month+1)+"-"+pad(d);}
   function leavesOn(dStr){return approved.filter(function(l){return String(l.from||"")<=dStr&&String(l.to||"")>=dStr;});}
-  var todayStr=new Date().toISOString().split("T")[0];
+  var todayStr=todayIST();  // was UTC: before 05:30 IST this returned YESTERDAY
   var DOW=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
   var cells=[];
   for(var i=0;i<lead;i++)cells.push({empty:true,k:"e"+i});
@@ -23416,7 +23421,7 @@ function NoticeBoardView(props) {
   var fl=useState("all"); var filt=fl[0]; var setFilt=fl[1];
   var ar=useState(false); var arOpen=ar[0]; var setArOpen=ar[1];
   if (noticesDB.loading) return <SkeletonRows n={4}/>;
-  var today=new Date().toISOString().slice(0,10);
+  var today=todayIST();     // was UTC: before 05:30 IST this returned YESTERDAY
   var me={username:user.username,name:user.name};
 
   function markRead(n){
