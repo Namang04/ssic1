@@ -4980,6 +4980,7 @@ function Dashboard({user,testsDB,studentsDB,attendanceDB,academicRosterDB,dirDB,
   useEffect(()=>{const id=setInterval(()=>_bumpTick(t=>t+1),30000);return()=>clearInterval(id);},[]);
   const _nowMin=(()=>{const d=new Date();return d.getHours()*60+d.getMinutes();})();
   const _toMin=(t)=>{const m=String(t||"").match(/(\d{1,2}):(\d{2})/);if(!m)return null;return (+m[1])*60+(+m[2]);};
+  const[perOpen,setPerOpen]=useState(-1);   // which period row is expanded into its action card
   const timeline=useMemo(()=>{
     if(!isTeacher)return [];
     const tl=(typeof __ttTeacherTimeline==="function")?__ttTeacherTimeline((ttDB&&ttDB.data)||{},(ttSetDB&&ttSetDB.data&&ttSetDB.data.global)||null,user.name,new Date()):[];
@@ -5097,7 +5098,8 @@ function Dashboard({user,testsDB,studentsDB,attendanceDB,academicRosterDB,dirDB,
               const barCol=isNow?"var(--ap-accent)":isUp?"var(--ap-line2)":"var(--tx-grn2)";
               const pill=isNow?["Now","var(--ap-accent)","var(--ap-accent-soft)"]:isUp?["Upcoming","var(--ap-muted)","var(--c-ec)"]:["Done","var(--tx-grn2)","var(--bg-grn)"];
               return(
-                <button key={i} onClick={()=>setTab("mytimetable")} className="ss-press" style={{display:"flex",alignItems:"center",gap:12,width:"100%",borderRadius:8,padding:"12px 14px",cursor:"pointer",textAlign:"left",fontFamily:"var(--ss-font)",
+                <React.Fragment key={i}>
+                <button onClick={()=>setPerOpen(perOpen===i?-1:i)} className="ss-press" style={{display:"flex",alignItems:"center",gap:12,width:"100%",borderRadius:8,padding:"12px 14px",cursor:"pointer",textAlign:"left",fontFamily:"var(--ss-font)",
                   background:"var(--c-fff)",
                   border:isNow?"1.5px solid var(--ap-accent)":"1px solid var(--ap-line)",
                   boxShadow:isNow?"0 0 0 3px var(--ap-accent-soft),0 6px 18px rgba(16,24,40,.10)":"0 1px 2px rgba(16,24,40,.05)"}}>
@@ -5112,6 +5114,27 @@ function Dashboard({user,testsDB,studentsDB,attendanceDB,academicRosterDB,dirDB,
                   </div>
                   <span style={{flex:"none",fontSize:11,fontWeight:800,letterSpacing:".03em",padding:"4px 10px",borderRadius:99,background:pill[2],color:pill[1]}}>{pill[0]}</span>
                 </button>
+                {perOpen===i&&(
+                  <div style={{margin:"-4px 0 8px",padding:"12px 14px",borderRadius:8,background:"var(--c-f7)",border:"1px solid var(--ap-line)"}}>
+                    {/* Everything below already knows the class, section, subject and period from the timetable.
+                        The teacher adds only what the system cannot know. Each button carries that context through
+                        a one-shot window.__*Jump flag, the same pattern the director's deep-links use. */}
+                    <div style={{fontSize:11.5,color:"var(--ap-muted)",marginBottom:9}}>
+                      Period {p.period} · {p.cls}{p.section?"-"+p.section:""} · {p.subject||"—"}
+                    </div>
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                      <button className="ss-press" onClick={()=>{try{window.__logJump={cls:p.cls,section:p.section,subject:p.subject,period:p.period};}catch(_){}setTab("teacherlog");}}
+                        style={{background:"var(--btn-pri-bg)",color:"var(--btn-pri-tx)",border:"none",borderRadius:6,padding:"8px 13px",fontSize:12.5,fontWeight:700,cursor:"pointer"}}>Log this period</button>
+                      <button className="ss-press" onClick={()=>{try{window.__emJump={cls:p.cls,section:p.section,subject:p.subject};}catch(_){}setTab("enter");}}
+                        style={{background:"var(--c-fff)",color:"var(--ap-ink)",border:"1px solid var(--c-d2)",borderRadius:6,padding:"8px 13px",fontSize:12.5,fontWeight:700,cursor:"pointer"}}>Enter marks</button>
+                      <button className="ss-press" onClick={()=>{try{window.__ccJump={cls:p.cls,section:p.section,subject:p.subject};}catch(_){}setTab("copies");}}
+                        style={{background:"var(--c-fff)",color:"var(--ap-ink)",border:"1px solid var(--c-d2)",borderRadius:6,padding:"8px 13px",fontSize:12.5,fontWeight:700,cursor:"pointer"}}>Copies</button>
+                      <button className="ss-press" onClick={()=>setTab("mytimetable")}
+                        style={{background:"none",color:"var(--ap-muted)",border:"none",padding:"8px 6px",fontSize:12.5,fontWeight:600,cursor:"pointer"}}>Full week</button>
+                    </div>
+                  </div>
+                )}
+                </React.Fragment>
               );
             })}
           </div>
@@ -6755,8 +6778,9 @@ function SyllabusTracker({user,topicsDB,syllabusDB,copyChecksDB,dirDB,studentsDB
   const isMgr=user.role==="admin"||user.role==="vp";
   const canEdit=isMgr||user.role==="teacher"; // teachers update their own subjects; managers all
   const sCls=getTeacherClasses(user);
-  const[cls,setCls]=useState(sCls[0]||__academicClasses()[0]);
-  const[subj,setSubj]=useState(getTeacherSubjects(user,sCls[0]||__academicClasses()[0])[0]||"");
+  // one-shot deep-link from the teacher home's period card: window.__ccJump={cls,section,subject}
+  const[cls,setCls]=useState(function(){try{var j=window.__ccJump;if(j&&j.cls)return j.cls;}catch(_){}return sCls[0]||__academicClasses()[0];});
+  const[subj,setSubj]=useState(function(){try{var j=window.__ccJump;if(j&&j.subject)return j.subject;}catch(_){}return getTeacherSubjects(user,sCls[0]||__academicClasses()[0])[0]||"";});
   const[input,setInput]=useState("");
   const[busy,setBusy]=useState(false);
   useEffect(()=>{const s=getTeacherSubjects(user,cls);setSubj(s[0]||"");},[cls]);
@@ -6767,7 +6791,8 @@ function SyllabusTracker({user,topicsDB,syllabusDB,copyChecksDB,dirDB,studentsDB
   const key=`${cls}__${subj}`;                       // chapter list (topics)
   // MUST be declared before progKey reads it. A const read above its declaration sits in the temporal
   // dead zone and throws ReferenceError, which blanked the whole Copies screen in production.
-  const[ccSec,setCcSec]=useState("");
+  // LAST of the three clears the flag, matching the __attJump convention.
+  const[ccSec,setCcSec]=useState(function(){var v="";try{var j=window.__ccJump;if(j){if(j.section)v=j.section;window.__ccJump=null;}}catch(_){}return v;});
   const progKey=ccSec?`${cls}__${ccSec}__${subj}`:key; // status (syllabus), per section
   const chapters=(topicsDB.data[safeId(key)]&&topicsDB.data[safeId(key)].list)||[];
   const ncertList=(typeof NCERT_SYLLABUS!=="undefined"&&NCERT_SYLLABUS[cls+"|"+subj])||[];
@@ -8324,9 +8349,10 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB,academicRost
   // make the filter default to "A" and hide a whole class whose students carry blank sections in the record.
   const _mySecs=(c)=>{var want=String(c).split("-")[0].trim();return [...new Set((user.classes||[]).filter(function(cc){return cc.split("-")[0].trim()===want;}).map(function(cc){var p=cc.split("-");return p.length>1?p.slice(1).join("-").trim():"";}).filter(Boolean))];};
   const defSec=(c)=>{if(canViewAllSec)return "";var r=_mySecs(c);return r.length?r[0]:"";};
-  const[cls,setCls]=useState(aC[0]||__academicClasses()[0]);
+  // one-shot deep-link from the teacher home's period card: window.__emJump={cls,section,subject}
+  const[cls,setCls]=useState(function(){try{var j=window.__emJump;if(j&&j.cls)return j.cls;}catch(_){}return aC[0]||__academicClasses()[0];});
   const aS=useMemo(()=>getTeacherSubjects(user,cls),[cls,user]);
-  const[subj,setSubj]=useState(aS[0]||"");
+  const[subj,setSubj]=useState(function(){try{var j=window.__emJump;if(j&&j.subject&&aS.indexOf(j.subject)>=0)return j.subject;}catch(_){}return aS[0]||"";});
   const[total,setTotal]=useState(20);
   const[testDate,setTestDate]=useState(today());
   const[selTopics,setSelTopics]=useState([]);
@@ -8344,7 +8370,8 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB,academicRost
   // saved last. Legacy tests carry no section and keep their original id untouched.
   // Declared HERE, above the section-aware test key below — it is a const, so reading it any earlier
   // throws "Cannot access before initialization" and the whole Enter Marks screen fails to render.
-  const[emFilterSec,setEmFilterSec]=useState(()=>defSec(cls));
+  // LAST initialiser clears the flag, as the __attJump convention does, so a later visit is not hijacked.
+  const[emFilterSec,setEmFilterSec]=useState(function(){var v=defSec(cls);try{var j=window.__emJump;if(j){if(j.section)v=j.section;window.__emJump=null;}}catch(_){}return v;});
   const _secKey=String(emFilterSec||"").trim();
   const _sameSec=(t)=>!_secKey||!t.section||String(t.section)===_secKey;
   const week=editing?editing.week:(myTests.filter(_sameSec).reduce((m,t)=>Math.max(m,parseInt(t.week,10)||0),0)+1); // auto sequence, hidden from teacher (parseInt: imported tests may carry a string week like "week1")
@@ -17663,7 +17690,10 @@ function MyDailyLog({user,tlStyle}){
     }
   },[user.subjects]);
 
-  const[rows,setRows]=useState(()=>{const raw=__staffClasses(user)[0];const a=raw?(typeof raw==="string"?{cls:raw.split("-")[0],section:raw.split("-").slice(1).join("-")}:raw):null;return [{id:0,period:"1",cls:a?a.cls:"10",section:a?a.section:"A",subject:"",chapno:"",topic:"",hw:""}];});
+  // One-shot deep-link from the teacher home's period card: window.__logJump={cls,section,subject,period}.
+  // The timetable already knows the period, class, section and subject — asking the teacher to pick them
+  // again was the single biggest source of repeated entry in the day.
+  const[rows,setRows]=useState(()=>{var _j=null;try{_j=window.__logJump;window.__logJump=null;}catch(_){}if(_j&&_j.cls)return [{id:0,period:String(_j.period||"1"),cls:_j.cls,section:_j.section||"A",subject:_j.subject||"",chapno:"",topic:"",hw:""}];const raw=__staffClasses(user)[0];const a=raw?(typeof raw==="string"?{cls:raw.split("-")[0],section:raw.split("-").slice(1).join("-")}:raw):null;return [{id:0,period:"1",cls:a?a.cls:"10",section:a?a.section:"A",subject:"",chapno:"",topic:"",hw:""}];});
   const[saving,setSaving]=useState(false);
   const[msg,setMsg]=useState("");
   const[myEntries,setMyEntries]=useState([]);
