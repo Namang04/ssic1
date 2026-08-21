@@ -4875,7 +4875,11 @@ function Dashboard({user,testsDB,studentsDB,attendanceDB,academicRosterDB,dirDB,
       const students=studentsDB.data[safeId(t.cls)]?.list||[];
       students.forEach(s=>{
         totalSlots++;
-        if(t.rows?.[s]!==undefined&&t.rows?.[s]!=="")filledSlots++;
+        // "Pending" means the teacher still owes a mark. A pupil deliberately marked Absent or Exempt owes
+        // nothing, so counting them as pending is what made this number untrustworthy. Makeup-due and blank
+        // still count. (Also reads through _markOf via __mkSettled, so a pupil renamed since the test — whose
+        // mark lives under rowsByAdm — is no longer counted as missing.)
+        if(__mkSettled(t,undefined,s))filledSlots++;
       });
     });
     const missed=totalSlots-filledSlots;
@@ -7911,20 +7915,27 @@ function TestParticipation({user,testsDB,studentsDB,dirDB,academicRosterDB}){
   const availSections=[...new Set(Object.values(classSections).filter(Boolean))].sort();
   const[filterSec,setFilterSec]=useState("");
   const students=filterSec?allStudents.filter(s=>classSections[s]===filterSec):allStudents;
+  // Two different questions the screen used to answer with one predicate:
+  //   _has     — did this pupil actually SIT the test and get a mark
+  //   _settled — has the teacher finished with this pupil (a mark, or a deliberate Absent/Exempt)
+  // "Missed the test" is the first. "Pending / still owed" is the second. Conflating them is what made
+  // "61 tests missed" untrustworthy: an absent pupil was counted as a missing mark forever.
   const _has=(t,s)=>{var v=_markOf(t,admOf[s],_realOf[s]||s);return v!==undefined&&v!=="";};
+  const _settled=(t,s)=>__mkSettled(t,admOf[s],_realOf[s]||s);
+  const _stateOf=(t,s)=>__mkState(t,admOf[s],_realOf[s]||s);
   // All tests for this class+subject, sorted by week
   const rTests=useMemo(()=>Object.entries(testsDB.data).map(([_i,_t])=>Object.assign({__id:_i},_t)).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week),[testsDB.data,cls,subj]);
   // Per-student participation stats
   const stats=useMemo(()=>students.map(s=>{
     const given=rTests.filter(t=>_has(t,s)).length;
     const missed=rTests.length-given;
-    const missedTests=rTests.filter(t=>!_has(t,s)).map(t=>({week:t.week,date:t.testDate}));
+    const missedTests=rTests.filter(t=>!_settled(t,s)).map(t=>({week:t.week,date:t.testDate,state:_stateOf(t,s)}));
     const pct=rTests.length?Math.round((given/rTests.length)*100):0;
     return{name:s,sec:classSections[s]||"-",given,missed,total:rTests.length,pct,missedTests};
   }),[students,rTests,classSections]);
   // Per-test absence stats
   const testStats=useMemo(()=>rTests.map(test=>{
-    const absent=students.filter(s=>!_has(test,s));
+    const absent=students.filter(s=>!_settled(test,s));   // still owed, not merely away
     return{week:test.week,date:test.testDate,topics:test.topics||[],absentCount:absent.length,absentList:absent};
   }),[rTests,students]);
   // Aggregate
@@ -8881,7 +8892,7 @@ function ClassProgress({user,testsDB,studentsDB,dirDB,academicRosterDB,jumpStude
   const students=filterSec?allStudents.filter(s=>classSections[s]===filterSec):allStudents;
   const rTests=useMemo(()=>Object.entries(testsDB.data).map(([_i,_t])=>Object.assign({__id:_i},_t)).filter(t=>t.cls===cls&&t.subj===subj).sort((a,b)=>a.week-b.week),[testsDB.data,cls,subj]);
   const stats=useMemo(()=>students.map(s=>{const sc=rTests.map(t=>({t,v:_val(t,s)})).filter(x=>x.v!==undefined&&x.v!=="").map(x=>({week:x.t.week,p:pct(Number(x.v),x.t.total),date:x.t.testDate}));const avg=sc.length?Math.round(sc.reduce((a,b)=>a+b.p,0)/sc.length):null;const trend=trendOf(sc.map(x=>x.p));const sec=classSections[s]||"-";const roll=allStudents.filter(n=>(classSections[n]||"-")===sec).sort((a,b)=>String(a).localeCompare(String(b))).indexOf(s)+1;const given=sc.length;const missed=rTests.length-given;const missedWeeks=rTests.filter(t=>{var v=_val(t,s);return v===undefined||v==="";}).map(t=>t.week);return{name:s,sc,avg,trend,roll,sec,given,missed,missedWeeks};}),[students,rTests,allStudents,classSections]);
-  const absentPerTest=useMemo(()=>rTests.map(test=>students.filter(s=>{var v=_val(test,s);return v===undefined||v==="";}).length),[rTests,students]);
+  const absentPerTest=useMemo(()=>rTests.map(test=>students.filter(s=>!__mkSettled(test,admOf[s],_realOf[s]||s)).length),[rTests,students]);   // still owed a mark, not merely away
   const classAvg=useMemo(()=>{const all=stats.flatMap(s=>s.sc.map(x=>x.p));return all.length?Math.round(all.reduce((a,b)=>a+b,0)/all.length):null;},[stats]);
   const problemTopics=useMemo(()=>{const m={};rTests.forEach(t=>{const taken=students.filter(s=>{var v=_val(t,s);return v!==undefined&&v!=="";});if(taken.length<3)return;const fc=taken.filter(s=>pct(Number(_val(t,s)),t.total)<50).length;if(fc>=taken.length*.4)(t.topics||[]).forEach(tp=>{if(tp)m[tp]=(m[tp]||0)+1;});});return Object.entries(m).sort((a,b)=>b[1]-a[1]);},[rTests,students]);
   const topicStats=useMemo(()=>{
@@ -10092,7 +10103,7 @@ function Insights({testsDB,studentsDB,attendanceDB,wrongDB,usersDB,dirDB,academi
   const part=useMemo(()=>{
     const tests=Object.values(testsDB.data||{}).filter(t=>t&&t.rows&&(fCls==="all"||t.cls===fCls));
     let total=0,filled=0; const byClass={};
-    tests.forEach(t=>{const list=rosterForCls(dirDB,studentsDB,t.cls,academicRosterDB);list.forEach(stuObj=>{total++;const v=_markOf(t,stuObj.admNo,stuObj.name);const has=v!==undefined&&v!=="";if(has)filled++;(byClass[t.cls]=byClass[t.cls]||{t:0,f:0});byClass[t.cls].t++;if(has)byClass[t.cls].f++;});});
+    tests.forEach(t=>{const list=rosterForCls(dirDB,studentsDB,t.cls,academicRosterDB);list.forEach(stuObj=>{total++;const has=__mkSettled(t,stuObj.admNo,stuObj.name);if(has)filled++;(byClass[t.cls]=byClass[t.cls]||{t:0,f:0});byClass[t.cls].t++;if(has)byClass[t.cls].f++;});});
     const rows=Object.entries(byClass).map(([c,o])=>({c:c.replace("Class ","Cl "),pct:o.t?Math.round(o.f/o.t*100):0,missed:o.t-o.f})).sort((a,b)=>b.missed-a.missed);
     return{pct:total?Math.round(filled/total*100):0,missed:total-filled,rows};
   },[testsDB.data,studentsDB.data,dirDB&&dirDB.data,fCls]);
