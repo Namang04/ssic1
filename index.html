@@ -1650,6 +1650,33 @@ function __wrongEntFor(e,name){
 // name key (rows). This makes marks collision-proof for two same-name students. Name-keyed rows
 // resolve through __rowValFor: exact name, bracket-admNo tag, then a guarded loose match — an old
 // shared-name row that two students could both claim resolves for NEITHER (assign it in Sync instead).
+// ── Mark states ───────────────────────────────────────────────────────────────────────────────────────
+// A blank cell used to mean four different things at once — not entered, pupil absent, exempt, makeup due —
+// so "105 marks pending" and the remedial lists could not be trusted. States live in a PARALLEL map, never in
+// the mark value: 4 places do Number(v) (a state there gives NaN and a "NaN%" class average) and 20 test
+// v!==undefined&&v!=="" to decide a pupil "has" a mark. Keeping marks numeric-or-blank leaves all of those
+// correct, and needs no migration.
+var __MK_STATES={A:{k:"A",label:"Absent",short:"Abs"},E:{k:"E",label:"Exempt",short:"Ex"},M:{k:"M",label:"Makeup due",short:"Mk"}};
+function __mkState(test,adm,name){
+  if(!test)return "";
+  var sba=test.statesByAdm;
+  if(sba&&adm&&sba[String(adm)])return __MK_STATES[sba[String(adm)]]?sba[String(adm)]:"";
+  var st=test.states;
+  if(st){
+    if(name&&st[name])return __MK_STATES[st[name]]?st[name]:"";
+    var v=__rowValFor(st,adm,name);
+    if(v&&__MK_STATES[v])return v;
+  }
+  return "";
+}
+// Counted as dealt with by the teacher: a mark, or a deliberate Absent/Exempt. "Makeup due" is NOT — the pupil
+// still owes a mark, and calling that complete is the very conflation this replaces.
+function __mkSettled(test,adm,name){
+  var v=_markOf(test,adm,name);
+  if(v!==undefined&&v!=="")return true;
+  var st=__mkState(test,adm,name);
+  return st==="A"||st==="E";
+}
 function _markOf(test,adm,name){if(!test)return undefined;var rba=test.rowsByAdm;if(rba&&adm&&rba[String(adm)]!==undefined)return rba[String(adm)];return __rowValFor(test.rows,adm,name);}
 // Notice visibility by audience — the "For …" picker now actually scopes who sees a circular (was decorative).
 // Canonical class(+section) key for parent-broadcast targeting. Directory tokens ("9", "IX", "Nursery"),
@@ -8317,9 +8344,10 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB,academicRost
     if(editing){setTotal(editing.total);setSelTopics(editing.topics||[]);
       // Load saved marks, but also pull each current roster student's score by admission no. (rowsByAdm) so a
       // student renamed in the record keeps their mark instead of showing blank and being re-zeroed on save.
+      const _st={};(_emRows||[]).forEach(function(r){var k=__mkState(editing,r.admNo,r.realName);if(k)_st[r.key]=k;});
       const _r=Object.assign({},editing.rows||{});
       (_emRows||[]).forEach(r=>{if(_r[r.key]===undefined){var v=_markOf(editing,r.admNo,r.realName);if(v!==undefined&&v!=="")_r[r.key]=v;}});
-      if(testChanged){dirtyRef.current={};setRows(_r);}
+      if(testChanged){dirtyRef.current={};setRows(_r);setStates(_st);}   // same guard as rows: never clobber unsaved work
       // SAME test re-syncing (e.g. a co-teacher just saved another section) — keep THIS teacher's unsaved edits on
       // top of the fresh server data so a background sync never wipes marks that haven't been saved yet.
       else setRows(prev=>{const m=Object.assign({},_r);Object.keys(dirtyRef.current).forEach(nm=>{m[nm]=prev[nm];});return m;});
@@ -8365,6 +8393,10 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB,academicRost
   const[newTopic,setNewTopic]=useState("");   // typed-in topic — teachers should never have to leave this page
   const addTypedTopic=()=>{const t=newTopic.trim().replace(/\s+/g," ");if(!t)return;
     setSelTopics(p=>p.includes(t)?p:[...p,t]);setNewTopic("");};
+  // Pupil key -> "A"|"E"|"M". Marks stay numeric-or-blank; picking a state clears that pupil's mark box so
+  // the two can never disagree about the same cell.
+  const[states,setStates]=useState({});
+  const setState=(k,v)=>{dirtyRef.current[k]=true;setStates(p=>{const n=Object.assign({},p);if(!v||n[k]===v)delete n[k];else n[k]=v;return n;});if(v)setRows(p=>Object.assign({},p,{[k]:""}));};
   const[saveErr,setSaveErr]=useState("");
   const handleSave=async()=>{
     setSaveErr("");
@@ -8381,12 +8413,19 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB,academicRost
       const live=testsDB.data[docId]||{};
       const mergedRows=Object.assign({},live.rows||{});
       const mergedByAdm=Object.assign({},live.rowsByAdm||{});
+      const mergedStates=Object.assign({},live.states||{});
+      const mergedStatesByAdm=Object.assign({},live.statesByAdm||{});
       Object.keys(dirtyRef.current).forEach(nm=>{
         const v=rows[nm];const a=String(_admMap[nm]||"");
         if(v===undefined||v===""){delete mergedRows[nm];if(a)delete mergedByAdm[a];var _ak=Object.keys(mergedRows).filter(function(k){return a&&__admInBrack(k)===a;});if(!_ak.length&&!/\(/.test(nm)){var _nk=nmKey(nm);var _lm=Object.keys(mergedRows).filter(function(k){return nmKey(k)===_nk;});if(_lm.length===1)_ak=_lm;}_ak.forEach(function(k){delete mergedRows[k];});}
         else{mergedRows[nm]=v;if(a)mergedByAdm[a]=v;}
+        // States travel with the mark and use the same merge, so two teachers on different sections cannot
+        // overwrite each other's. A state and a mark are mutually exclusive for one pupil.
+        const stv=states[nm];
+        if(stv&&__MK_STATES[stv]){mergedStates[nm]=stv;if(a)mergedStatesByAdm[a]=stv;}
+        else{delete mergedStates[nm];if(a)delete mergedStatesByAdm[a];}
       });
-      await testsDB.set(docId,{cls,subj,section:(editing&&editing.section!==undefined&&!_secKey)?editing.section:_secKey,week,total,testDate,topics:selTopics,name:(selTopics[0]||"Test"),by:user.name,at:new Date().toISOString(),rows:mergedRows,rowsByAdm:mergedByAdm});
+      await testsDB.set(docId,{cls,subj,section:(editing&&editing.section!==undefined&&!_secKey)?editing.section:_secKey,week,total,testDate,topics:selTopics,name:(selTopics[0]||"Test"),by:user.name,at:new Date().toISOString(),rows:mergedRows,rowsByAdm:mergedByAdm,states:mergedStates,statesByAdm:mergedStatesByAdm});
       // Any topic typed here joins the saved list, so the next teacher taps it instead of retyping.
       try{
         var _tk=safeId(cls+"__"+subj), _cur=((topicsDB.data||{})[_tk]||{}).list||[];
@@ -8398,8 +8437,14 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB,academicRost
       setSaved(true);setTimeout(()=>setSaved(false),2500);
     }catch(e){setSaveErr("Could not save — "+(e&&e.message?e.message:"please check your connection and try again."));}
   };
-  const filled=students.filter(s=>rows[s]!==undefined&&rows[s]!=="").length;
-  const avg=filled?Math.round(students.filter(s=>rows[s]!==undefined&&rows[s]!=="").reduce((a,s)=>a+pct(Number(rows[s]),total),0)/filled):0;
+  // Settled = has a mark, or was deliberately marked Absent/Exempt. "Makeup due" is NOT settled: the pupil
+  // still owes a mark, and counting it as done is the conflation this whole change exists to remove.
+  const filled=students.filter(s=>(rows[s]!==undefined&&rows[s]!=="")||states[s]==="A"||states[s]==="E").length;
+  const stCount=(k)=>students.filter(s=>states[s]===k).length;
+  // Average over pupils who actually have a NUMBER. An absent or exempt pupil is excluded rather than scored
+  // zero — a zero and an absence mean different things on a report card.
+  const _scored=students.filter(s=>rows[s]!==undefined&&rows[s]!==""&&!isNaN(Number(rows[s])));
+  const avg=_scored.length?Math.round(_scored.reduce((a,s)=>a+pct(Number(rows[s]),total),0)/_scored.length):0;
   const inputRefs=useRef({});
   const handleKeyDown=(e,idx)=>{if(e.key==="Tab"||e.key==="Enter"){e.preventDefault();const next=inputRefs.current[idx+1];if(next)next.focus();}};
   if(testsDB.loading||studentsDB.loading||topicsDB.loading)return<Spinner/>;
@@ -8510,7 +8555,11 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB,academicRost
             </div>
             {students.map((s,i)=>{
               const m=rows[s];const has=m!==undefined&&m!=="";const mNum=Number(m);const isOver=has&&mNum>total;
-              const p=has&&!isOver?pct(mNum,total):null;const g=p!==null?gradeOf(p):null;const grd=GRADS[i%GRADS.length];
+              const stv=states[s]||"";
+              // A pupil with a state has no percentage and no grade. Without this an absent pupil would be
+              // shown a red grade D on the teacher's own register — a failing grade against a child who never
+              // sat the paper.
+              const p=(!stv&&has&&!isOver)?pct(mNum,total):null;const g=p!==null?gradeOf(p):null;const grd=GRADS[i%GRADS.length];
               return(
                 <div key={s} className="ap-lrow em-mgrid" style={{background:isOver?"var(--bg-red)":undefined}}>
                   <div className="ap-roll">{i+1}</div>
@@ -8521,10 +8570,25 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB,academicRost
                   <div>
                     <input type="number" min={0} max={total*2} value={m??""} placeholder="—"
                       ref={el=>inputRefs.current[i]=el}
-                      onChange={e=>setMark(s,e.target.value)}
+                      onChange={e=>setMark(s,e.target.value)} disabled={!!stv}
                       onKeyDown={e=>handleKeyDown(e,i)}
                       className="ss-input" style={{width:"100%",maxWidth:122,padding:"8px 12px",borderRadius:6,border:"1px solid "+(isOver?"#fca5a5":"var(--c-d2)"),fontSize:14,fontFamily:"var(--ss-font)",outline:"none",background:"var(--c-fff)",textAlign:"center"}}/>
                     {isOver&&<div style={{fontSize:11,color:"var(--tx-red)",marginTop:2}}>Exceeds {total}</div>}
+                    {/* Absent / Exempt / Makeup due. Tapping one clears the mark box, tapping it again clears
+                        the state — so a mis-tap is one tap to undo, and the two can never disagree. */}
+                    <div style={{display:"flex",gap:4,marginTop:4}}>
+                      {["A","E","M"].map(function(k){
+                        const on=stv===k;
+                        return(<button key={k} type="button" onClick={()=>setState(s,k)}
+                          title={__MK_STATES[k].label}
+                          style={{minWidth:30,minHeight:30,borderRadius:6,fontSize:11,fontWeight:700,cursor:"pointer",
+                            fontFamily:"var(--ss-font)",
+                            border:"1px solid "+(on?"var(--ap-accent)":"var(--ap-line2)"),
+                            background:on?"var(--ap-accent-soft)":"var(--c-fff)",
+                            color:on?"var(--ap-accent)":"var(--ap-muted)"}}>{k}</button>);
+                      })}
+                      {stv&&<span style={{fontSize:11,color:"var(--ap-muted)",alignSelf:"center",marginLeft:2}}>{__MK_STATES[stv].label}</span>}
+                    </div>
                   </div>
                   <div style={{fontFamily:"var(--ss-font)",fontSize:13,fontWeight:700,color:p!==null?gcolor(p):"var(--c-cb)"}}>{p!==null?p+"%":"—"}</div>
                   <div className="em-col-grade">{g?<span style={{background:g.bg,color:g.c,borderRadius:6,padding:"3px 9px",fontSize:11,fontWeight:700}}>{g.l}</span>:<span style={{color:"var(--c-94)",fontSize:13}}>—</span>}</div>
