@@ -1591,6 +1591,17 @@ const getTeacherSubjects=(user,cls)=>{
   if(filtered.length>0)return filtered;
   return want;
 };
+// A staff member's class+section assignments. The Assign panel writes `classes` (["Class 9-A", ...]) and
+// NOTHING in this app has ever written `assignedClasses` on a user — that name belongs to timetable SCHEDULE
+// objects. Screens reading it therefore always got undefined: Lesson Plan rendered empty class/section
+// selectors and filed against its hard-coded default, and the Daily Log opened on Class 10-A regardless of
+// who was looking. Prefer `classes`; keep the old name as a fallback in case any document carries it.
+function __staffClasses(u){
+  if(!u)return [];
+  if(Array.isArray(u.classes)&&u.classes.length)return u.classes;
+  if(Array.isArray(u.assignedClasses)&&u.assignedClasses.length)return u.assignedClasses;
+  return [];
+}
 const getTeacherSections=(user,cls)=>{const ALL=["A","B","C","D"];if(!user||user.role==="admin"||user.role==="vp")return ALL;const want=String(cls).split("-")[0].trim();const secs=(user.classes||[]).filter(function(c){return c.split("-")[0].trim()===want;}).map(function(c){var p=c.split("-");return p.length>1?p.slice(1).join("-").trim():"";}).filter(Boolean);return secs.length?[...new Set(secs)]:ALL;};
 // Admission number written INSIDE a name's bracket group — "ANUSHKA SINGH (141)", "NAME (ADM 141)",
 // even a garbled "(141) (141) (141)" all yield "141"; father-name brackets yield "". Old rosters
@@ -17553,7 +17564,7 @@ function TeacherLogPanel({user}){
 function MyDailyLog({user,tlStyle}){
   const isMob=useIsMobile();
   // Build assigned class/section lists from user profile
-  const assigned = (user.assignedClasses||[]).map(a=>
+  const assigned = __staffClasses(user).map(a=>
     typeof a==="string" ? {cls:a.split("-")[0], section:a.split("-").slice(1).join("-")} : a
   );
   const canViewAll = user.role==="admin"||user.role==="vp";
@@ -17577,7 +17588,7 @@ function MyDailyLog({user,tlStyle}){
     }
   },[user.subjects]);
 
-  const[rows,setRows]=useState(()=>{const raw=(user.assignedClasses&&user.assignedClasses[0]);const a=raw?(typeof raw==="string"?{cls:raw.split("-")[0],section:raw.split("-").slice(1).join("-")}:raw):null;return [{id:0,period:"1",cls:a?a.cls:"10",section:a?a.section:"A",subject:"",chapno:"",topic:"",hw:""}];});
+  const[rows,setRows]=useState(()=>{const raw=__staffClasses(user)[0];const a=raw?(typeof raw==="string"?{cls:raw.split("-")[0],section:raw.split("-").slice(1).join("-")}:raw):null;return [{id:0,period:"1",cls:a?a.cls:"10",section:a?a.section:"A",subject:"",chapno:"",topic:"",hw:""}];});
   const[saving,setSaving]=useState(false);
   const[msg,setMsg]=useState("");
   const[myEntries,setMyEntries]=useState([]);
@@ -17603,7 +17614,7 @@ function MyDailyLog({user,tlStyle}){
     return()=>{ window.removeEventListener("branchchange",onBranch); if(unsub)unsub();};
   },[user.username]);
 
-  const addRow=()=>setRows(r=>{const raw=(user.assignedClasses&&user.assignedClasses[0]);const a=raw?(typeof raw==="string"?{cls:raw.split("-")[0],section:raw.split("-").slice(1).join("-")}:raw):null;return [...r,{id:Date.now(),period:String(r.length+1),cls:a?a.cls:"10",section:a?a.section:"A",subject:"",chapno:"",topic:"",hw:""}];});
+  const addRow=()=>setRows(r=>{const raw=__staffClasses(user)[0];const a=raw?(typeof raw==="string"?{cls:raw.split("-")[0],section:raw.split("-").slice(1).join("-")}:raw):null;return [...r,{id:Date.now(),period:String(r.length+1),cls:a?a.cls:"10",section:a?a.section:"A",subject:"",chapno:"",topic:"",hw:""}];});
   const removeRow=(id)=>setRows(r=>r.filter(x=>x.id!==id));
   const updateRow=(id,field,val)=>setRows(r=>r.map(x=>x.id===id?{...x,[field]:val}:x));
 
@@ -17623,7 +17634,7 @@ function MyDailyLog({user,tlStyle}){
         });
       }
       setMsg(`✓ ${valid.length} period(s) saved!`);
-      setRows(()=>{const raw=(user.assignedClasses&&user.assignedClasses[0]);const a=raw?(typeof raw==="string"?{cls:raw.split("-")[0],section:raw.split("-").slice(1).join("-")}:raw):null;return [{id:0,period:"1",cls:a?a.cls:"10",section:a?a.section:"A",subject:"",chapno:"",topic:"",hw:""}];});
+      setRows(()=>{const raw=__staffClasses(user)[0];const a=raw?(typeof raw==="string"?{cls:raw.split("-")[0],section:raw.split("-").slice(1).join("-")}:raw):null;return [{id:0,period:"1",cls:a?a.cls:"10",section:a?a.section:"A",subject:"",chapno:"",topic:"",hw:""}];});
     }catch(e){setMsg("Error: "+e.message);}
     setSaving(false);
   };
@@ -17732,7 +17743,7 @@ function MyDailyLog({user,tlStyle}){
 // ─── Lesson Plan Form ───────────────────────────────────
 function LessonPlanForm({user,tlStyle}){
   const isMob=useIsMobile();
-  const lpAssigned = (user.assignedClasses||[]).map(a=>
+  const lpAssigned = __staffClasses(user).map(a=>
     typeof a==="string" ? {cls:a.split("-")[0], section:a.split("-").slice(1).join("-")} : a
   );
   const lpCanViewAll = user.role==="admin"||user.role==="vp";
@@ -17740,7 +17751,7 @@ function LessonPlanForm({user,tlStyle}){
   const lpAssignedSections = (cls) => lpCanViewAll ? (TL_CLASSES[cls]||["A"]) : lpAssigned.filter(a=>a.cls===cls).map(a=>a.section);
   const lpSubjects = (user.subjects&&user.subjects.length>0) ? user.subjects.map(s=>(s==='English Language'||s==='English Literature')?'English':s) : TL_SUBJECTS;
   const today=todayIST();   // was UTC: before 05:30 IST this returned YESTERDAY
-  const[form,setForm]=useState(()=>{const raw=(user.assignedClasses&&user.assignedClasses[0]);const a=raw?(typeof raw==="string"?{cls:raw.split("-")[0],section:raw.split("-").slice(1).join("-")}:raw):null;const s=user.subjects&&user.subjects[0];return {subject:s||TL_SUBJECTS[0],cls:a?a.cls:"10",section:a?a.section:"A",chapno:"",topic:"",periods:"",dateFrom:today,dateTo:"",aids:"",objectives:"",method:"",assignments:"",other:""};});
+  const[form,setForm]=useState(()=>{const raw=__staffClasses(user)[0];const a=raw?(typeof raw==="string"?{cls:raw.split("-")[0],section:raw.split("-").slice(1).join("-")}:raw):null;const s=user.subjects&&user.subjects[0];return {subject:s||TL_SUBJECTS[0],cls:a?a.cls:"10",section:a?a.section:"A",chapno:"",topic:"",periods:"",dateFrom:today,dateTo:"",aids:"",objectives:"",method:"",assignments:"",other:""};});
   const[saving,setSaving]=useState(false);
   const[msg,setMsg]=useState("");
   const[myLPs,setMyLPs]=useState([]);
@@ -17993,7 +18004,7 @@ function ClassLogView({user,tlStyle,isAdmin}){
 
   const filterClsList=isAdmin
     ? [...new Set(allLogs.map(l=>l.class).filter(Boolean))].sort()
-    : (user.assignedClasses||[]).map(c=>typeof c==="string"?c.split("-")[0]:c.cls).filter((v,i,a)=>a.indexOf(v)===i);
+    : __staffClasses(user).map(c=>typeof c==="string"?c.split("-")[0]:c.cls).filter((v,i,a)=>a.indexOf(v)===i);
 
   const filterSecList=filterCls?(TL_CLASSES[filterCls]||["A"]):[];
 
@@ -19886,7 +19897,7 @@ function App(){
         </nav>
         <button className="ap-user" onClick={doLogout} title="Sign out">
           <div className="ap-av">{(user.name||"U").split(" ").filter(Boolean).map(w=>w[0]).slice(0,2).join("").toUpperCase()}</div>
-          <div style={{flex:1,minWidth:0}}><div className="ap-nm">{user.name}</div><div className="ap-rl">{user.role}{user.assignedClasses&&user.assignedClasses.length>0?" · "+user.assignedClasses.length+" cls":""}</div></div>
+          <div style={{flex:1,minWidth:0}}><div className="ap-nm">{user.name}</div><div className="ap-rl">{user.role}{user.coordinator===true?" · Coordinator":""}{__staffClasses(user).length>0?" · "+__staffClasses(user).length+" cls":""}</div></div>
           <span className="ap-signout"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M15 17l5-5-5-5M20 12H9M11 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5"/></svg></span>
         </button>
       </aside>
