@@ -2454,8 +2454,18 @@ function Login({onLogin,usersDB}){
     // Profile is resolved AFTER authentication, against the account that actually succeeded — otherwise a
     // sibling who signed in as <mobile>-2 would be handed the FIRST child's profile.
     // Dotted logins like "aakash.singh" are stored under safeId() ("aakash_singh"), so check both keys.
+    // Read the profile with a TARGETED single-doc get, exactly as the session-restore path does. The
+    // collection listener cannot help here: every read branch of the users rule requires signedIn(), so at the
+    // login screen the whole collection is denied and usersDB.data is {}. Relying on it meant a newly signed-in
+    // teacher raced the listener re-attaching and could land on the seeded stub until they refreshed.
     const baseData=DEFAULT_USERS[uKey];
-    const extraData=usersDB.data&&(usersDB.data[uKey]||usersDB.data[safeId(uKey)]);
+    let extraData=usersDB.data&&(usersDB.data[uKey]||usersDB.data[safeId(uKey)]);
+    if(!extraData&&authed&&window.__fbGetDoc){
+      try{
+        const _us=await window.__fbGetDoc(window.__fbDoc(window.__db,"users",safeId(uKey)));
+        if(_us&&_us.exists&&_us.exists())extraData=_us.data();
+      }catch(e){}
+    }
     // The LIVE user doc wins over the compiled-in seed, and that includes the password. This clause used to
     // read `password:baseData.password`, forcing the seed value LAST — and no DEFAULT_USERS entry carries a
     // password, so userData.password came out undefined for all 68 seeded staff. legacyOk compares it with
@@ -19579,7 +19589,7 @@ function App(){
   const copyChecksDB=useFirestore("copyChecks", !!user&&user.role!=="parent"&&user.role!=="student");
   const studentsDB=useFirestore("students");
   const attendanceDBraw=useFirestore("attendance",_heavyOK);
-  const usersDB=useFirestore("users");
+  const usersDB=useFirestore("users", !!user&&["admin","office","vp"].includes(user.role)); // every read branch of the users rule needs signedIn(), and only these roles may LIST the collection — the others were opening a query that is always denied, then silently falling back to the seeded stub
   const wrongDB=useFirestore("wrongAnswers", !!user&&user.role!=="parent"); // students practice + staff review — parents never read it
   const feesDBraw=useFirestore("fees", !!user&&((user.role==="admin"&&user.fees!==false)||user.role==="office"));
   /* Parents must be subscribed too or the portal's Examinations block is always empty — the rule already allows
