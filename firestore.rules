@@ -137,8 +137,17 @@ service cloud.firestore {
     // Same posture the app already uses for tests/attendance; the portal renders only the child's own marks.
     match /exams/{id} {
       allow read: if signedIn();
+      // Creating or DELETING a term exam affects every subject and every pupil in the class — a subject
+      // teacher could delete an exam and take all its marks with it. Management only, matching who publishes.
+      allow create, delete: if isAny(['admin','vp']);
       // Office does post-exam mark corrections after teachers — same write access as a marker.
-      allow write: if isAny(['admin','vp','teacher','office']);
+      // A teacher may write MARKS but must not restructure the exam or publish it: removing a subject drops
+      // its marks from every report card in the class, and publication is the gate that protects the PTM.
+      // Mark saves write the whole document but only CHANGE these keys, so this does not block normal marking.
+      allow update: if isAny(['admin','vp','office'])
+        || (isAny(['teacher'])
+            && !request.resource.data.diff(resource.data).affectedKeys()
+                 .hasAny(['subjects','published','publishedAt','publishedBy','name','cls','term','date']));
     }
 
     // ── (1) Student records (FULL PII) — admin + office ONLY ──────────────────

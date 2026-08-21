@@ -10324,6 +10324,10 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
   // ── Release marks to parents ── an exam stays hidden from the parent portal until the Director or VP publishes
   // it, so results can be checked and handed over at the PTM before families read them at home.
   const canPublishEx=user.role==="admin"||user.role==="vp";
+  // Creating, re-scoping or DELETING a term exam affects every subject and every pupil in the class, not just
+  // the teacher's own. A subject teacher could delete an exam and take all its marks with it. Same roles that
+  // publish results; an ordinary teacher enters marks and nothing more.
+  const canManageEx=user.role==="admin"||user.role==="vp";
   const[pubBusy,setPubBusy]=useState(false);
   const publishExam=async(on)=>{
     if(!exam||pubBusy||!canPublishEx)return;
@@ -10768,7 +10772,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
               <input value={newSub} onChange={e=>setNewSub(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addSubTo(nSubs,setNSubs);}} placeholder="Add a subject…" className="ss-input" style={{flex:1,padding:"7px 11px",borderRadius:6,fontSize:12.5}}/>
               <Btn v="ghost" onClick={()=>addSubTo(nSubs,setNSubs)}>＋ Add</Btn>
             </div>
-            <Btn onClick={createExam} style={{marginTop:4}}>+ Create exam</Btn>
+            {canManageEx&&<Btn onClick={createExam} style={{marginTop:4}}>+ Create exam</Btn>}
           </div>
         </InsPanel>
         <InsPanel title="All exams" sub={exams.length+" created"} pad={0}>
@@ -10777,10 +10781,10 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
             <div key={e.id} style={{borderBottom:"1px solid var(--c-f0)"}}>
             <div style={{display:"flex",alignItems:"center",gap:8,padding:"12px 16px",flexWrap:"wrap"}}>
               <div style={{flex:1,minWidth:140}}><div style={{fontSize:13,fontWeight:600,color:"var(--ap-ink)"}}>{e.name}</div><div style={{fontSize:11.5,color:"var(--c-64)"}}>{e.cls} · {e.term} · {(e.subjects||[]).length} subjects · {entered>0?entered+" subjects marked":"no marks yet"}</div></div>
-              <button onClick={()=>ed?setEditSubsId(""):startEditSubs(e)} style={{background:ed?"var(--ap-accent-soft)":"var(--c-f5)",color:ed?"var(--ap-accent)":"var(--ap-ink)",border:"1px solid var(--c-d2)",borderRadius:6,padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>{ed?"Close":"Subjects"}</button>
+              {canManageEx&&<button onClick={()=>ed?setEditSubsId(""):startEditSubs(e)} style={{background:ed?"var(--ap-accent-soft)":"var(--c-f5)",color:ed?"var(--ap-accent)":"var(--ap-ink)",border:"1px solid var(--c-d2)",borderRadius:6,padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>{ed?"Close":"Subjects"}</button>}
               <button onClick={()=>{setSelId(e.id);setTab("marks");}} style={{background:"var(--bg-grn)",color:"var(--tx-grn)",border:"none",borderRadius:6,padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>Marks</button>
               <button onClick={()=>{setSelId(e.id);setTab("reports");}} style={{background:"var(--c-f5)",color:"var(--ap-ink)",border:"1px solid var(--c-d2)",borderRadius:6,padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>Cards</button>
-              <button onClick={()=>delExam(e.id)} aria-label="Delete exam" title="Delete exam" style={{background:"var(--bg-red)",color:"var(--tx-red)",border:"none",borderRadius:6,width:36,height:36,fontSize:15,cursor:"pointer"}}>×</button>
+              {canManageEx&&<button onClick={()=>delExam(e.id)} aria-label="Delete exam" title="Delete exam" style={{background:"var(--bg-red)",color:"var(--tx-red)",border:"none",borderRadius:6,width:36,height:36,fontSize:15,cursor:"pointer"}}>×</button>}
             </div>
             {ed&&<div style={{padding:"4px 16px 16px",background:"var(--c-f7)"}}>
               <div style={{fontSize:11.5,color:"var(--c-64)",marginBottom:8}}>Tick to include · ✕ to remove · <b>grade</b> = co-scholastic (A–E, not in the %). Existing marks for kept subjects are preserved.</div>
@@ -13290,8 +13294,17 @@ service cloud.firestore {
     // Same posture the app already uses for tests/attendance; the portal renders only the child's own marks.
     match /exams/{id} {
       allow read: if signedIn();
+      // Creating or DELETING a term exam affects every subject and every pupil in the class — a subject
+      // teacher could delete an exam and take all its marks with it. Management only, matching who publishes.
+      allow create, delete: if isAny(['admin','vp']);
       // Office does post-exam mark corrections after teachers — same write access as a marker.
-      allow write: if isAny(['admin','vp','teacher','office']);
+      // A teacher may write MARKS but must not restructure the exam or publish it: removing a subject drops
+      // its marks from every report card in the class, and publication is the gate that protects the PTM.
+      // Mark saves write the whole document but only CHANGE these keys, so this does not block normal marking.
+      allow update: if isAny(['admin','vp','office'])
+        || (isAny(['teacher'])
+            && !request.resource.data.diff(resource.data).affectedKeys()
+                 .hasAny(['subjects','published','publishedAt','publishedBy','name','cls','term','date']));
     }
 
     // ── (1) Student records (FULL PII) — admin + office ONLY ──────────────────
