@@ -49,6 +49,20 @@
   // Real password reset, done server-side with the Admin SDK (functions/index.js). The browser cannot change
   // someone else's Firebase password, which is why the old in-app "reset" could only write a recovery password
   // that carried no session. Returns null when the function is not deployed, so the app falls back cleanly.
+  // One transaction for receipt + intent + parent balance. Returns null when not deployed, so the client
+  // path below still works until the function ships.
+  window.__fnConfirmUpi=async(intentId,session)=>{
+    try{
+      const fns=getFunctions(app,"us-central1");
+      const r=await httpsCallable(fns,"confirmUpiPayment")({intentId,session});
+      return (r&&r.data)||{ok:true};
+    }catch(e){
+      const c=String((e&&(e.code||e.message))||"");
+      if(/failed-precondition|not-found|permission-denied|invalid-argument/.test(c))throw e; // a real answer
+      if(/internal|CORS|Failed to fetch|deadline/i.test(c))return null;                       // not deployed
+      throw e;
+    }
+  };
   window.__fnResetPassword=async(username,newPassword)=>{
     try{
       const fns=getFunctions(app,"us-central1");
@@ -19383,6 +19397,22 @@ function UpiCollections({feesDB,metaDB,intentsDB,user,isDirector}){
     if(live.status&&live.status!=="pending"){if(window.__toast)window.__toast("Already handled by "+(live.verifiedBy||"someone"),"err");return;}
     if(!window.confirm("Confirm "+inr(it.amount)+" from "+it.student+"?\n\nDo this ONLY after you've seen this credit in your bank / UPI app. It records an official fee receipt."))return;
     setConfirming(it.id);
+    // Prefer the server-side transaction: receipt, intent and the parent's balance move together or not at
+    // all. The client path below writes them one at a time, and its balance update sits in an empty catch —
+    // so the office could see a receipt while the parent still saw "Pay".
+    if(window.__fnConfirmUpi){
+      try{
+        const r=await window.__fnConfirmUpi(it.id,String(window.__SESSION||"2026-27"));
+        if(r&&r.ok){
+          logAudit("upi-confirm","fees","pay_"+it.id,null,{admNo:r.admNo,amount:r.amount,ref:it.ref||""});
+          if(window.__toast)window.__toast("Recorded "+inr(r.amount)+" · "+r.receiptNo+(r.balanceUpdated?"":" · parent balance not published yet"),"ok");
+          setConfirming("");return;
+        }
+      }catch(e){
+        if(window.__toast)window.__toast((e&&e.message)||"Could not record — try again","err");
+        setConfirming("");return;
+      }
+    }
     // receiptNo from the ALL-sessions map (the prefix is global) so it can't collide even if an archived session is being viewed
     const _all=(feesDB.raw&&feesDB.raw.allData)||feesDB.data||{};
     const _maxR=Object.values(_all).reduce((m,p)=>{if(!p||p.disc)return m;const mm=String(p.receiptNo||"").match(/(\d+)\s*$/);const k=mm?parseInt(mm[1],10):0;return k>m?k:m;},0);
@@ -19396,7 +19426,7 @@ function UpiCollections({feesDB,metaDB,intentsDB,user,isDirector}){
       await feesDB.set(pid,rec);
       await intentsDB.set(it.id,Object.assign({},it,{status:"verified",verifiedBy:(user&&user.name)||"office",verifiedAt:new Date().toISOString(),receiptNo:receiptNo}));
       // Close the loop: refresh THIS parent's published balance immediately so they stop seeing "Pay" (no manual re-publish needed).
-      try{const pref=window.__fbDoc(window.__db,"portalFees",String(rec.admNo));const ps=await window.__fbGetDoc(pref);if(ps&&ps.exists&&ps.exists()){const pf=ps.data();await window.__fbSetDoc(pref,Object.assign({},pf,{paid:Number(pf.paid||0)+rec.amount,bal:Math.max(0,Number(pf.bal||0)-rec.amount),updatedAt:new Date().toISOString()}));}}catch(e){}
+      try{const pref=window.__fbDoc(window.__db,"portalFees",String(rec.admNo));const ps=await window.__fbGetDoc(pref);if(ps&&ps.exists&&ps.exists()){const pf=ps.data();await window.__fbSetDoc(pref,Object.assign({},pf,{paid:Number(pf.paid||0)+rec.amount,bal:Math.max(0,Number(pf.bal||0)-rec.amount),updatedAt:new Date().toISOString()}));}}catch(e){window.__toast&&window.__toast("Receipt saved, but the parent\u2019s balance did not update \u2014 they may still see the old amount. Re-publish fees for "+rec.admNo+".","err");}
       logAudit("upi-confirm","fees",pid,null,{admNo:rec.admNo,amount:rec.amount,ref:it.ref||""});
       if(window.__toast)window.__toast("Recorded "+inr(rec.amount)+" · "+receiptNo,"ok");
     }catch(e){if(window.__toast)window.__toast("Could not record — "+((e&&e.message)||"retry"),"err");}
