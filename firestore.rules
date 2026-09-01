@@ -45,12 +45,37 @@ service cloud.firestore {
         : null;
     }
     function isAny(roles) { return signedIn() && (role() in roles); }
+    // Legacy VP accounts were encoded as role:'admin', fees:false. Distinguish them inside the rules as well as
+    // the UI, otherwise a legacy VP inherits Director-only account-management rights from the 'admin' string.
+    function isDirectorRole() {
+      return role() == 'admin'
+        && get(/databases/$(database)/documents/accounts/$(request.auth.uid)).data.get('fees', true) != false;
+    }
+    function isVicePrincipalRole() {
+      return role() == 'vp'
+        || (role() == 'admin'
+          && get(/databases/$(database)/documents/accounts/$(request.auth.uid)).data.get('fees', true) == false);
+    }
     // The caller's own admission number from their account doc (null if none).
     function myAdmNo() {
       return signedIn()
         && exists(/databases/$(database)/documents/accounts/$(request.auth.uid))
         ? get(/databases/$(database)/documents/accounts/$(request.auth.uid)).data.get('admNo', null)
         : null;
+    }
+    // Ownership key used by teacher-authored operational records. The UI validates assignments too, but rules
+    // must independently prevent one teacher from editing another teacher's plan or daily log by guessing an id.
+    function myUsername() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/accounts/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/accounts/$(request.auth.uid)).data.get('username', '')
+        : '';
+    }
+    function myAccountName() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/accounts/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/accounts/$(request.auth.uid)).data.get('name', '')
+        : '';
     }
     // The caller's own users-doc id. users docs are keyed by safeId(username) =
     // username with every non-alphanumeric char replaced by '_'. The auth token
@@ -67,6 +92,36 @@ service cloud.firestore {
     // practice-progress doc — the only two users-collection ids a non-admin may touch.
     function ownsUserDoc(id) {
       return id != '' && (id == myUserDocId() || id == 'prog_' + myUserDocId());
+    }
+    // Class-teacher authority comes from the caller's own users profile. Coordinators deliberately span every
+    // section; a regular teacher reaches only the exact Class N-section values assigned in classTeacherOf.
+    function isCoordinatorRole() {
+      return isAny(['teacher'])
+        && exists(/databases/$(database)/documents/users/$(myUserDocId()))
+        && get(/databases/$(database)/documents/users/$(myUserDocId())).data.get('coordinator', false) == true;
+    }
+    function ownsClassSection(data) {
+      return isAny(['teacher'])
+        && exists(/databases/$(database)/documents/users/$(myUserDocId()))
+        && get(/databases/$(database)/documents/users/$(myUserDocId())).data.get('classTeacherOf', [])
+          .hasAny([data.get('cls','') + '-' + data.get('section',''), 'Class ' + data.get('cls','') + '-' + data.get('section','')]);
+    }
+    // Teaching work uses one exact class-section-subject tuple. Older profiles without teachingPairs retain
+    // their legacy classes + subjects access until leadership reviews them in Staff → Assign.
+    function ownsTeachingPair(data) {
+      return isAny(['teacher'])
+        && exists(/databases/$(database)/documents/users/$(myUserDocId()))
+        && ((get(/databases/$(database)/documents/users/$(myUserDocId())).data.get('teachingPairs', []).size() > 0
+              && get(/databases/$(database)/documents/users/$(myUserDocId())).data.get('teachingPairs', []).hasAny([
+                'Class ' + data.get('class', data.get('cls','')) + '-' + data.get('section','') + '|' + data.get('subject', data.get('subj','')),
+                data.get('class', data.get('cls','')) + '-' + data.get('section','') + '|' + data.get('subject', data.get('subj',''))
+              ]))
+            || (get(/databases/$(database)/documents/users/$(myUserDocId())).data.get('teachingPairs', []).size() == 0
+              && get(/databases/$(database)/documents/users/$(myUserDocId())).data.get('classes', []).hasAny([
+                'Class ' + data.get('class', data.get('cls','')) + '-' + data.get('section',''),
+                data.get('class', data.get('cls','')) + '-' + data.get('section','')
+              ])
+              && get(/databases/$(database)/documents/users/$(myUserDocId())).data.get('subjects', []).hasAny([data.get('subject', data.get('subj',''))])));
     }
     // Greencity is the LIVE, UNPREFIXED branch. Its money/PII collections below check only ROLE, so without this
     // guard a signed-in OFFICE / STAFF / PARENT account belonging to ANOTHER branch would reach Greencity's money
@@ -87,9 +142,11 @@ service cloud.firestore {
       // accounts holds username/role/name/email/admNo (+ a parent's child name/class). Staff need the full list;
       // a family member reads ONLY their own account doc (keyed by uid) — no cross-branch enumeration of everyone.
       allow read: if isAny(['admin','office','vp']) || (signedIn() && id == request.auth.uid);
-      // Director manages all. The VP may CREATE new (non-admin) logins only — not edit, disable or delete existing accounts.
-      allow create: if isAny(['admin']) || (isAny(['vp']) && request.resource.data.get('role','teacher') in ['teacher','office','student','parent']);
-      allow update, delete: if isAny(['admin']);
+      // Director manages all. The VP may create TEACHER logins only — never Office (money), Student (requires
+      // a writable Student Record), Parent, or another privileged role; and cannot edit/disable/delete accounts.
+      allow create: if isDirectorRole()
+        || (isVicePrincipalRole() && request.resource.data.get('role','') == 'teacher');
+      allow update, delete: if isDirectorRole();
     }
 
     // ── Money — Director + Office only, and only within Greencity ────────────
@@ -98,14 +155,39 @@ service cloud.firestore {
     // CHANGING an amount or DELETING a receipt is Director-only. This closes the cashier cash-theft window.
     match /fees/{id} {
       allow read:   if isAny(['admin','office']) && inGreencity();
-      allow create: if isAny(['admin','office']) && inGreencity();
+      allow create: if inGreencity() && (isAny(['admin'])
+        || (isAny(['office']) && !id.matches('^__.*') && request.resource.data.get('disc', false) == false));
       allow update: if inGreencity() && (isAny(['admin'])
-        || (isAny(['office']) && request.resource.data.get('amount', 0) == resource.data.get('amount', 0)));
+        || (isAny(['office']) && !id.matches('^__.*')
+          && request.resource.data.get('amount', 0) == resource.data.get('amount', 0)));
       allow delete: if isAny(['admin']) && inGreencity();
     }
 
-    // Staff monthly salary (base pay per staff + payroll settings). Sensitive — Director + Office ONLY (hidden from teachers/VP).
-    match /salaries/{id} { allow read, write: if isAny(['admin','office']) && inGreencity(); }
+    // Cashier day-close snapshots. Office may close a day; only the Director may reopen or alter a close.
+    match /feeDayCloses/{id} {
+      allow read: if isAny(['admin','office']) && inGreencity();
+      allow create: if isAny(['admin','office']) && inGreencity()
+                    && request.resource.data.status == 'closed';
+      allow update, delete: if isAny(['admin']) && inGreencity();
+    }
+
+    // Staff monthly salary (base pay per staff + payroll settings). Sensitive — Director + Office ONLY.
+    // Payroll-run transitions are enforced here, not only hidden in the UI: Office may PREPARE a run and later
+    // record an APPROVED run as PAID, but cannot approve, reopen or rewrite a frozen run. Director owns those steps.
+    match /salaries/{id} {
+      allow read: if isAny(['admin','office']) && inGreencity();
+      allow create: if inGreencity() && (isAny(['admin'])
+        || (isAny(['office']) && (!id.matches('^__payroll_.*')
+          || request.resource.data.get('status','') == 'prepared')));
+      allow update: if inGreencity() && (isAny(['admin'])
+        || (isAny(['office']) && (!id.matches('^__payroll_.*')
+          || (resource.data.get('status','draft') == 'draft' && request.resource.data.get('status','') == 'prepared')
+          || (resource.data.get('status','') == 'approved' && request.resource.data.get('status','') == 'paid'
+            && request.resource.data.get('rows',[]) == resource.data.get('rows',[])
+            && request.resource.data.get('totals',{}) == resource.data.get('totals',{})
+            && request.resource.data.get('calculationSignature','') == resource.data.get('calculationSignature','')))));
+      allow delete: if isAny(['admin']) && inGreencity();
+    }
 
     // Monotonic counters (e.g. counters/feeReceipts) — allocated atomically in a transaction during fee
     // collection so two simultaneous saves can't mint the same receipt number. Director + Office only.
@@ -127,27 +209,58 @@ service cloud.firestore {
 
     // Discipline incidents (per-student behaviour log) — all staff read; admin/VP/teacher log them.
     // Discipline cases are evidentiary — staff create/update (incl. the {deleted:true} soft-delete flag), only the Director hard-deletes.
-    match /discipline/{id} { allow read: if isAny(['admin','vp','office','teacher']); allow create, update: if isAny(['admin','vp','office','teacher']); allow delete: if isAny(['admin']); }
-    // Parent complaints / grievances — Director + VP + Office.
-    match /complaints/{id} { allow read, write: if isAny(['admin','vp','office']); }
+    match /discipline/{id} {
+      allow read: if isAny(['admin','vp','office','teacher']);
+      allow create: if isAny(['admin','vp','office'])
+        || (isAny(['teacher']) && request.resource.data.reportedById == myUsername());
+      allow update: if isAny(['admin','vp']) || isCoordinatorRole()
+        || (isAny(['teacher'])
+          && (resource.data.get('reportedById','') == myUsername() || resource.data.get('assignedToId','') == myUsername()
+            || resource.data.get('by','') == myAccountName() || resource.data.get('assignedTo','') == myAccountName())
+          && request.resource.data.get('status','open') in ['open','review','action']
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['actions','status','updatedAt','updatedBy','lastActionAt']))
+        || (isAny(['office'])
+          && request.resource.data.get('status','open') in ['open','review','action']
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['parentNoticeId','actions','status','updatedAt','updatedBy','lastActionAt']));
+      allow delete: if isAny(['admin']);
+    }
+    // Parent concerns / absence notes. A parent may CREATE and query only records tied to their own admission
+    // number; they can never edit, resolve or delete them. Leadership owns the queue and its resolution trail.
+    match /complaints/{id} {
+      allow read: if isAny(['admin','vp','office'])
+        || (isAny(['teacher']) && resource.data.get('category','') == 'Absence note'
+          && (isCoordinatorRole() || ownsClassSection(resource.data)))
+        || (isAny(['parent']) && resource.data.admNo == string(myAdmNo()));
+      allow create: if isAny(['admin','vp','office'])
+        || (isAny(['parent'])
+          && request.resource.data.admNo == string(myAdmNo())
+          && request.resource.data.status == 'open'
+          && request.resource.data.source == 'parent-portal');
+      allow update, delete: if isAny(['admin','vp','office']);
+    }
 
-    // Term-exam marks & report cards — only markers write.
-    // READ also allows parent/student so the portal can show EXAM results next to class tests (it previously
-    // showed class tests only, because the tests collection is signedIn()-readable and this one was not).
-    // Same posture the app already uses for tests/attendance; the portal renders only the child's own marks.
+    // Full term-exam registers contain the entire class and are STAFF ONLY. Family/student portals read the
+    // per-child release snapshot below; UI filtering is never used as a privacy boundary.
     match /exams/{id} {
-      allow read: if signedIn();
+      allow read: if isAny(['admin','vp','office','teacher']);
       // Creating or DELETING a term exam affects every subject and every pupil in the class — a subject
       // teacher could delete an exam and take all its marks with it. Management only, matching who publishes.
       allow create, delete: if isAny(['admin','vp']);
-      // Office does post-exam mark corrections after teachers — same write access as a marker.
-      // A teacher may write MARKS but must not restructure the exam or publish it: removing a subject drops
-      // its marks from every report card in the class, and publication is the gate that protects the PTM.
-      // Mark saves write the whole document but only CHANGE these keys, so this does not block normal marking.
-      allow update: if isAny(['admin','vp','office'])
-        || (isAny(['teacher'])
+      allow update: if isAny(['admin','vp'])
+        || (isAny(['office','teacher'])
+            && resource.data.get('published',false) != true
             && !request.resource.data.diff(resource.data).affectedKeys()
-                 .hasAny(['subjects','published','publishedAt','publishedBy','name','cls','term','date']));
+                 .hasAny(['subjects','published','publishedAt','publishedBy','publishedRevision','unpublishedAt','name','cls','term','date'])
+            && (isCoordinatorRole()
+              || (request.resource.data.get('reviewStatus','needs-review') == 'needs-review'
+                && request.resource.data.get('reviewedAt','') == ''
+                && request.resource.data.get('reviewedBy','') == '')));
+    }
+    match /portalExamResults/{id} {
+      allow read: if isAny(['admin','vp','office'])
+        || (isAny(['parent','student']) && resource.data.admNo == string(myAdmNo()));
+      allow create, update: if isAny(['admin','vp']);
+      allow delete: if false;
     }
 
     // ── (1) Student records (FULL PII) — admin + office ONLY ──────────────────
@@ -164,7 +277,12 @@ service cloud.firestore {
     // Copy checking: staff only. Deliberately NOT signedIn() on read - parents must not see which pupils'
     // copies are outstanding, so this is narrower than the syllabus rule directly above.
     match /copyChecks/{id}        { allow read, write: if isAny(['admin','vp','teacher']); }
-    match /attendance/{id}        { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
+    match /attendance/{id} {
+      allow read: if signedIn();
+      allow create: if isAny(['admin','vp']) || (isAny(['teacher']) && (isCoordinatorRole() || ownsClassSection(request.resource.data)));
+      allow update: if isAny(['admin','vp']) || (isAny(['teacher']) && (isCoordinatorRole() || (ownsClassSection(resource.data) && ownsClassSection(request.resource.data))));
+      allow delete: if isAny(['admin','vp']);
+    }
     match /students/{id}          { allow read: if signedIn(); allow write: if isAny(['admin','vp','office','teacher']); }
 
     // Student photos — one small JPEG per admission no. All staff may upload; any signed-in user reads.
@@ -214,9 +332,27 @@ service cloud.firestore {
         || (isAny(['teacher','office','parent','student']) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readBy','ackAt']));
     }
     match /calendar/{id}          { allow read: if signedIn(); allow write: if isAny(['admin','vp']); }
-    match /lessonPlans/{id}       { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
-    match /teacherLogs/{id}       { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
-    match /leaves/{id}            { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
+    match /lessonPlans/{id} {
+      allow read: if signedIn();
+      allow create: if isAny(['admin','vp']) || (isAny(['teacher']) && request.resource.data.teacherId == myUsername() && ownsTeachingPair(request.resource.data));
+      allow update: if isAny(['admin','vp']) || (isAny(['teacher']) && resource.data.teacherId == myUsername() && request.resource.data.teacherId == myUsername() && ownsTeachingPair(request.resource.data));
+      allow delete: if isAny(['admin','vp']) || (isAny(['teacher']) && resource.data.teacherId == myUsername());
+    }
+    match /teacherLogs/{id} {
+      allow read: if signedIn();
+      allow create: if isAny(['admin','vp']) || (isAny(['teacher']) && request.resource.data.teacherId == myUsername() && (request.resource.data.get('isSubstitute',false) == true || ownsTeachingPair(request.resource.data)));
+      allow update: if isAny(['admin','vp']) || (isAny(['teacher']) && resource.data.teacherId == myUsername() && request.resource.data.teacherId == myUsername() && (request.resource.data.get('isSubstitute',false) == true || ownsTeachingPair(request.resource.data)));
+      allow delete: if isAny(['admin','vp']) || (isAny(['teacher']) && resource.data.teacherId == myUsername());
+    }
+    match /leaves/{id} {
+      allow read: if signedIn();
+      allow create: if isAny(['admin','vp']) || (isAny(['teacher']) && request.resource.data.teacherId == myUsername() && request.resource.data.status == 'pending');
+      allow update: if isAny(['admin','vp']) || (isAny(['teacher'])
+        && resource.data.teacherId == myUsername() && request.resource.data.teacherId == myUsername()
+        && (resource.data.status in ['pending','approved']) && request.resource.data.status == 'withdrawn'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','withdrawnAt']));
+      allow delete: if isAny(['admin','vp']);
+    }
     match /conceptNotes/{id}      { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
     // Staff attendance. A SELF check-in must carry serverAt == request.time (the real server clock), so a teacher
     // can't forge an on-time mark by changing their phone — even by hand. Office/director/biometric writes are exempt.
@@ -272,14 +408,14 @@ service cloud.firestore {
       // doc, with the role field forced to equal their real account role (blocks
       // self-promotion AND cross-user overwrites — the old "any existing doc if
       // role unchanged" clause let any session rewrite any staff profile).
-      allow write: if isAny(['admin','office'])
-        || ((id.matches('.*__subjects') || id.matches('.*__classTeachers')) && isAny(['admin','vp']))
-        || (isAny(['vp']) && !id.matches('.*__subjects') && !id.matches('.*__classTeachers')
+      allow write: if isDirectorRole() || isAny(['office'])
+        || ((id.matches('.*__subjects') || id.matches('.*__classTeachers')) && (isDirectorRole() || isVicePrincipalRole()))
+        || (isVicePrincipalRole() && !id.matches('.*__subjects') && !id.matches('.*__classTeachers')
             && resource != null && resource.data.get('role','') == 'teacher'
             && request.resource.data.get('role','') == 'teacher')
-        || (isAny(['vp']) && !id.matches('.*__subjects') && !id.matches('.*__classTeachers')
+        || (isVicePrincipalRole() && !id.matches('.*__subjects') && !id.matches('.*__classTeachers')
             && resource == null
-            && request.resource.data.get('role','teacher') in ['teacher','office','student','parent'])
+            && request.resource.data.get('role','') == 'teacher')
         || (!id.matches('.*__subjects') && !id.matches('.*__classTeachers')
             && signedIn() && ownsUserDoc(id)
             && request.resource.data.get('role', role()) == role());
@@ -346,16 +482,68 @@ service cloud.firestore {
     // Academic / operational / workflow for a branch — that branch's staff read; appropriate roles write
     match /{bc2}/{id2} {
       allow read: if signedIn() && inBranch(bc2)
-        && ((baseOf(bc2) in ['students','academicRoster','attendance','tests','topics','syllabus','studentLinks','studentPhotos','timetables','timetableSettings','notices','lessonPlans','teacherLogs','leaves','wrongAnswers'])
-          || ((baseOf(bc2) in ['exams','discipline','complaints','registrations','admissions']) && isAny(['admin','vp','office','teacher'])));
+        && ((baseOf(bc2) in ['students','academicRoster','tests','topics','syllabus','studentLinks','studentPhotos','timetables','timetableSettings','notices','lessonPlans','teacherLogs','leaves','wrongAnswers'])
+          || ((baseOf(bc2) in ['exams','discipline','registrations','admissions']) && isAny(['admin','vp','office','teacher'])));
       allow write: if signedIn() && inBranch(bc2)
-        && (baseOf(bc2) in ['students','academicRoster','attendance','exams','tests','topics','syllabus','studentLinks','studentPhotos','timetables','timetableSettings','notices','lessonPlans','teacherLogs','leaves','complaints','registrations','admissions'])
+        && (baseOf(bc2) in ['students','academicRoster','exams','tests','topics','syllabus','studentLinks','studentPhotos','timetables','timetableSettings','notices','registrations','admissions'])
         && isAny(['admin','vp','office','teacher']);
+    }
+    // Attendance ownership and parent absence-note privacy stay identical on every campus.
+    match /{bcat}/{idat} {
+      allow read: if signedIn() && inBranch(bcat) && baseOf(bcat) == 'attendance';
+      allow create: if signedIn() && inBranch(bcat) && baseOf(bcat) == 'attendance'
+        && (isAny(['admin','vp']) || (isAny(['teacher']) && (isCoordinatorRole() || ownsClassSection(request.resource.data))));
+      allow update: if signedIn() && inBranch(bcat) && baseOf(bcat) == 'attendance'
+        && (isAny(['admin','vp']) || (isAny(['teacher']) && (isCoordinatorRole() || (ownsClassSection(resource.data) && ownsClassSection(request.resource.data)))));
+      allow delete: if signedIn() && inBranch(bcat) && baseOf(bcat) == 'attendance' && isAny(['admin','vp']);
+    }
+    match /{bccp}/{idcp} {
+      allow read: if signedIn() && inBranch(bccp) && baseOf(bccp) == 'complaints'
+        && (isAny(['admin','vp','office'])
+          || (isAny(['teacher']) && resource.data.get('category','') == 'Absence note' && (isCoordinatorRole() || ownsClassSection(resource.data)))
+          || (isAny(['parent']) && resource.data.admNo == string(myAdmNo())));
+      allow create: if signedIn() && inBranch(bccp) && baseOf(bccp) == 'complaints'
+        && (isAny(['admin','vp','office'])
+          || (isAny(['parent']) && request.resource.data.admNo == string(myAdmNo()) && request.resource.data.status == 'open' && request.resource.data.source == 'parent-portal'));
+      allow update, delete: if signedIn() && inBranch(bccp) && baseOf(bccp) == 'complaints' && isAny(['admin','vp','office']);
+    }
+    // Branch-prefixed teacher-authored records use the same ownership boundary as Greencity above. They are
+    // deliberately excluded from the broad academic write block so overlapping wildcard rules cannot reopen it.
+    match /{bcta}/{idta} {
+      allow create: if signedIn() && inBranch(bcta) && (baseOf(bcta) in ['lessonPlans','teacherLogs'])
+        && (isAny(['admin','vp']) || (isAny(['teacher']) && request.resource.data.teacherId == myUsername()
+          && ((baseOf(bcta) == 'teacherLogs' && request.resource.data.get('isSubstitute',false) == true) || ownsTeachingPair(request.resource.data))));
+      allow update: if signedIn() && inBranch(bcta) && (baseOf(bcta) in ['lessonPlans','teacherLogs'])
+        && (isAny(['admin','vp']) || (isAny(['teacher']) && resource.data.teacherId == myUsername() && request.resource.data.teacherId == myUsername()
+          && ((baseOf(bcta) == 'teacherLogs' && request.resource.data.get('isSubstitute',false) == true) || ownsTeachingPair(request.resource.data))));
+      allow delete: if signedIn() && inBranch(bcta) && (baseOf(bcta) in ['lessonPlans','teacherLogs'])
+        && (isAny(['admin','vp']) || (isAny(['teacher']) && resource.data.teacherId == myUsername()));
+    }
+    match /{bclv}/{idlv} {
+      allow create: if signedIn() && inBranch(bclv) && baseOf(bclv) == 'leaves'
+        && (isAny(['admin','vp']) || (isAny(['teacher']) && request.resource.data.teacherId == myUsername() && request.resource.data.status == 'pending'));
+      allow update: if signedIn() && inBranch(bclv) && baseOf(bclv) == 'leaves'
+        && (isAny(['admin','vp']) || (isAny(['teacher'])
+          && resource.data.teacherId == myUsername() && request.resource.data.teacherId == myUsername()
+          && (resource.data.status in ['pending','approved']) && request.resource.data.status == 'withdrawn'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','withdrawnAt'])));
+      allow delete: if signedIn() && inBranch(bclv) && baseOf(bclv) == 'leaves' && isAny(['admin','vp']);
     }
     // Branch discipline cases are evidentiary: staff create/update (incl. the {deleted:true} soft-delete flag);
     // hard delete is Director-only. Reads stay staff-gated via the academic block above.
     match /{bcdc}/{iddc} {
-      allow create, update: if signedIn() && inBranch(bcdc) && baseOf(bcdc) == 'discipline' && isAny(['admin','vp','office','teacher']);
+      allow create: if signedIn() && inBranch(bcdc) && baseOf(bcdc) == 'discipline'
+        && (isAny(['admin','vp','office']) || (isAny(['teacher']) && request.resource.data.reportedById == myUsername()));
+      allow update: if signedIn() && inBranch(bcdc) && baseOf(bcdc) == 'discipline'
+        && (isAny(['admin','vp']) || isCoordinatorRole()
+          || (isAny(['teacher'])
+            && (resource.data.get('reportedById','') == myUsername() || resource.data.get('assignedToId','') == myUsername()
+              || resource.data.get('by','') == myAccountName() || resource.data.get('assignedTo','') == myAccountName())
+            && request.resource.data.get('status','open') in ['open','review','action']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['actions','status','updatedAt','updatedBy','lastActionAt']))
+          || (isAny(['office'])
+            && request.resource.data.get('status','open') in ['open','review','action']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['parentNoticeId','actions','status','updatedAt','updatedBy','lastActionAt'])));
       allow delete: if signedIn() && inBranch(bcdc) && baseOf(bcdc) == 'discipline' && isAny(['admin']);
     }
     // A branch parent/student may only ACKNOWLEDGE a notice — an update touching nothing but readBy/ackAt
