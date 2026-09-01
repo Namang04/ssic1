@@ -18178,17 +18178,27 @@ function QuestionBank({user}){
   const[testCls,setTestCls]=useState("10");
 
   const[filterPYQ,setFilterPYQ]=useState(false);
+  const[filterSrc,setFilterSrc]=useState("");   // paper type: Board Paper / Sample Paper / Practice Qs / Compartment
+  const[filterYear,setFilterYear]=useState(""); // session the paper belongs to, e.g. 2026 or 2025-26
   const data=useMemo(()=>{const raw=QB_DATA[lvl]||[];const branched=(lvl==="sci"||lvl==="s9"||lvl==="sst9"||lvl==="e9");if(branched&&sciSub) return raw.filter(q=>q.subj===sciSub);return raw;},[lvl,sciSub]);
   const hasPYQ=useMemo(()=>data.some(isPYQ),[data]);
+  // Only offer paper types and years this subject actually has, so a teacher can never pick a filter that
+  // returns nothing. Years sort newest first - recent boards are what papers get built from.
+  const srcOpts=useMemo(()=>{var k={};data.forEach(function(q){var v=__qSrc(q);if(v)k[v.kind]=1;});return Object.keys(k).sort();},[data]);
+  const yearOpts=useMemo(()=>{var k={};data.forEach(function(q){var v=__qSrc(q);if(v&&v.year)k[v.year]=1;});return Object.keys(k).sort().reverse();},[data]);
   useEffect(()=>{if(!hasPYQ)setFilterPYQ(false);},[hasPYQ]);
   const filtered=useMemo(()=>data.filter(q=>{
     if(filterCh&&q.c!==filterCh)return false;
     if(filterSec&&q.s!==filterSec)return false;
     if(filterDiff&&q.d!==filterDiff)return false;
     if(filterPYQ&&!isPYQ(q))return false;
+    if(filterSrc||filterYear){var __s=__qSrc(q);
+      if(!__s)return false;
+      if(filterSrc&&__s.kind!==filterSrc)return false;
+      if(filterYear&&__s.year!==filterYear)return false;}
     if(search&&!q.q.toLowerCase().includes(search.toLowerCase())&&!q.c.toLowerCase().includes(search.toLowerCase()))return false;
     return true;
-  }),[data,filterCh,filterSec,filterDiff,filterPYQ,search]);
+  }),[data,filterCh,filterSec,filterDiff,filterPYQ,filterSrc,filterYear,search]);
 
   // Coverage of the current (branch-aware) view — read-only, never modifies the question data.
   const cov=useMemo(function(){var ch={},pyq=0,sec={A:0,B:0,C:0,D:0,E:0};data.forEach(function(q){if(q.c)ch[q.c]=1;if(isPYQ(q))pyq++;if(sec[q.s]!==undefined)sec[q.s]++;});return {total:data.length,chapters:Object.keys(ch).length,pyq:pyq,sec:sec};},[data]);
@@ -18460,8 +18470,16 @@ body{font-family:'Times New Roman',Georgia,serif;padding:30px 34px;color:#1a1a1a
               ))}
             </div>
             {hasPYQ&&<button onClick={()=>setFilterPYQ(v=>!v)} title="Show only previous-year board questions (CBSE PYQs)" style={{padding:"6px 13px",borderRadius:99,border:"1px solid "+(filterPYQ?"var(--tx-pur)":"var(--c-d2)"),background:filterPYQ?"var(--tx-pur)":"var(--c-fff)",color:filterPYQ?"#fff":"var(--c-1e)",fontSize:12,fontWeight:700,cursor:"pointer"}}>Previous Year</button>}
-            {(filterCh||filterSec||filterDiff||filterPYQ||search)&&<button onClick={()=>{setFilterCh("");setFilterSec("");setFilterDiff("");setFilterPYQ(false);setSearch("");}} style={{marginLeft:"auto",fontSize:11.5,fontWeight:600,color:"var(--ap-accent)",background:"none",border:"none",cursor:"pointer",fontFamily:"var(--ss-font)"}}>Clear filters ✕</button>}
-            <span style={{marginLeft:(filterCh||filterSec||filterDiff||filterPYQ||search)?"0":"auto",fontSize:12.5,color:"var(--ap-muted)",fontWeight:500}}>{filtered.length} of {cov.total} question{cov.total===1?"":"s"}</span>
+            {srcOpts.length>0&&<select value={filterSrc} onChange={e=>setFilterSrc(e.target.value)} title="Filter by which kind of CBSE paper the question came from" className="ss-input" style={{padding:"8px 30px 8px 13px",borderRadius:6,border:"1px solid var(--c-d2)",fontSize:12.5,color:"var(--c-1e)",background:"var(--c-fff)",cursor:"pointer"}}>
+              <option value="">All sources</option>
+              {srcOpts.map(k=><option key={k} value={k}>{k}</option>)}
+            </select>}
+            {yearOpts.length>0&&<select value={filterYear} onChange={e=>setFilterYear(e.target.value)} title="Filter by the year of the paper" className="ss-input" style={{padding:"8px 30px 8px 13px",borderRadius:6,border:"1px solid var(--c-d2)",fontSize:12.5,color:"var(--c-1e)",background:"var(--c-fff)",cursor:"pointer"}}>
+              <option value="">All years</option>
+              {yearOpts.map(y=><option key={y} value={y}>{y}</option>)}
+            </select>}
+            {(filterCh||filterSec||filterDiff||filterPYQ||filterSrc||filterYear||search)&&<button onClick={()=>{setFilterCh("");setFilterSec("");setFilterDiff("");setFilterPYQ(false);setFilterSrc("");setFilterYear("");setSearch("");}} style={{marginLeft:"auto",fontSize:11.5,fontWeight:600,color:"var(--ap-accent)",background:"none",border:"none",cursor:"pointer",fontFamily:"var(--ss-font)"}}>Clear filters ✕</button>}
+            <span style={{marginLeft:(filterCh||filterSec||filterDiff||filterPYQ||filterSrc||filterYear||search)?"0":"auto",fontSize:12.5,color:"var(--ap-muted)",fontWeight:500}}>{filtered.length} of {cov.total} question{cov.total===1?"":"s"}</span>
           </div>
           {/* Contextual chapter build */}
           {filterCh&&(
@@ -23762,7 +23780,13 @@ function StudentQB({user,onBack,saved,saveDone}){
 
   const chapters=useMemo(()=>[...new Set(data.map(q=>q.c))].sort(),[data]);
   const[filterPYQ,setFilterPYQ]=useState(false);
+  const[filterSrc,setFilterSrc]=useState("");   // paper type: Board Paper / Sample Paper / Practice Qs / Compartment
+  const[filterYear,setFilterYear]=useState(""); // session the paper belongs to, e.g. 2026 or 2025-26
   const hasPYQ=useMemo(()=>data.some(isPYQ),[data]);
+  // Only offer paper types and years this subject actually has, so a teacher can never pick a filter that
+  // returns nothing. Years sort newest first - recent boards are what papers get built from.
+  const srcOpts=useMemo(()=>{var k={};data.forEach(function(q){var v=__qSrc(q);if(v)k[v.kind]=1;});return Object.keys(k).sort();},[data]);
+  const yearOpts=useMemo(()=>{var k={};data.forEach(function(q){var v=__qSrc(q);if(v&&v.year)k[v.year]=1;});return Object.keys(k).sort().reverse();},[data]);
   useEffect(()=>{if(!hasPYQ)setFilterPYQ(false);},[hasPYQ]);
 
   const filtered=useMemo(()=>data.filter(q=>{
@@ -23770,11 +23794,15 @@ function StudentQB({user,onBack,saved,saveDone}){
     if(filterSec&&q.s!==filterSec) return false;
     if(filterDiff&&q.d!==filterDiff) return false;
     if(filterPYQ&&!isPYQ(q)) return false;
+    if(filterSrc||filterYear){var __s=__qSrc(q);
+      if(!__s)return false;
+      if(filterSrc&&__s.kind!==filterSrc)return false;
+      if(filterYear&&__s.year!==filterYear)return false;}
     if(filterBm&&!saved["bm_"+lvl+"_"+((QB_DATA[lvl]||[]).indexOf(q))]) return false;
     if(search&&!q.q.toLowerCase().includes(search.toLowerCase())) return false;
     if(!showDone&&saved["done_"+lvl+"_"+(QB_DATA[lvl]||[]).indexOf(q)]) return false;
     return true;
-  }),[data,filterCh,filterSec,filterDiff,filterPYQ,filterBm,search,showDone,saved,lvl]);
+  }),[data,filterCh,filterSec,filterDiff,filterPYQ,filterSrc,filterYear,filterBm,search,showDone,saved,lvl]);
   const bmCount=useMemo(()=>(QB_DATA[lvl]||[]).reduce((a,q,i)=>a+(saved["bm_"+lvl+"_"+i]?1:0),0),[lvl,saved]);
 
   const doneCount=data.filter(q=>saved["done_"+lvl+"_"+(QB_DATA[lvl]||[]).indexOf(q)]).length;
@@ -23784,9 +23812,9 @@ function StudentQB({user,onBack,saved,saveDone}){
     data.forEach(q=>{const c=q.c||"Other";(m[c]=m[c]||{total:0,done:0});m[c].total++;if(saved["done_"+lvl+"_"+(QB_DATA[lvl]||[]).indexOf(q)])m[c].done++;});
     return Object.entries(m).map(([c,v])=>({c,total:v.total,done:v.done})).sort((a,b)=>a.c.localeCompare(b.c));
   },[data,saved,lvl]);
-  const anyFilter=!!(filterCh||search||filterSec||filterDiff||filterPYQ);
+  const anyFilter=!!(filterCh||search||filterSec||filterDiff||filterPYQ||filterSrc||filterYear);
   const[visN,setVisN]=useState(40);
-  useEffect(()=>setVisN(40),[lvl,sciSub,filterCh,filterSec,filterDiff,filterPYQ,search]);
+  useEffect(()=>setVisN(40),[lvl,sciSub,filterCh,filterSec,filterDiff,filterPYQ,filterSrc,filterYear,search]);
   var subjLabels;
   if(is12||is11){
     var yr=is12?"12":"11";
@@ -23851,6 +23879,14 @@ function StudentQB({user,onBack,saved,saveDone}){
               ))}
             </div>
             {hasPYQ&&<button onClick={()=>setFilterPYQ(v=>!v)} title="Show only previous-year board questions (CBSE PYQs)" style={{padding:"6px 13px",borderRadius:99,border:"1px solid "+(filterPYQ?"#7c3aed":"var(--c-d2)"),background:filterPYQ?"#7c3aed":"var(--c-fff)",color:filterPYQ?"#fff":"var(--ap-ink2)",fontSize:12,fontWeight:700,cursor:"pointer"}}>Previous Year</button>}
+            {srcOpts.length>0&&<select value={filterSrc} onChange={e=>setFilterSrc(e.target.value)} title="Filter by which kind of CBSE paper the question came from" className="ss-input" style={{padding:"8px 30px 8px 13px",borderRadius:6,border:"1px solid var(--c-d2)",fontSize:12.5,color:"var(--c-1e)",background:"var(--c-fff)",cursor:"pointer"}}>
+              <option value="">All sources</option>
+              {srcOpts.map(k=><option key={k} value={k}>{k}</option>)}
+            </select>}
+            {yearOpts.length>0&&<select value={filterYear} onChange={e=>setFilterYear(e.target.value)} title="Filter by the year of the paper" className="ss-input" style={{padding:"8px 30px 8px 13px",borderRadius:6,border:"1px solid var(--c-d2)",fontSize:12.5,color:"var(--c-1e)",background:"var(--c-fff)",cursor:"pointer"}}>
+              <option value="">All years</option>
+              {yearOpts.map(y=><option key={y} value={y}>{y}</option>)}
+            </select>}
             {(filterBm||bmCount>0)&&<button onClick={()=>setFilterBm(v=>!v)} title="Show only the questions you bookmarked" style={{padding:"6px 13px",borderRadius:99,border:"1px solid "+(filterBm?"#e9a64f":"var(--c-d2)"),background:filterBm?"#e9a64f":"var(--c-fff)",color:filterBm?"#fff":"var(--ap-ink2)",fontSize:12,fontWeight:700,cursor:"pointer"}}>Bookmarked{bmCount>0?" ("+bmCount+")":""}</button>}
             <div className="ap-field" style={{minWidth:160}}>
               <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>
