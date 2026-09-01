@@ -18030,7 +18030,12 @@ const QB_CBSE_WT={"Real Numbers":6,"Polynomials":5,"Linear Equations":5,"Quadrat
 const QB_SEC_MARKS={A:1,B:2,C:3,D:5,E:4};
 const QB_DIFF_LABEL={e:"Easy",m:"Medium",h:"Hard"};
 const QB_DIFF_COLOR={e:"#c9a84c",m:"#d97706",h:"var(--tx-red)"};
-const QB_SEC_COLOR={A:"#1a2e45",B:"#c9a84c",C:"#d97706",E:"#7c3aed",D:"var(--tx-red)"};
+// Section accents. The tint used to be built by concatenating an alpha suffix onto the colour
+// ("#1a2e45"+"1c"), which silently produced the invalid "var(--tx-red)1c" for section D - so D alone
+// rendered with no tint. The hexes also ignored the theme. Colour and tint are now separate token pairs.
+const QB_SEC_COLOR={A:"var(--tx-blu)",B:"var(--tx-gold)",C:"var(--tx-org)",D:"var(--tx-red)",E:"var(--tx-pur)"};
+const QB_SEC_TINT ={A:"var(--bg-blu)",B:"var(--bg-amb)", C:"var(--bg-org)",D:"var(--bg-red)",E:"var(--bg-pur)"};
+function __secTint(sec){return QB_SEC_TINT[sec]||"var(--c-f0)";}
 function qbShuffle(arr){const a=[...arr];for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
 
 // ── PAPER-GENERATOR INTEGRITY (single source of truth for grade; strip internal tags; refuse missing data) ──
@@ -18393,7 +18398,7 @@ body{font-family:'Times New Roman',Georgia,serif;padding:30px 34px;color:#1a1a1a
         {[["Questions",cov.total],["Chapters",cov.chapters]].map(function(x){return <span key={x[0]} className="ap-statchip"><b>{x[0]}</b><span className="n">{x[1]}</span></span>;})}
         {cov.pyq>0&&<span className="ap-statchip" style={{borderColor:"var(--tx-pur)"}}><b style={{color:"var(--tx-pur)"}}>PYQ</b><span className="n" style={{background:"var(--tx-pur)"}}>{cov.pyq}</span></span>}
         <span style={{width:1,height:18,background:"var(--ap-line)",margin:"0 2px"}}/>
-        {["A","B","C","D","E"].map(function(s){if(!cov.sec[s])return null;return <span key={s} style={{display:"inline-flex",alignItems:"center",gap:6,background:QB_SEC_COLOR[s]+"1c",color:QB_SEC_COLOR[s],borderRadius:6,padding:"3px 10px",fontSize:11.5,fontWeight:700}}>{s}<span style={{fontFamily:"var(--ss-font)"}}>{cov.sec[s]}</span></span>;})}
+        {["A","B","C","D","E"].map(function(s){if(!cov.sec[s])return null;return <span key={s} style={{display:"inline-flex",alignItems:"center",gap:6,background:__secTint(s),color:QB_SEC_COLOR[s],borderRadius:6,padding:"3px 10px",fontSize:11.5,fontWeight:700}}>{s}<span style={{fontFamily:"var(--ss-font)"}}>{cov.sec[s]}</span></span>;})}
       </div>
       {/* Control bar */}
       <div className="ap-panel" style={{padding:"12px 14px",marginBottom:16,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
@@ -18501,7 +18506,7 @@ body{font-family:'Times New Roman',Georgia,serif;padding:30px 34px;color:#1a1a1a
             return(
               <div key={sec} style={{marginBottom:22}}>
                 <div style={{display:"flex",alignItems:"center",gap:10,padding:"0 2px 10px",marginBottom:12,borderBottom:"1px solid var(--ap-line)"}}>
-                  <span style={{background:QB_SEC_COLOR[sec]+"1c",color:QB_SEC_COLOR[sec],borderRadius:6,width:26,height:26,display:"grid",placeItems:"center",fontSize:12,fontWeight:800}}>{sec}</span>
+                  <span style={{background:__secTint(sec),color:QB_SEC_COLOR[sec],borderRadius:6,width:26,height:26,display:"grid",placeItems:"center",fontSize:12,fontWeight:800}}>{sec}</span>
                   <span style={{fontSize:15.5,fontWeight:650,color:"var(--ap-ink)",letterSpacing:"-0.01em"}}>{(QB_SNAMES[sec]||"").replace(/^Section\s+[A-E]\s*[—–-]\s*/,"")}</span>
                   <span style={{fontSize:11.5,color:"var(--ap-muted)",background:"var(--c-f0)",padding:"2px 10px",borderRadius:99,marginLeft:"auto",fontWeight:600}}>{qs.length}</span>
                 </div>
@@ -18596,7 +18601,7 @@ body{font-family:'Times New Roman',Georgia,serif;padding:30px 34px;color:#1a1a1a
                 ?<div style={{textAlign:"center",padding:"26px 18px",color:"var(--ap-muted)",fontSize:12.5,lineHeight:1.55}}>Tap <b style={{color:"var(--ap-accent)"}}>+ Add to paper</b> on any question, or use a preset above.</div>
                 :testItems.map((ti,i)=>(
                   <div key={i} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 15px",borderBottom:"1px solid var(--ap-line)"}}>
-                    <div style={{flexShrink:0,width:20,height:20,borderRadius:6,background:QB_SEC_COLOR[ti.q.s]+"1c",color:QB_SEC_COLOR[ti.q.s],display:"grid",placeItems:"center",fontSize:11,fontWeight:700,marginTop:1}}>{ti.q.s}</div>
+                    <div style={{flexShrink:0,width:20,height:20,borderRadius:6,background:__secTint(ti.q.s),color:QB_SEC_COLOR[ti.q.s],display:"grid",placeItems:"center",fontSize:11,fontWeight:700,marginTop:1}}>{ti.q.s}</div>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontSize:11,color:"var(--ap-muted)",marginBottom:2}}>{ti.q.c} · {ti.q.m}m</div>
                       <div style={{fontSize:12,color:"var(--ap-ink2)",lineHeight:1.4,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{ti.q.q.replace(/<[^>]+>/g,"")}</div>
