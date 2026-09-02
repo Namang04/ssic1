@@ -18140,6 +18140,14 @@ const QB_UNIT_OF_SST={
 };
 // Computer Applications (code 165) is a 50-mark, 2-hour theory paper plus a 50-mark practical - not the
 // 80-mark, 3-hour paper every other subject sits. Its chapters ARE its units, so no mapping table is needed.
+// English is sectioned by SKILL AREA, not by question type: Reading 20, Writing & Grammar 20, Literature 40.
+const QB_UNIT_OF_ENG={
+  "Reading Skills":"Reading",
+  "Grammar":"Writing & Grammar","Writing Skills":"Writing & Grammar",
+  "First Flight \u2013 Prose":"Literature","First Flight \u2013 Poetry":"Literature",
+  "Footprints Without Feet":"Literature"
+};
+const QB_UNIT_MARKS_ENG={"Reading":20,"Writing & Grammar":20,"Literature":40};
 const QB_UNIT_MARKS_COMP={"Networking":15,"HTML":25,"Cyber Ethics":10};
 function __qbBoardTotal(lvl){ return lvl==="comp"?50:80; }
 function __qbPresets(lvl){
@@ -18200,6 +18208,7 @@ function __qbBlueprint(lvl,target){
 const QB_UNIT_MARKS_X10={"Number Systems":6,"Algebra":20,"Coordinate Geometry":6,"Geometry":15,
   "Trigonometry":12,"Mensuration":10,"Statistics & Probability":11};
 function __qbUnitOf(c,lvl){ var k=String(c||"").trim();
+  if(lvl==="eng") return QB_UNIT_OF_ENG[k]||"";
   if(lvl==="comp") return QB_UNIT_MARKS_COMP[k]?k:"";
   if(lvl==="sci") return QB_UNIT_OF_SCI[k]||"";
   if(lvl==="sst") return QB_UNIT_OF_SST[k]||"";
@@ -18209,7 +18218,7 @@ function __qbUnitOf(c,lvl){ var k=String(c||"").trim();
 function __qbUnitTargets(lvl,total){
   var src=(lvl==="std"||lvl==="bas")?QB_UNIT_MARKS_X10
     :(lvl==="sci"?QB_UNIT_MARKS_SCI:(lvl==="sst"?QB_UNIT_MARKS_SST
-    :(lvl==="comp"?QB_UNIT_MARKS_COMP:null)));
+    :(lvl==="comp"?QB_UNIT_MARKS_COMP:(lvl==="eng"?QB_UNIT_MARKS_ENG:null))));
   if(!src) return null;
   var k=Number(total||__qbBoardTotal(lvl))/__qbBoardTotal(lvl), out={};
   Object.keys(src).forEach(function(u){ out[u]=src[u]*k; });
@@ -18232,7 +18241,9 @@ var QB_LVL_GRADE={
 function qbStripTags(t){ if(t==null)return ""; var s=String(t),prev; do{ prev=s; s=s.replace(/^\s*\[[^\]]*\]\s*/,"").replace(/^\s*(M\d+\.)?Q\.?\d+\s*[:.]\s*/i,""); }while(s!==prev); return s.replace(/\bM\d+\.Q\d+\.?\s*/g,"").replace(/^\s+/,""); }
 function qbSrcTag(t){ var m=String(t||"").match(/^\s*(\[[^\]]*\])|\bM\d+\.Q\d+/); return m?(m[1]||m[0]).trim():""; }
 // Dependent-data: stem refers to a table/figure/balance-sheet/"given data" that must accompany it.
-var QB_DEP_RX=/(balance sheet|from the (following )?(table|graph|passage)|as per the data given|in the (figure|graph|diagram)|shown (below|in the figure)|from the given figure|following (data|information|table))/i;
+// \b before "in the" matters: without it "Identify and explain the figure of speech" matched "in the
+// figure" INSIDE the word "explain", and the question was reported as missing a diagram it never had.
+var QB_DEP_RX=/(balance sheet|from the (following )?(table|graph|passage)|as per the data given|\bin the (figure|graph|diagram)\b|shown (below|in the figure)|from the given figure|following (data|information|table))/i;
 function qbHasInlineData(q){ return /(\d[\d,]*\s*[–-]\s*\d)|₹\s?\d|\d+\s*(cm|m|kg|°|Ω|μF|V|%)\b|(\d{2,}\D+){3,}/i.test(String(q||"")); }
 function qbNeedsData(q,fig){ return QB_DEP_RX.test(String(q||"")) && !fig && !qbHasInlineData(q); }
 // Pre-print structural validator. Returns {errors:[], dropped:[]} — the generator ABORTS on errors and REMOVES dropped items.
@@ -18428,6 +18439,18 @@ function QuestionBank({user}){
     // A board paper may only draw on chapters CBSE actually examines in the theory paper. Shorter presets are
     // school tests, so they keep the whole bank - a unit test on Consumer Rights is perfectly reasonable.
     const boardOnly=Number(target)===__qbBoardTotal(lvl);
+    // English reserves 20 of its 80 marks for two unseen passages - one discursive, one case-based with a
+    // visual input. Those are source texts, not questions, and the bank holds none. Every other subject can
+    // be balanced from what is here; English cannot, so say so instead of printing a paper that silently
+    // omits a quarter of the exam.
+    if(boardOnly&&lvl==="eng"){
+      var readMarks=(QB_DATA[lvl]||[]).filter(function(q){return __qbUnitOf(q.c,"eng")==="Reading";})
+        .reduce(function(a,q){return a+(Number(q.m)||0);},0);
+      if(readMarks<20){
+        window.__toast&&window.__toast("An English board paper needs a 20-mark Reading section \u2014 two unseen passages. The bank has "+readMarks+" marks of reading material and no full passages, so a valid 80-mark paper cannot be built yet. Use a shorter preset, or add passages first.","err");
+        return;
+      }
+    }
     const d=boardOnly?dAll.filter(q=>__qbBoardEligible(lvl,q)):dAll;
     const used=new Set();
     const items=[];
@@ -18512,7 +18535,9 @@ function QuestionBank({user}){
     if(_pre.dropped.length){ alert(_pre.dropped.length+" question(s) were left OUT because their required data (table/figure/balance-sheet) is missing:\n\n• "+_pre.dropped.map(function(d){return d.q+"…";}).join("\n• ")+"\n\nThe paper will print with the remaining questions."); }
     // 3) TITLE / MARKS / TIME from ONE source: actual marks of the kept questions.
     const actualMarks=kept.reduce(function(s,ti){return s+(Number(ti.q.m)||0);},0);
-    const timeMin=Math.max(15,Math.round(actualMarks*1.5));
+    // A board paper runs its official duration rather than a marks-based estimate: 80 marks is 3 hours in
+    // English, Maths, Science and Social Science, and Computer Applications sits 2 hours for its 50.
+    const timeMin=(Number(target)===__qbBoardTotal(lvl))?(lvl==="comp"?120:180):Math.max(15,Math.round(actualMarks*1.5));
     const baseName=(testName||"Test").replace(/\s*\(\d+\s*m\)\s*$/i,"").trim();  // drop the ambiguous "(30m)" bucket suffix
     const name=baseName+" — "+actualMarks+" mark"+(actualMarks===1?"":"s");
     const bySection={};
