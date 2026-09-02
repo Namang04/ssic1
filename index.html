@@ -1084,6 +1084,15 @@ function __buildQB(){
     Object.keys(f).forEach(function(fk){if(fk==="drop"||fk==="sol")return;q[fk]=f[fk];});
     if(f.sol){try{window.__SOLUTION_OVERRIDES=window.__SOLUTION_OVERRIDES||{};window.__SOLUTION_OVERRIDES[solKey(q)]=f.sol;}catch(e){}}
   }});}}catch(e){}
+  /* Head swaps: rewrite only the opening verdict of an answer whose body is already correct and detailed.
+     Three answers ended on a letter that contradicted their own working and their stored key, which taught a
+     pupil the wrong option. Applied AFTER fixes so a fix cannot silently restore the old opening, and only
+     when the recorded opening still matches, so an edited answer is never half-rewritten. */
+  try{var HS=window.__QB_HEADSWAP||{};if(Object.keys(HS).length){Object.keys(__QB_CACHE).forEach(function(k){
+    (__QB_CACHE[k]||[]).forEach(function(q){ if(!q||!q.q||!q.a)return;
+      var h=HS[window.__qSig(q)]; if(!h)return;
+      var a=String(q.a); if(a.indexOf(h[0])===0) q.a=h[1]+a.slice(h[0].length); });
+  });}}catch(e){}
   return __QB_CACHE;
 }
 Object.defineProperty(window,"QB_DATA",{get:__buildQB,configurable:true});
@@ -1458,6 +1467,20 @@ const __solNorm=s=>String(s||'').toLowerCase().replace(/<[^>]+>/g,' ').replace(/
 const solKey=q=>q?(q.subj+"|"+__solNorm(q.c)+"|"+__solNorm(q.q).slice(0,160)):"";
 const getSolution=q=>{if(!q)return"";const m=(typeof window!=="undefined"&&window.__SOLUTION_OVERRIDES)||{};const o=m[solKey(q)];return (o&&String(o).trim())?o:(q.a||"");};
 // Previous-Year Question detector — PYQs are tagged like "[CBSE 2024 Set-1]" at the start of the question.
+// An option is normally stored as "A) text", and the render assumed that: substring(0,1) for the letter and
+// substring(3) for the text. 72 options across the bank are stored bare, so "1/30" displayed as "0", "+/- 2"
+// displayed as nothing, and the derived letter could never equal q.r - meaning the right answer never
+// highlighted and the question could not be answered. Fall back to the POSITIONAL letter and never cut blind.
+function __optParts(opt,i){
+  var s=String(opt==null?"":opt);
+  var want="ABCD".charAt(i);
+  var m=s.match(/^\s*\(?([A-Da-d])[\)\.\:]\s*([\s\S]*)$/);
+  // A leading letter counts as this option's prefix ONLY when it matches the option's own position.
+  // Assertion-Reason choices legitimately begin "(A) is true, but (R) is false" - that "(A)" is the
+  // assertion label, and stripping it as though it were a prefix deleted the meaning of the option.
+  if(m && m[1].toUpperCase()===want) return {letter:want, text:m[2]};
+  return {letter:want||"", text:s};
+}
 const isPYQ=q=>!!q&&(q.pyq===true||/\[\s*cbse[^\]]*\]|cbse\s*20\d\d/i.test(String(q.q||"")));
 // Which CBSE paper a question came from. qbStripTags() clears the leading "[...]" before the stem is shown -
 // right for the question text, but it also threw away the provenance, so a teacher could not tell a 2024 board
@@ -18574,7 +18597,7 @@ body{font-family:'Times New Roman',Georgia,serif;padding:30px 34px;color:#1a1a1a
                                   <div key={oi} role="button" tabIndex={0} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();e.currentTarget.click();}}} onClick={()=>setPickedOpts(p=>({...p,[pickKey]:opt[0]}))}
                                     style={{fontSize:12,padding:"8px 11px",borderRadius:6,border:`1px solid ${isPicked?(isCorrect?"var(--tx-grn2)":"var(--tx-red)"):showCorrect?"var(--tx-grn2)":"var(--c-e6)"}`,background:isPicked?(isCorrect?"var(--bg-grn)":"var(--bg-red)"):showCorrect?"var(--bg-grn)":"var(--c-f7)",color:isPicked?(isCorrect?"var(--tx-grn)":"var(--tx-red2)"):showCorrect?"var(--tx-grn)":"var(--ap-ink2)",cursor:"pointer",display:"flex",alignItems:"center",gap:7,transition:"all .12s"}}>
                                     <span style={{fontWeight:700,minWidth:13,fontSize:11,opacity:.85}}>{opt[0]}</span>
-                                    <TeX html={opt.substring(3)}/>
+                                    <TeX html={__optParts(opt,oi).text}/>
                                   </div>
                                 );
                               })}
@@ -24002,7 +24025,7 @@ function StudentQCard({q,isDone,onToggleDone,isBm,onToggleBm,diffColors,diffLabe
         {q.o&&q.o.length>0&&(
           <div className="m1col" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginTop:11}}>
             {q.o.map((opt,i)=>{
-              const letter=opt.substring(0,1);
+              const letter=__optParts(opt,i).letter;
               const isCorrect=letter===q.r;
               const isChosen=picked===letter;
               let bg="var(--c-f7)",border="var(--c-e6)",color="var(--ap-ink2)";
@@ -24014,7 +24037,7 @@ function StudentQCard({q,isDone,onToggleDone,isBm,onToggleBm,diffColors,diffLabe
                 <div key={i} role="button" tabIndex={0} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();e.currentTarget.click();}}} onClick={()=>{if(picked)return;setPicked(letter);if(letter!==q.r&&user&&window.__db){const lk="wrong_"+Date.now()+"_"+(user.username||"");window.__fbSetDoc(window.__fbDoc(window.__db,"wrongAnswers",lk),{username:user.username,name:user.name,chapter:q.c,subject:lvl||"qb",question:(q.q||"").replace(/<[^>]+>/g,"").substring(0,120),chosen:letter,correct:q.r,section:q.s,timestamp:new Date().toISOString(),source:"qb"});}}}
                   style={{padding:"8px 11px",borderRadius:6,border:`1px solid ${border}`,background:bg,fontSize:12,color,cursor:picked?"default":"pointer",display:"flex",gap:7,alignItems:"flex-start",userSelect:"none",transition:"all .12s"}}>
                   <span style={{fontWeight:700,minWidth:13,fontSize:11,opacity:.85}}>{letter}</span>
-                  <TeX html={opt.substring(3)}/>
+                  <TeX html={__optParts(opt,i).text}/>
                 </div>
               );
             })}
@@ -24300,13 +24323,13 @@ function RunningTest({qs,timeMin,lvl,selChs,onFinish,saveDone,user}){
           <TeX block style={{fontSize:16,lineHeight:1.7,color:"var(--ap-ink)",marginBottom:22,fontWeight:500}} html={q.q}/>{q.fig?<div className="qbfig" dangerouslySetInnerHTML={{__html:q.fig}}/>:null}
           <div style={{display:"flex",flexDirection:"column",gap:10}}>
             {q.o.map((opt,i)=>{
-              const letter=opt.substring(0,1);
+              const letter=__optParts(opt,i).letter;
               const sel=answers[current]===letter;
               return(
                 <div key={i} role="button" tabIndex={0} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();e.currentTarget.click();}}} onClick={()=>!submitted&&setAnswers(a=>({...a,[current]:letter}))}
                   style={{padding:"13px 16px",borderRadius:8,border:`1.5px solid ${sel?"var(--ap-accent)":"var(--c-e6)"}`,background:sel?"var(--ap-accent-soft)":"var(--c-fff)",color:"var(--ap-ink)",cursor:"pointer",display:"flex",gap:12,alignItems:"flex-start",transition:"all .12s",boxShadow:sel?"0 0 0 3px var(--ap-accent-soft)":"none"}}>
                   <span style={{fontWeight:700,fontSize:13,minWidth:24,height:24,borderRadius:6,display:"grid",placeItems:"center",background:sel?"var(--ap-accent)":"var(--c-f0)",color:sel?"#fff":"var(--ap-muted)",flexShrink:0}}>{letter}</span>
-                  <TeX style={{fontSize:14,lineHeight:1.55,paddingTop:2}} html={opt.substring(3)}/>
+                  <TeX style={{fontSize:14,lineHeight:1.55,paddingTop:2}} html={__optParts(opt,i).text}/>
                 </div>
               );
             })}
@@ -24410,7 +24433,7 @@ function TestResult({result,onBack,onRetry}){
                   <TeX block style={{fontSize:13,color:"var(--ap-ink)",lineHeight:1.6,marginBottom:11}} html={q.q}/>{q.fig?<div className="qbfig" dangerouslySetInnerHTML={{__html:q.fig}}/>:null}
                   <div className="m1col" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:11}}>
                     {q.o.map((opt,i)=>{
-                      const letter=opt.substring(0,1);
+                      const letter=__optParts(opt,i).letter;
                       const isRight=letter===q.r;
                       const isChosen=letter===chosen;
                       let bg="#fff",border="var(--c-e6)",color="var(--ap-ink2)";
@@ -24419,7 +24442,7 @@ function TestResult({result,onBack,onRetry}){
                       return(
                         <div key={i} style={{padding:"7px 10px",borderRadius:6,border:`1px solid ${border}`,background:bg,fontSize:12,color,display:"flex",gap:7}}>
                           <span style={{fontWeight:700,opacity:.85}}>{letter}</span>
-                          <TeX html={opt.substring(3)}/>
+                          <TeX html={__optParts(opt,i).text}/>
                         </div>
                       );
                     })}
