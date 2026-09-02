@@ -1059,11 +1059,21 @@ window.__qSig = function(q){
   var t=String((q&&q.q)||"").replace(/<[^>]+>/g," ").replace(/&[a-z#0-9]+;/gi," ").toLowerCase().replace(/[^a-z0-9]+/g," ").trim().replace(/\s+/g," ");
   return ((q&&q.subj)||"")+"::"+t;
 };
+// The same chapter under two spellings splits its questions into two filter entries and makes every unit
+// coverage figure wrong - Class 12 Maths carried both "Vectors" and "Vector Algebra". Canonicalise once here,
+// at build time, so the chapter list, the filters and the paper generator all count the same thing.
+const QB_CHAPTER_ALIAS={
+  "Vector Algebra":"Vectors",
+  "Three-dimensional Geometry":"Three Dimensional Geometry",
+  "Three-Dimensional Geometry":"Three Dimensional Geometry"
+};
+function __canonChapter(c){ var k=String(c||"").trim(); return QB_CHAPTER_ALIAS[k]||k; }
 function __buildQB(){
   if(__QB_CACHE)return __QB_CACHE;
   const src=window.__QB_SRC||"";
   if(!src)return {}; // heavy content (ssic-content.js) not loaded yet — return empty, don't cache, don't throw
   __QB_CACHE=new Function(src+"\nreturn QB_DATA;")();
+
   /* ── Added questions (CBSE PYQ pack, window.__QB_ADDITIONS) ── merged BEFORE figures and fixes so an
      added question picks up its figure and any marking-scheme correction exactly like one that shipped in the
      source bank. Deduped by __qSig, so regenerating the pack or loading it twice cannot double a question. */
@@ -1103,6 +1113,12 @@ function __buildQB(){
       pairs.forEach(function(pr){ if(a.indexOf(pr[0])>=0) a=a.split(pr[0]).join(pr[1]); });
       q.a=a; });
   });}}catch(e){}
+  /* Chapter names are canonicalised LAST. Doing it before the corrections overlay was pointless: 140 fixes
+     carry a chapter field and simply wrote the old spelling back, so "Vector Algebra" reappeared alongside
+     "Vectors" and both the filter list and every unit total stayed split. */
+  try{Object.keys(__QB_CACHE).forEach(function(k){(__QB_CACHE[k]||[]).forEach(function(q){
+    if(q&&q.c){var c=__canonChapter(q.c); if(c!==q.c)q.c=c;}
+  });});}catch(e){}
   return __QB_CACHE;
 }
 Object.defineProperty(window,"QB_DATA",{get:__buildQB,configurable:true});
@@ -18216,6 +18232,18 @@ const QB_UNIT_OF_ENG={
 const QB_UNIT_MARKS_ENG={"Reading":20,"Writing & Grammar":20,"Literature":40};
 // Class 12 Physics is a 70-mark, 3-hour theory paper plus 30 practical - not the 80-mark paper the generic
 // preset assumed. Section D is the pair of 4-mark case studies and Section E the three 5-mark long answers.
+const QB_UNIT_OF_M12={
+  "Relations and Functions":"Relations and Functions",
+  "Inverse Trigonometric Functions":"Relations and Functions",
+  "Matrices":"Algebra","Determinants":"Algebra",
+  "Continuity and Differentiability":"Calculus","Application of Derivatives":"Calculus",
+  "Integrals":"Calculus","Application of Integrals":"Calculus","Differential Equations":"Calculus",
+  "Vectors":"Vectors and 3D","Three Dimensional Geometry":"Vectors and 3D",
+  "Linear Programming":"Linear Programming",
+  "Probability":"Probability"
+};
+const QB_UNIT_MARKS_M12={"Relations and Functions":8,"Algebra":10,"Calculus":35,
+  "Vectors and 3D":14,"Linear Programming":5,"Probability":8};
 const QB_UNIT_OF_PHY={
   "Electric Charges and Fields":"Electrostatics & Current Electricity",
   "Electrostatic Potential and Capacitance":"Electrostatics & Current Electricity",
@@ -18299,7 +18327,8 @@ function __qbBlueprint(lvl,target){
 }
 const QB_UNIT_MARKS_X10={"Number Systems":6,"Algebra":20,"Coordinate Geometry":6,"Geometry":15,
   "Trigonometry":12,"Mensuration":10,"Statistics & Probability":11};
-function __qbUnitOf(c,lvl){ var k=String(c||"").trim();
+function __qbUnitOf(c,lvl){ var k=__canonChapter(c);
+  if(lvl==="mat12") return QB_UNIT_OF_M12[k]||"";
   if(lvl==="phy12") return QB_UNIT_OF_PHY[k]||"";
   if(lvl==="eng") return QB_UNIT_OF_ENG[k]||"";
   if(lvl==="comp") return QB_UNIT_MARKS_COMP[k]?k:"";
@@ -18312,7 +18341,7 @@ function __qbUnitTargets(lvl,total){
   var src=(lvl==="std"||lvl==="bas")?QB_UNIT_MARKS_X10
     :(lvl==="sci"?QB_UNIT_MARKS_SCI:(lvl==="sst"?QB_UNIT_MARKS_SST
     :(lvl==="comp"?QB_UNIT_MARKS_COMP:(lvl==="eng"?QB_UNIT_MARKS_ENG
-    :(lvl==="phy12"?QB_UNIT_MARKS_PHY:null)))));
+    :(lvl==="phy12"?QB_UNIT_MARKS_PHY:(lvl==="mat12"?QB_UNIT_MARKS_M12:null))))));
   if(!src) return null;
   var k=Number(total||__qbBoardTotal(lvl))/__qbBoardTotal(lvl), out={};
   Object.keys(src).forEach(function(u){ out[u]=src[u]*k; });
@@ -18552,8 +18581,16 @@ function QuestionBank({user}){
     const unitGot={};
     // Within each section slot, take the question whose unit is furthest below its target share of marks.
     // The pool is shuffled first, so equally-deficient units still vary between generated papers.
-    function pick(pool,count){
-      const avail=qbShuffle(pool.filter(q=>!used.has(dAll.indexOf(q))));
+    // Each section slot is worth a fixed number of marks. Two Section D questions in Class 12 Maths carry 4
+    // marks where the section is worth 5, so drawing one made an "80 mark" paper print 79. Prefer questions
+    // worth what the slot is worth, and fall back to the rest only if there are not enough.
+    const SLOT_MARKS={mcq:1,ar:1,vsa:2,sa:3,la:5,cs:4};
+    function pick(pool,count,slot){
+      const want=SLOT_MARKS[slot];
+      const exact=want?pool.filter(q=>Number(q.m)===want):pool;
+      const rest=want?pool.filter(q=>Number(q.m)!==want):[];
+      const avail=qbShuffle(exact.filter(q=>!used.has(dAll.indexOf(q))))
+        .concat(qbShuffle(rest.filter(q=>!used.has(dAll.indexOf(q)))));
       for(let n=0;n<count&&avail.length;n++){
         let choice=0;
         if(unitTargets){
@@ -18572,12 +18609,12 @@ function QuestionBank({user}){
         unitGot[u]=(unitGot[u]||0)+(Number(q.m)||0);
       }
     }
-    pick(d.filter(q=>q.s==="A"&&q.t==="mcq"),bp.mcq);
-    pick(d.filter(q=>q.t==="ar"),bp.ar);
-    pick(d.filter(q=>q.s==="B"),bp.vsa);
-    pick(d.filter(q=>q.s==="C"),bp.sa);
-    pick(d.filter(q=>q.s==="D"),bp.la);
-    pick(d.filter(q=>q.s==="E"),bp.cs);
+    pick(d.filter(q=>q.s==="A"&&q.t==="mcq"),bp.mcq,"mcq");
+    pick(d.filter(q=>q.t==="ar"),bp.ar,"ar");
+    pick(d.filter(q=>q.s==="B"),bp.vsa,"vsa");
+    pick(d.filter(q=>q.s==="C"),bp.sa,"sa");
+    pick(d.filter(q=>q.s==="D"),bp.la,"la");
+    pick(d.filter(q=>q.s==="E"),bp.cs,"cs");
     setTestItems(items);
     // Social Science reserves 5 compulsory map marks that this bank has no outline maps for, so a generated
     // paper is 75 marks of theory. Say so in the title rather than printing "80m" over a 75-mark paper.
