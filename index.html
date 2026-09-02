@@ -18244,6 +18244,10 @@ const QB_UNIT_OF_M12={
 };
 const QB_UNIT_MARKS_M12={"Relations and Functions":8,"Algebra":10,"Calculus":35,
   "Vectors and 3D":14,"Linear Programming":5,"Probability":8};
+// Class 12 Chemistry: a 70-mark, 3-hour theory paper plus 30 practical. Its chapters ARE its weighted units.
+const QB_UNIT_MARKS_CHEM={"Solutions":7,"Electrochemistry":9,"Chemical Kinetics":7,
+  "d and f Block Elements":7,"Coordination Compounds":7,"Haloalkanes and Haloarenes":6,
+  "Alcohols, Phenols and Ethers":6,"Aldehydes, Ketones and Carboxylic Acids":8,"Amines":6,"Biomolecules":7};
 const QB_UNIT_OF_PHY={
   "Electric Charges and Fields":"Electrostatics & Current Electricity",
   "Electrostatic Potential and Capacitance":"Electrostatics & Current Electricity",
@@ -18263,10 +18267,10 @@ const QB_UNIT_OF_PHY={
 const QB_UNIT_MARKS_PHY={"Electrostatics & Current Electricity":16,"Magnetism, EMI & AC":17,
   "EM Waves & Optics":18,"Dual Nature, Atoms & Nuclei":12,"Electronic Devices":7};
 const QB_UNIT_MARKS_COMP={"Networking":15,"HTML":25,"Cyber Ethics":10};
-function __qbBoardTotal(lvl){ return lvl==="comp"?50:(lvl==="phy12"?70:80); }
+function __qbBoardTotal(lvl){ return lvl==="comp"?50:((lvl==="phy12"||lvl==="chem12")?70:80); }
 function __qbPresets(lvl){
   if(lvl==="comp") return [[20,"~30 min"],[30,"~45 min"],[50,"2 hours \u00b7 board"]];
-  if(lvl==="phy12") return [[20,"~30 min"],[30,"~45 min"],[70,"3 hours \u00b7 board"]];
+  if(lvl==="phy12"||lvl==="chem12") return [[20,"~30 min"],[30,"~45 min"],[70,"3 hours \u00b7 board"]];
   return [[20,"~30 min"],[30,"~45 min"],[40,"~1 hour"],[80,"3 hours \u00b7 board"]];
 }
 const QB_UNIT_MARKS_SST={"History":20,"Geography":20,"Political Science":20,"Economics":20};
@@ -18319,6 +18323,7 @@ const QB_BLUEPRINTS={
           sst:{mcq:18,ar:2,vsa:4,sa:5,la:4,cs:3,mapMarks:5},
           comp:{mcq:12,ar:0,vsa:7,sa:4,la:0,cs:3},
           phy12:{mcq:12,ar:4,vsa:5,sa:7,la:3,cs:2},
+          chem12:{mcq:12,ar:4,vsa:5,sa:7,la:3,cs:2},
           def:{mcq:18,ar:2,vsa:5,sa:6,la:4,cs:3} }
 };
 function __qbBlueprint(lvl,target){
@@ -18328,6 +18333,7 @@ function __qbBlueprint(lvl,target){
 const QB_UNIT_MARKS_X10={"Number Systems":6,"Algebra":20,"Coordinate Geometry":6,"Geometry":15,
   "Trigonometry":12,"Mensuration":10,"Statistics & Probability":11};
 function __qbUnitOf(c,lvl){ var k=__canonChapter(c);
+  if(lvl==="chem12") return QB_UNIT_MARKS_CHEM[k]?k:"";
   if(lvl==="mat12") return QB_UNIT_OF_M12[k]||"";
   if(lvl==="phy12") return QB_UNIT_OF_PHY[k]||"";
   if(lvl==="eng") return QB_UNIT_OF_ENG[k]||"";
@@ -18338,10 +18344,13 @@ function __qbUnitOf(c,lvl){ var k=__canonChapter(c);
 // Only Class 10 Mathematics has a published unit weightage encoded here. Every other subject returns null and
 // the generator keeps its previous behaviour rather than inventing a blueprint.
 function __qbUnitTargets(lvl,total){
-  var src=(lvl==="std"||lvl==="bas")?QB_UNIT_MARKS_X10
-    :(lvl==="sci"?QB_UNIT_MARKS_SCI:(lvl==="sst"?QB_UNIT_MARKS_SST
-    :(lvl==="comp"?QB_UNIT_MARKS_COMP:(lvl==="eng"?QB_UNIT_MARKS_ENG
-    :(lvl==="phy12"?QB_UNIT_MARKS_PHY:(lvl==="mat12"?QB_UNIT_MARKS_M12:null))))));
+  // A table, not a nested ternary. The chain this replaced had grown six levels deep and an edit adding
+  // Chemistry silently failed to match it, so the subject fell through to null and generated an unweighted
+  // paper - the exact failure the weighting exists to prevent.
+  var TABLE={std:QB_UNIT_MARKS_X10, bas:QB_UNIT_MARKS_X10, sci:QB_UNIT_MARKS_SCI, sst:QB_UNIT_MARKS_SST,
+    comp:QB_UNIT_MARKS_COMP, eng:QB_UNIT_MARKS_ENG, phy12:QB_UNIT_MARKS_PHY, mat12:QB_UNIT_MARKS_M12,
+    chem12:QB_UNIT_MARKS_CHEM};
+  var src=TABLE[lvl]||null;
   if(!src) return null;
   var k=Number(total||__qbBoardTotal(lvl))/__qbBoardTotal(lvl), out={};
   Object.keys(src).forEach(function(u){ out[u]=src[u]*k; });
