@@ -20946,7 +20946,15 @@ function ClassLogView({user,tlStyle,isAdmin,isCoordinator=false,sharedUsersDB,tt
     // Coordinators cannot list users, but every log says who authored it and the shared class-teacher map
     // identifies teachers accountable for a register even when they have NEVER submitted a log.
     allLogs.forEach(function(l){var id=safeId(l.teacherId||l.teacherName||"");if(!id)return;var prev=roster[id]||{};roster[id]={username:l.teacherId||prev.username||id,name:l.teacherName||prev.name||l.teacherId||id,phone:prev.phone||"",left:false};});
-    Object.values((classTeacherDoc&&classTeacherDoc.map)||{}).forEach(function(un){var id=safeId(un||"");if(id&&!roster[id])roster[id]={username:un,name:un,phone:"",left:false};});
+    // A section can have more than one class teacher, so each map entry is a LIST of usernames. Reading the
+     // value directly passed an array into safeId, which crashed the whole Class Log for Director and VP -
+     // teachers never saw it because only managers render this view. Read through __ctList, which accepts
+     // both the list shape and the bare string older entries still use.
+     Object.keys((classTeacherDoc&&classTeacherDoc.map)||{}).forEach(function(secKey){
+       __ctList(classTeacherDoc.map,secKey).forEach(function(un){
+         var id=safeId(un||"");if(id&&!roster[id])roster[id]={username:un,name:un,phone:"",left:false};
+       });
+     });
     var datesByT={},logsByT={};allLogs.forEach(function(l){var id=safeId(l.teacherId||l.teacherName||"");if(!id)return;if(l.date&&l.date<=today)(datesByT[id]=datesByT[id]||{})[l.date]=1;var dk=id+"|"+l.date;var slot=[l.period,String(l.class||"").replace(/^Class\s*/i,""),String(l.section||"").toUpperCase()].join("|");(logsByT[dk]=logsByT[dk]||{})[slot]=l;});
     // The submission strip is seven WORKING days, not seven calendar days. Sunday must never make a teacher
     // look overdue on Monday. (School-specific holidays can later be overlaid from the calendar.)
