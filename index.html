@@ -1065,7 +1065,8 @@ window.__qSig = function(q){
 const QB_CHAPTER_ALIAS={
   "Vector Algebra":"Vectors",
   "Three-dimensional Geometry":"Three Dimensional Geometry",
-  "Three-Dimensional Geometry":"Three Dimensional Geometry"
+  "Three-Dimensional Geometry":"Three Dimensional Geometry",
+  "Biodiversity and its Conservation":"Biodiversity and Conservation"
 };
 function __canonChapter(c){ var k=String(c||"").trim(); return QB_CHAPTER_ALIAS[k]||k; }
 function __buildQB(){
@@ -18245,6 +18246,18 @@ const QB_UNIT_OF_M12={
 const QB_UNIT_MARKS_M12={"Relations and Functions":8,"Algebra":10,"Calculus":35,
   "Vectors and 3D":14,"Linear Programming":5,"Probability":8};
 // Class 12 Chemistry: a 70-mark, 3-hour theory paper plus 30 practical. Its chapters ARE its weighted units.
+// Class 12 Biology: 70-mark, 3-hour theory paper plus 30 practical.
+const QB_UNIT_OF_BIO={
+  "Sexual Reproduction in Flowering Plants":"Reproduction","Human Reproduction":"Reproduction",
+  "Reproductive Health":"Reproduction",
+  "Principles of Inheritance and Variation":"Genetics and Evolution",
+  "Molecular Basis of Inheritance":"Genetics and Evolution","Evolution":"Genetics and Evolution",
+  "Human Health and Disease":"Biology and Human Welfare","Microbes in Human Welfare":"Biology and Human Welfare",
+  "Biotechnology Principles and Processes":"Biotechnology","Biotechnology and its Applications":"Biotechnology",
+  "Organisms and Populations":"Ecology","Ecosystem":"Ecology","Biodiversity and Conservation":"Ecology"
+};
+const QB_UNIT_MARKS_BIO={"Reproduction":16,"Genetics and Evolution":20,"Biology and Human Welfare":12,
+  "Biotechnology":12,"Ecology":10};
 const QB_UNIT_MARKS_CHEM={"Solutions":7,"Electrochemistry":9,"Chemical Kinetics":7,
   "d and f Block Elements":7,"Coordination Compounds":7,"Haloalkanes and Haloarenes":6,
   "Alcohols, Phenols and Ethers":6,"Aldehydes, Ketones and Carboxylic Acids":8,"Amines":6,"Biomolecules":7};
@@ -18267,10 +18280,10 @@ const QB_UNIT_OF_PHY={
 const QB_UNIT_MARKS_PHY={"Electrostatics & Current Electricity":16,"Magnetism, EMI & AC":17,
   "EM Waves & Optics":18,"Dual Nature, Atoms & Nuclei":12,"Electronic Devices":7};
 const QB_UNIT_MARKS_COMP={"Networking":15,"HTML":25,"Cyber Ethics":10};
-function __qbBoardTotal(lvl){ return lvl==="comp"?50:((lvl==="phy12"||lvl==="chem12")?70:80); }
+function __qbBoardTotal(lvl){ return lvl==="comp"?50:((lvl==="phy12"||lvl==="chem12"||lvl==="bio12")?70:80); }
 function __qbPresets(lvl){
   if(lvl==="comp") return [[20,"~30 min"],[30,"~45 min"],[50,"2 hours \u00b7 board"]];
-  if(lvl==="phy12"||lvl==="chem12") return [[20,"~30 min"],[30,"~45 min"],[70,"3 hours \u00b7 board"]];
+  if(lvl==="phy12"||lvl==="chem12"||lvl==="bio12") return [[20,"~30 min"],[30,"~45 min"],[70,"3 hours \u00b7 board"]];
   return [[20,"~30 min"],[30,"~45 min"],[40,"~1 hour"],[80,"3 hours \u00b7 board"]];
 }
 const QB_UNIT_MARKS_SST={"History":20,"Geography":20,"Political Science":20,"Economics":20};
@@ -18324,6 +18337,7 @@ const QB_BLUEPRINTS={
           comp:{mcq:12,ar:0,vsa:7,sa:4,la:0,cs:3},
           phy12:{mcq:12,ar:4,vsa:5,sa:7,la:3,cs:2},
           chem12:{mcq:12,ar:4,vsa:5,sa:7,la:3,cs:2},
+          bio12:{mcq:12,ar:4,vsa:5,sa:7,la:3,cs:2},
           def:{mcq:18,ar:2,vsa:5,sa:6,la:4,cs:3} }
 };
 function __qbBlueprint(lvl,target){
@@ -18333,6 +18347,7 @@ function __qbBlueprint(lvl,target){
 const QB_UNIT_MARKS_X10={"Number Systems":6,"Algebra":20,"Coordinate Geometry":6,"Geometry":15,
   "Trigonometry":12,"Mensuration":10,"Statistics & Probability":11};
 function __qbUnitOf(c,lvl){ var k=__canonChapter(c);
+  if(lvl==="bio12") return QB_UNIT_OF_BIO[k]||"";
   if(lvl==="chem12") return QB_UNIT_MARKS_CHEM[k]?k:"";
   if(lvl==="mat12") return QB_UNIT_OF_M12[k]||"";
   if(lvl==="phy12") return QB_UNIT_OF_PHY[k]||"";
@@ -18349,7 +18364,7 @@ function __qbUnitTargets(lvl,total){
   // paper - the exact failure the weighting exists to prevent.
   var TABLE={std:QB_UNIT_MARKS_X10, bas:QB_UNIT_MARKS_X10, sci:QB_UNIT_MARKS_SCI, sst:QB_UNIT_MARKS_SST,
     comp:QB_UNIT_MARKS_COMP, eng:QB_UNIT_MARKS_ENG, phy12:QB_UNIT_MARKS_PHY, mat12:QB_UNIT_MARKS_M12,
-    chem12:QB_UNIT_MARKS_CHEM};
+    chem12:QB_UNIT_MARKS_CHEM, bio12:QB_UNIT_MARKS_BIO};
   var src=TABLE[lvl]||null;
   if(!src) return null;
   var k=Number(total||__qbBoardTotal(lvl))/__qbBoardTotal(lvl), out={};
