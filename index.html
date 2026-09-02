@@ -15274,8 +15274,12 @@ service cloud.firestore {
     // accounts doc is absent lost the ability to save staff assignments ("Could not complete every assignment
     // update - Missing or insufficient permissions"). Guard the lookup: no accounts doc means no fees:false
     // marker, so an admin is a Director exactly as they were before this distinction existed.
+    // Guarded inside the function, not left to every caller to remember: an unguarded get() on a missing
+    // document throws and denies the write, which is how the Director lost staff assignments.
     function accountDoc() {
-      return get(/databases/$(database)/documents/accounts/$(request.auth.uid)).data;
+      return exists(/databases/$(database)/documents/accounts/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/accounts/$(request.auth.uid)).data
+        : {};
     }
     function hasAccountDoc() {
       return exists(/databases/$(database)/documents/accounts/$(request.auth.uid));
