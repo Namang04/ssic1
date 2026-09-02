@@ -15657,14 +15657,21 @@ service cloud.firestore {
       // doc, with the role field forced to equal their real account role (blocks
       // self-promotion AND cross-user overwrites — the old "any existing doc if
       // role unchanged" clause let any session rewrite any staff profile).
-      allow write: if isDirectorRole() || isAny(['office'])
-        || ((id.matches('.*__subjects') || id.matches('.*__classTeachers')) && (isDirectorRole() || isVicePrincipalRole()))
-        || (isVicePrincipalRole() && !id.matches('.*__subjects') && !id.matches('.*__classTeachers')
-            && resource != null && resource.data.get('role','') == 'teacher'
-            && request.resource.data.get('role','') == 'teacher')
-        || (isVicePrincipalRole() && !id.matches('.*__subjects') && !id.matches('.*__classTeachers')
+      // Assignment saves write THREE things at once: the selected teacher's profile, the shared
+      // __classTeachers map, and the profile of every teacher displaced from a section. Gating those on the
+      // fees-derived isDirectorRole() locked BOTH the Director and the VP out of assigning classes - and the
+      // fix for the resulting unassigned teachers was itself the blocked action. Account management stays
+      // Director-only below; the assignment path is back on plain role checks, which is what it used before.
+      // A staff profile that carries no role at all is treated as a teacher record: several real staff docs
+      // have no role field, and rejecting them failed the whole multi-document save.
+      allow write: if isAny(['admin']) || isAny(['office'])
+        || ((id.matches('.*__subjects') || id.matches('.*__classTeachers')) && isAny(['admin','vp']))
+        || (isAny(['vp']) && !id.matches('.*__subjects') && !id.matches('.*__classTeachers')
+            && resource != null && resource.data.get('role','teacher') == 'teacher'
+            && request.resource.data.get('role','teacher') == 'teacher')
+        || (isAny(['vp']) && !id.matches('.*__subjects') && !id.matches('.*__classTeachers')
             && resource == null
-            && request.resource.data.get('role','') == 'teacher')
+            && request.resource.data.get('role','teacher') == 'teacher')
         || (!id.matches('.*__subjects') && !id.matches('.*__classTeachers')
             && signedIn() && ownsUserDoc(id)
             && request.resource.data.get('role', role()) == role());
