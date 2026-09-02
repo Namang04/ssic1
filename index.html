@@ -18167,7 +18167,27 @@ function qbFlagged(q){ if(!q)return ""; if(q.rev)return "flagged for subject-exp
 /* Out-of-syllabus (set by the audit overlay against CBSE's own 2026-27 curriculum). NOT a defect: the content is
    sound, it simply cannot be asked in the board exam — so it shows an informational chip and the board-paper
    generator leaves it out, while practice/revision screens keep it. */
-function qbOutOfSyllabus(q){ return !!(q&&q.oos); }
+// The oos flag is a flat boolean, but the notes the audit wrote against it are not. Six of the sixteen say in
+// so many words that the flag itself was wrong on review; nine say only ONE subpart goes beyond the syllabus;
+// one is genuinely unconfirmed. Treating all of them alike labelled six perfectly valid questions as outside
+// the syllabus, and told a teacher that nine usable questions were unusable. Classify from the note.
+function __qbOosKind(q){
+  if(!q||!q.oos) return "";
+  var n=String(q.oosNote||"");
+  if(/this is IN the syllabus|flag was incorrect/i.test(n)) return "cleared";
+  if(/Could not be confirmed|kept pending/i.test(n)) return "pending";
+  if(/Mostly in the CBSE|only part|only parts|only the numerical data|only the/i.test(n)) return "partial";
+  return "out";
+}
+// A cleared flag is no flag at all - the question is in the syllabus and should behave like any other.
+function qbOutOfSyllabus(q){ var k=__qbOosKind(q); return k==="out"||k==="pending"||k==="partial"; }
+function qbOosLabel(q){
+  var k=__qbOosKind(q);
+  if(k==="partial") return "Partly beyond the 2026-27 syllabus";
+  if(k==="pending") return "Syllabus check pending";
+  if(k==="out") return "Not in the current CBSE syllabus";
+  return "";
+}
 function qbOosNote(q){ return (q&&q.oosNote)||"Not in the current CBSE syllabus — practice only."; }
 // Bank-health report — surfaces every question a subject expert should review before shipping. Nothing is auto-edited.
 function qbHealthReport(){
@@ -18659,7 +18679,7 @@ body{font-family:'Times New Roman',Georgia,serif;padding:30px 34px;color:#1a1a1a
                             <div style={{marginTop:11,padding:"10px 12px",background:"var(--bg-grn)",border:"1px solid var(--bg-grn)",borderRadius:6,fontSize:12.5,color:"var(--tx-grn3)",lineHeight:1.65}}>
                               <div style={{fontSize:11,fontWeight:700,letterSpacing:.8,textTransform:"uppercase",marginBottom:4,color:"var(--tx-grn2)"}}>Solution</div>
                               {qbFlagged(q)&&<div style={{marginBottom:6,fontSize:11,fontWeight:700,color:"var(--tx-org2)",background:"var(--bg-amb)",border:"1px solid var(--bd-amb)",borderRadius:6,padding:"5px 9px"}}>⚠ {qbFlagged(q)} — verify before use.</div>}
-                              {qbOutOfSyllabus(q)&&<div style={{marginBottom:6,fontSize:11,fontWeight:600,color:"var(--tx-blu)",background:"var(--bg-blu)",border:"1px solid var(--ap-line)",borderRadius:6,padding:"5px 9px"}}>ⓘ {qbOosNote(q)}</div>}
+                              {qbOutOfSyllabus(q)&&<div style={{marginBottom:6,fontSize:11,fontWeight:600,color:"var(--tx-blu)",background:"var(--bg-blu)",border:"1px solid var(--ap-line)",borderRadius:6,padding:"5px 9px"}}>ⓘ <b>{qbOosLabel(q)}</b> — {qbOosNote(q)}</div>}
                               <TeX html={fmtSolution(getSolution(q))}/>
                             </div>
                           )}
