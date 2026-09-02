@@ -18094,6 +18094,37 @@ const QB_DIFF_COLOR={e:"#c9a84c",m:"#d97706",h:"var(--tx-red)"};
 // Section accents. The tint used to be built by concatenating an alpha suffix onto the colour
 // ("#1a2e45"+"1c"), which silently produced the invalid "var(--tx-red)1c" for section D - so D alone
 // rendered with no tint. The hexes also ignored the theme. Colour and tint are now separate token pairs.
+// CBSE prescribes marks per UNIT as well as per section. The generator balanced Sections A-E and left units
+// to chance, so an 80-mark "board paper" could be structurally perfect and academically lopsided - heavy on
+// Algebra, thin on Coordinate Geometry and Geometry. These are the official Class 10 Mathematics weightings
+// for the 80-mark theory paper (2026-27); shorter papers scale them proportionally.
+const QB_UNIT_OF={
+  "Real Numbers":"Number Systems",
+  "Polynomials":"Algebra",
+  "Pair of Linear Equations in Two Variables":"Algebra",
+  "Quadratic Equations":"Algebra",
+  "Arithmetic Progressions":"Algebra",
+  "Coordinate Geometry":"Coordinate Geometry",
+  "Triangles":"Geometry",
+  "Circles":"Geometry",
+  "Introduction to Trigonometry":"Trigonometry",
+  "Some Applications of Trigonometry":"Trigonometry",
+  "Areas Related to Circles":"Mensuration",
+  "Surface Areas and Volumes":"Mensuration",
+  "Statistics":"Statistics & Probability",
+  "Probability":"Statistics & Probability"
+};
+const QB_UNIT_MARKS_X10={"Number Systems":6,"Algebra":20,"Coordinate Geometry":6,"Geometry":15,
+  "Trigonometry":12,"Mensuration":10,"Statistics & Probability":11};
+function __qbUnitOf(c){ return QB_UNIT_OF[String(c||"").trim()]||""; }
+// Only Class 10 Mathematics has a published unit weightage encoded here. Every other subject returns null and
+// the generator keeps its previous behaviour rather than inventing a blueprint.
+function __qbUnitTargets(lvl,total){
+  if(lvl!=="std"&&lvl!=="bas") return null;
+  var k=Number(total||80)/80, out={};
+  Object.keys(QB_UNIT_MARKS_X10).forEach(function(u){ out[u]=QB_UNIT_MARKS_X10[u]*k; });
+  return out;
+}
 const QB_SEC_COLOR={A:"var(--tx-blu)",B:"var(--tx-gold)",C:"var(--tx-org)",D:"var(--tx-red)",E:"var(--tx-pur)"};
 const QB_SEC_TINT ={A:"var(--bg-blu)",B:"var(--bg-amb)", C:"var(--bg-org)",D:"var(--bg-red)",E:"var(--bg-pur)"};
 function __secTint(sec){return QB_SEC_TINT[sec]||"var(--c-f0)";}
@@ -18291,11 +18322,29 @@ function QuestionBank({user}){
     }[target]||{mcq:18,ar:2,vsa:5,sa:6,la:4,cs:3};
     const used=new Set();
     const items=[];
+    const unitTargets=__qbUnitTargets(lvl,target);
+    const unitGot={};
+    // Within each section slot, take the question whose unit is furthest below its target share of marks.
+    // The pool is shuffled first, so equally-deficient units still vary between generated papers.
     function pick(pool,count){
-      qbShuffle([...pool]).slice(0,count).forEach(q=>{
+      const avail=qbShuffle(pool.filter(q=>!used.has(d.indexOf(q))));
+      for(let n=0;n<count&&avail.length;n++){
+        let choice=0;
+        if(unitTargets){
+          let best=-Infinity;
+          for(let i=0;i<avail.length;i++){
+            const u=__qbUnitOf(avail[i].c);
+            const deficit=(unitTargets[u]||0)-(unitGot[u]||0);
+            if(deficit>best){best=deficit;choice=i;}
+          }
+        }
+        const q=avail.splice(choice,1)[0];
         const idx=d.indexOf(q);
-        if(!used.has(idx)){items.push({lvl,idx,q});used.add(idx);}
-      });
+        if(used.has(idx)){n--;continue;}
+        items.push({lvl,idx,q});used.add(idx);
+        const u=__qbUnitOf(q.c);
+        unitGot[u]=(unitGot[u]||0)+(Number(q.m)||0);
+      }
     }
     pick(d.filter(q=>q.s==="A"&&q.t==="mcq"),bp.mcq);
     pick(d.filter(q=>q.t==="ar"),bp.ar);
