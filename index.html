@@ -1475,6 +1475,22 @@ const studyNotesFor=cls=>{const m=(typeof window!=="undefined"&&window.__STUDY_N
 // Expanded step-by-step solution overlay (for questions whose stored answer was a terse one-liner).
 const __solNorm=s=>String(s||'').toLowerCase().replace(/<[^>]+>/g,' ').replace(/[^a-z0-9]+/g,' ').trim();
 const solKey=q=>q?(q.subj+"|"+__solNorm(q.c)+"|"+__solNorm(q.q).slice(0,160)):"";
+// Every audit landed on the same complaint: answers are written to teach, not to score. A 3-mark literature
+// answer CBSE expects in 40-50 words runs to 100+, and a pupil copying it loses time without gaining marks.
+// A board answer is stored separately from the explanation so both can exist: __QB_BOARD holds the concise
+// version keyed by the same signature as every other overlay, and the detailed answer is left untouched.
+// CBSE's own word guidance, by marks. Null means no prescribed length (objective questions).
+const QB_WORDS={1:null,2:40,3:50,4:100,5:120,6:120};
+function __qbWordLimit(q){ return q?QB_WORDS[Number(q.m)]||null:null; }
+function __qbWordCount(html){
+  return String(html||"").replace(/<[^>]+>/g," ").replace(/&[a-z#0-9]+;/gi," ")
+    .trim().split(/\s+/).filter(Boolean).length;
+}
+function __qbBoardAnswer(q){
+  if(!q) return "";
+  var m=(typeof window!=="undefined"&&window.__QB_BOARD)||{};
+  return m[window.__qSig(q)]||"";
+}
 const getSolution=q=>{if(!q)return"";const m=(typeof window!=="undefined"&&window.__SOLUTION_OVERRIDES)||{};const o=m[solKey(q)];return (o&&String(o).trim())?o:(q.a||"");};
 // Previous-Year Question detector — PYQs are tagged like "[CBSE 2024 Set-1]" at the start of the question.
 // An option is normally stored as "A) text", and the render assumed that: substring(0,1) for the letter and
@@ -18800,6 +18816,14 @@ body{font-family:'Times New Roman',Georgia,serif;padding:30px 34px;color:#1a1a1a
                               <div style={{fontSize:11,fontWeight:700,letterSpacing:.8,textTransform:"uppercase",marginBottom:4,color:"var(--tx-grn2)"}}>Solution</div>
                               {qbFlagged(q)&&<div style={{marginBottom:6,fontSize:11,fontWeight:700,color:"var(--tx-org2)",background:"var(--bg-amb)",border:"1px solid var(--bd-amb)",borderRadius:6,padding:"5px 9px"}}>⚠ {qbFlagged(q)} — verify before use.</div>}
                               {qbOutOfSyllabus(q)&&<div style={{marginBottom:6,fontSize:11,fontWeight:600,color:"var(--tx-blu)",background:"var(--bg-blu)",border:"1px solid var(--ap-line)",borderRadius:6,padding:"5px 9px"}}>ⓘ <b>{qbOosLabel(q)}</b> — {qbOosNote(q)}</div>}
+                              {__qbBoardAnswer(q)?(<div style={{marginBottom:9,padding:"9px 11px",background:"var(--c-fff)",border:"1px solid var(--bd-grn)",borderRadius:6}}>
+                                <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:5,flexWrap:"wrap"}}>
+                                  <span style={{fontSize:10.5,fontWeight:800,letterSpacing:.6,textTransform:"uppercase",color:"var(--tx-grn2)"}}>Write this in the exam</span>
+                                  {__qbWordLimit(q)&&<span title="CBSE's expected length for this many marks" style={{fontSize:10.5,fontWeight:700,color:"var(--ap-muted)",background:"var(--c-f0)",padding:"1px 7px",borderRadius:99}}>{__qbWordCount(__qbBoardAnswer(q))} / {__qbWordLimit(q)} words</span>}
+                                </div>
+                                <TeX html={fmtSolution(__qbBoardAnswer(q))}/>
+                              </div>):null}
+                              {__qbBoardAnswer(q)&&<div style={{fontSize:10.5,fontWeight:800,letterSpacing:.6,textTransform:"uppercase",marginBottom:4,color:"var(--ap-muted)"}}>Understand it properly</div>}
                               <TeX html={fmtSolution(getSolution(q))}/>
                             </div>
                           )}
