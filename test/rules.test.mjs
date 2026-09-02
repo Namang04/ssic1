@@ -27,6 +27,15 @@ await env.withSecurityRulesDisabled(async (ctx) => {
     classes: ['Class 7-A'], subjects: [], teachingPairs: [], classTeacherOf: []
   });
   await setDoc(doc(db, 'users/arun'), { username: 'arun', role: 'teacher' }); // NO role-bearing fields
+  // Mr. Dilip's real shape: his profile spells the subject 'Social Studies', but the UI normalises it to
+  // 'Social Science' before writing, so a raw string comparison refused his class log.
+  await setDoc(doc(db, 'accounts/uid-dilip'), { role: 'teacher', username: 'dilip' });
+  await setDoc(doc(db, 'users/dilip'), {
+    username: 'dilip', role: 'teacher',
+    classes: ['Class 10-A', 'Class 10-B', 'Class 11-C', 'Class 11-D'],
+    subjects: ['Social Studies', 'Political Science', 'Economics'],
+    classTeacherOf: ['Class 11-C', 'Class 11-D']
+  });
 });
 
 const as = (uid) => env.authenticatedContext(uid).firestore();
@@ -69,6 +78,18 @@ test('a teacher with classes but NO subjects can still write a class log', async
 test('a teacher cannot write a log in another teacher name', async () => {
   await assertFails(setDoc(doc(as('uid-teacher'), 'teacherLogs/log2'), {
     teacherId: 'shreya', class: 'Class 7', section: 'A', subject: 'Mathematics'
+  }));
+});
+
+test('a profile spelled "Social Studies" can log the normalised "Social Science"', async () => {
+  await assertSucceeds(setDoc(doc(as('uid-dilip'), 'teacherLogs/log3'), {
+    teacherId: 'dilip', class: 'Class 10', section: 'A', subject: 'Social Science', date: '2026-09-02'
+  }));
+});
+
+test('a teacher still cannot log a subject they do not teach', async () => {
+  await assertFails(setDoc(doc(as('uid-dilip'), 'teacherLogs/log4'), {
+    teacherId: 'dilip', class: 'Class 10', section: 'A', subject: 'Mathematics', date: '2026-09-02'
   }));
 });
 

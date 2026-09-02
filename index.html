@@ -15369,13 +15369,27 @@ service cloud.firestore {
     }
     // Teaching work uses one exact class-section-subject tuple. Older profiles without teachingPairs retain
     // their legacy classes + subjects access until leadership reviews them in Staff → Assign.
+    // The UI normalises subject aliases before it writes - a teacher whose profile says 'Social Studies'
+    // teaches what the app records as 'Social Science' - but the rules compared raw strings, so Mr. Dilip's
+    // class log was refused: his profile said Social Studies, the log said Social Science, hasAny failed.
+    // Accept the profile spellings the UI maps from, including the Class 9/10 Science split.
+    function subjectAliases(s) {
+      return s == 'Social Science' ? [s, 'Social Studies']
+        : s == 'English' ? [s, 'English Language', 'English Literature']
+        : s == 'Accountancy' ? [s, 'Accounts']
+        : s == 'Computer Science' ? [s, 'Information Technology', 'Computer']
+        : s == 'Science' ? [s, 'Physics', 'Chemistry', 'Biology']
+        : [s];
+    }
     function ownsTeachingPair(data) {
       return isAny(['teacher'])
         && exists(/databases/$(database)/documents/users/$(myUserDocId()))
         && ((get(/databases/$(database)/documents/users/$(myUserDocId())).data.get('teachingPairs', []).size() > 0
               && get(/databases/$(database)/documents/users/$(myUserDocId())).data.get('teachingPairs', []).hasAny([
                 'Class ' + data.get('class', data.get('cls','')) + '-' + data.get('section','') + '|' + data.get('subject', data.get('subj','')),
-                data.get('class', data.get('cls','')) + '-' + data.get('section','') + '|' + data.get('subject', data.get('subj',''))
+                data.get('class', data.get('cls','')) + '-' + data.get('section','') + '|' + data.get('subject', data.get('subj','')),
+                'Class ' + data.get('class', data.get('cls','')) + '-' + data.get('section','') + '|' + subjectAliases(data.get('subject', data.get('subj','')))[0],
+                data.get('class', data.get('cls','')) + '-' + data.get('section','') + '|' + subjectAliases(data.get('subject', data.get('subj','')))[0]
               ]))
             || (get(/databases/$(database)/documents/users/$(myUserDocId())).data.get('teachingPairs', []).size() == 0
               && get(/databases/$(database)/documents/users/$(myUserDocId())).data.get('classes', []).hasAny([
@@ -15383,7 +15397,8 @@ service cloud.firestore {
                 data.get('class', data.get('cls','')) + '-' + data.get('section','')
               ])
               && (get(/databases/$(database)/documents/users/$(myUserDocId())).data.get('subjects', []).size() == 0
-                || get(/databases/$(database)/documents/users/$(myUserDocId())).data.get('subjects', []).hasAny([data.get('subject', data.get('subj',''))]))));
+                || get(/databases/$(database)/documents/users/$(myUserDocId())).data.get('subjects', [])
+                     .hasAny(subjectAliases(data.get('subject', data.get('subj','')))))));
     }
     // Greencity is the LIVE, UNPREFIXED branch. Its money/PII collections below check only ROLE, so without this
     // guard a signed-in OFFICE / STAFF / PARENT account belonging to ANOTHER branch would reach Greencity's money
