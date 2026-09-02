@@ -100,11 +100,29 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/users/$(myUserDocId()))
         && get(/databases/$(database)/documents/users/$(myUserDocId())).data.get('coordinator', false) == true;
     }
+    // users/__classTeachers holds the shared map {"Class 9-A": "<username>"} and has ALWAYS been an equal source
+    // of class-teacher authority in the app: the Attendance screen offers a teacher the sections named here even
+    // when their own profile carries no classTeacherOf array. Teachers assigned before Staff -> Assign began
+    // mirroring that map onto each profile therefore passed the UI check and were refused by this rule, which is
+    // what produced "Couldn't save attendance - Missing or insufficient permissions" on 2 September 2026.
+    // Accept the same map the UI reads, matching on username or display name exactly as the UI does. This grants
+    // nothing the UI did not already offer; it stops the two disagreeing.
+    // cls is stored already prefixed ("Class 10"), so the plain form is the one that matches the map key;
+    // the 'Class ' + cls form is kept only for older documents that stored a bare "10", exactly as
+    // ownsClassSection does above. Checking one form alone would silently never match.
+    function ctMapSaysMine(data) {
+      return exists(/databases/$(database)/documents/users/__classTeachers)
+        && ((get(/databases/$(database)/documents/users/__classTeachers).data.get('map', {})
+               .get(data.get('cls','') + '-' + data.get('section',''), '') in [myUsername(), myAccountName()])
+            || (get(/databases/$(database)/documents/users/__classTeachers).data.get('map', {})
+               .get('Class ' + data.get('cls','') + '-' + data.get('section',''), '') in [myUsername(), myAccountName()]));
+    }
     function ownsClassSection(data) {
       return isAny(['teacher'])
         && exists(/databases/$(database)/documents/users/$(myUserDocId()))
-        && get(/databases/$(database)/documents/users/$(myUserDocId())).data.get('classTeacherOf', [])
-          .hasAny([data.get('cls','') + '-' + data.get('section',''), 'Class ' + data.get('cls','') + '-' + data.get('section','')]);
+        && (get(/databases/$(database)/documents/users/$(myUserDocId())).data.get('classTeacherOf', [])
+              .hasAny([data.get('cls','') + '-' + data.get('section',''), 'Class ' + data.get('cls','') + '-' + data.get('section','')])
+            || ctMapSaysMine(data));
     }
     // Teaching work uses one exact class-section-subject tuple. Older profiles without teachingPairs retain
     // their legacy classes + subjects access until leadership reviews them in Staff → Assign.
