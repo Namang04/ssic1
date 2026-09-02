@@ -1073,7 +1073,8 @@ const QB_CHAPTER_ALIAS={
   "Reconstitution - Retirement":"Retirement of a Partner",
   "Dissolution of Firm":"Dissolution of Partnership Firm",
   "Financial Ratios":"Accounting Ratios",
-  "Valuation of Goodwill":"Goodwill"
+  "Valuation of Goodwill":"Goodwill",
+  "Marketing":"Marketing Management"
 };
 function __canonChapter(c){ var k=String(c||"").trim(); return QB_CHAPTER_ALIAS[k]||k; }
 function __buildQB(){
@@ -1120,6 +1121,12 @@ function __buildQB(){
       var a=String(q.a);
       pairs.forEach(function(pr){ if(a.indexOf(pr[0])>=0) a=a.split(pr[0]).join(pr[1]); });
       q.a=a; });
+  });}}catch(e){}
+  /* Authored model answers, applied LAST so nothing downstream can undo them. The corrections overlay works -
+     3,658 of 3,673 fields land - but a handful of entries do not take, and rather than leave a replacement
+     answer silently ineffective, a rewritten answer gets its own channel that runs after every other pass. */
+  try{var MA=window.__QB_ANSWER||{};if(Object.keys(MA).length){Object.keys(__QB_CACHE).forEach(function(k){
+    (__QB_CACHE[k]||[]).forEach(function(q){ if(!q||!q.q)return; var a=MA[window.__qSig(q)]; if(a)q.a=a; });
   });}}catch(e){}
   /* Chapter names are canonicalised LAST. Doing it before the corrections overlay was pointless: 140 fixes
      carry a chapter field and simply wrote the old spelling back, so "Vector Algebra" reappeared alongside
@@ -18314,7 +18321,7 @@ function __qbChapterScope(lvl,c){
 // Accountancy is set in 1, 3, 4 and 6 marks. The bank also holds 2- and 5-mark questions, fine for a class
 // worksheet but impossible on a board paper, and Not-for-Profit Organisations is Class XI content sitting in
 // the Class XII bank. Neither may reach a generated board paper.
-const QB_BOARD_MARKS={acc12:[1,3,4,6]};
+const QB_BOARD_MARKS={acc12:[1,3,4,6], bst12:[1,3,4,6]};
 const QB_NON_BOARD_CHAPTERS={acc12:["Not-for-Profit Organisations"]};
 function __qbBoardEligible(lvl,q){
   if(__qbChapterScope(lvl,q&&q.c)!=="board") return false;
@@ -18375,6 +18382,7 @@ const QB_BLUEPRINTS={
           chem12:{mcq:12,ar:4,vsa:5,sa:7,la:3,cs:2},
           bio12:{mcq:12,ar:4,vsa:5,sa:7,la:3,cs:2},
           acc12:{byMarks:{A:{1:12,3:4,4:3,6:4}, B:{1:8,3:2,6:1}}},
+          bst12:{byMarks:{A:{1:20,3:4,4:6,6:4}}},
           def:{mcq:18,ar:2,vsa:5,sa:6,la:4,cs:3} }
 };
 function __qbBlueprint(lvl,target){
