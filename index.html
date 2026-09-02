@@ -13133,7 +13133,9 @@ function FeesImport({feesDB}){
   async function doImport(){
     if(!window.confirm("Import "+ROWS.length+" payment records ("+inr(sum.tot)+" collected) into Fees?\n\nThis writes to the live database. Safe to re-run (it overwrites the same records)."))return;
     setBusy(true);setDone("");setProgress("");
-    const lateAfter=((attDB.data&&attDB.data["__config"])||{}).lateAfter||"";const _pad=t=>{const m=String(t||"").match(/^(\d{1,2}):(\d{2})/);return m?(m[1].length<2?"0"+m[1]:m[1])+":"+m[2]:"";};
+    // (A staff-attendance line reading attDB and building _pad was pasted in here. FeesImport never receives
+    //  attDB, so importing fees threw "attDB is not defined" the moment this ran - after the confirm dialog,
+    //  so nothing was written. Neither value was used anywhere below it.)
     // Content-hash key (never row position) so re-running never duplicates — same scheme as the Data Center importer.
     const _fk=r=>{const s=[r.admNo||"",r.date||"",r.amount||"",r.mode||"",r.receiptNo||"",r.disc?"d":"",r.note||""].join("|");let h=5381;for(let k=0;k<s.length;k++)h=(((h<<5)+h)^s.charCodeAt(k))>>>0;return h.toString(36);};
     const _sn={};
