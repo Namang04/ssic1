@@ -1093,6 +1093,16 @@ function __buildQB(){
       var h=HS[window.__qSig(q)]; if(!h)return;
       var a=String(q.a); if(a.indexOf(h[0])===0) q.a=h[1]+a.slice(h[0].length); });
   });}}catch(e){}
+  /* Text swaps: correct a dated fact inside an otherwise sound answer - a statute whose limits were revised,
+     a membership count that has moved on - without restating the whole explanation just to change a number.
+     Each pair only applies if the exact original text is still present, so an edited answer is left alone. */
+  try{var TS=window.__QB_TEXTSWAP||{};if(Object.keys(TS).length){Object.keys(__QB_CACHE).forEach(function(k){
+    (__QB_CACHE[k]||[]).forEach(function(q){ if(!q||!q.q||!q.a)return;
+      var pairs=TS[window.__qSig(q)]; if(!pairs)return;
+      var a=String(q.a);
+      pairs.forEach(function(pr){ if(a.indexOf(pr[0])>=0) a=a.split(pr[0]).join(pr[1]); });
+      q.a=a; });
+  });}}catch(e){}
   return __QB_CACHE;
 }
 Object.defineProperty(window,"QB_DATA",{get:__buildQB,configurable:true});
@@ -18114,6 +18124,35 @@ const QB_UNIT_OF={
   "Statistics":"Statistics & Probability",
   "Probability":"Statistics & Probability"
 };
+const QB_UNIT_OF_SST={
+  "The Rise of Nationalism in Europe":"History","Nationalism in India":"History",
+  "The Making of a Global World":"History","The Age of Industrialisation":"History",
+  "Print Culture and the Modern World":"History",
+  "Resources and Development":"Geography","Forest and Wildlife Resources":"Geography",
+  "Water Resources":"Geography","Agriculture":"Geography","Minerals and Energy Resources":"Geography",
+  "Manufacturing Industries":"Geography","Lifelines of National Economy":"Geography",
+  "Power Sharing":"Political Science","Federalism":"Political Science",
+  "Gender, Religion and Caste":"Political Science","Political Parties":"Political Science",
+  "Outcomes of Democracy":"Political Science",
+  "Development":"Economics","Sectors of the Indian Economy":"Economics",
+  "Money and Credit":"Economics","Globalisation and the Indian Economy":"Economics",
+  "Consumer Rights":"Economics"
+};
+const QB_UNIT_MARKS_SST={"History":20,"Geography":20,"Political Science":20,"Economics":20};
+// CBSE 2026-27 assigns some Social Science chapters to something other than the board theory paper. The
+// questions are sound - they simply cannot be asked in the board exam - so they stay everywhere in the app
+// and are excluded only from BOARD paper generation, with a chip saying which is which.
+const QB_CHAPTER_SCOPE={
+  "The Age of Industrialisation":"periodic",
+  "Consumer Rights":"project",
+  "Lifelines of National Economy":"map-only"
+};
+const QB_SCOPE_LABEL={periodic:"Periodic assessment only - not in the board paper",
+  project:"Project work - not in the board paper",
+  "map-only":"Only map-pointing from this chapter is examined"};
+function __qbChapterScope(lvl,c){ return (lvl==="sst")?(QB_CHAPTER_SCOPE[String(c||"").trim()]||"board"):"board"; }
+function __qbBoardEligible(lvl,q){ return __qbChapterScope(lvl,q&&q.c)==="board"; }
+function __qbScopeLabel(lvl,q){ var k=__qbChapterScope(lvl,q&&q.c); return k==="board"?"":(QB_SCOPE_LABEL[k]||""); }
 const QB_UNIT_OF_SCI={
   "Chemical Reactions and Equations":"Chemical Substances",
   "Acids, Bases and Salts":"Chemical Substances",
@@ -18141,6 +18180,7 @@ const QB_BLUEPRINTS={
           30:{mcq:8,ar:2,vsa:2,sa:2,la:2,cs:0},
           40:{mcq:10,ar:2,vsa:3,sa:3,la:1,cs:2} },
   board:{ sci:{mcq:16,ar:4,vsa:6,sa:7,la:3,cs:3},
+          sst:{mcq:18,ar:2,vsa:4,sa:5,la:4,cs:3,mapMarks:5},
           def:{mcq:18,ar:2,vsa:5,sa:6,la:4,cs:3} }
 };
 function __qbBlueprint(lvl,target){
@@ -18151,11 +18191,13 @@ const QB_UNIT_MARKS_X10={"Number Systems":6,"Algebra":20,"Coordinate Geometry":6
   "Trigonometry":12,"Mensuration":10,"Statistics & Probability":11};
 function __qbUnitOf(c,lvl){ var k=String(c||"").trim();
   if(lvl==="sci") return QB_UNIT_OF_SCI[k]||"";
+  if(lvl==="sst") return QB_UNIT_OF_SST[k]||"";
   return QB_UNIT_OF[k]||""; }
 // Only Class 10 Mathematics has a published unit weightage encoded here. Every other subject returns null and
 // the generator keeps its previous behaviour rather than inventing a blueprint.
 function __qbUnitTargets(lvl,total){
-  var src=(lvl==="std"||lvl==="bas")?QB_UNIT_MARKS_X10:(lvl==="sci"?QB_UNIT_MARKS_SCI:null);
+  var src=(lvl==="std"||lvl==="bas")?QB_UNIT_MARKS_X10
+    :(lvl==="sci"?QB_UNIT_MARKS_SCI:(lvl==="sst"?QB_UNIT_MARKS_SST:null));
   if(!src) return null;
   var k=Number(total||80)/80, out={};
   Object.keys(src).forEach(function(u){ out[u]=src[u]*k; });
@@ -18369,8 +18411,12 @@ function QuestionBank({user}){
   }
 
   function buildByMarks(target){
-    const d=QB_DATA[lvl]||[];
+    const dAll=QB_DATA[lvl]||[];
     const bp=__qbBlueprint(lvl,target);
+    // A board paper may only draw on chapters CBSE actually examines in the theory paper. Shorter presets are
+    // school tests, so they keep the whole bank - a unit test on Consumer Rights is perfectly reasonable.
+    const boardOnly=Number(target)===80;
+    const d=boardOnly?dAll.filter(q=>__qbBoardEligible(lvl,q)):dAll;
     const used=new Set();
     const items=[];
     const unitTargets=__qbUnitTargets(lvl,target);
@@ -18378,7 +18424,7 @@ function QuestionBank({user}){
     // Within each section slot, take the question whose unit is furthest below its target share of marks.
     // The pool is shuffled first, so equally-deficient units still vary between generated papers.
     function pick(pool,count){
-      const avail=qbShuffle(pool.filter(q=>!used.has(d.indexOf(q))));
+      const avail=qbShuffle(pool.filter(q=>!used.has(dAll.indexOf(q))));
       for(let n=0;n<count&&avail.length;n++){
         let choice=0;
         if(unitTargets){
@@ -18390,7 +18436,7 @@ function QuestionBank({user}){
           }
         }
         const q=avail.splice(choice,1)[0];
-        const idx=d.indexOf(q);
+        const idx=dAll.indexOf(q);
         if(used.has(idx)){n--;continue;}
         items.push({lvl,idx,q});used.add(idx);
         const u=__qbUnitOf(q.c,lvl);
@@ -18404,7 +18450,11 @@ function QuestionBank({user}){
     pick(d.filter(q=>q.s==="D"),bp.la);
     pick(d.filter(q=>q.s==="E"),bp.cs);
     setTestItems(items);
-    const names={20:"Weekly Test (20m)",30:"Unit Test (30m)",40:"Half-Term Test (40m)",80:"Board Practice Paper (80m)"};
+    // Social Science reserves 5 compulsory map marks that this bank has no outline maps for, so a generated
+    // paper is 75 marks of theory. Say so in the title rather than printing "80m" over a 75-mark paper.
+    const mapMarks=(bp&&bp.mapMarks)||0;
+    const names={20:"Weekly Test (20m)",30:"Unit Test (30m)",40:"Half-Term Test (40m)",
+      80:mapMarks?("Board Practice Paper ("+(80-mapMarks)+"m + "+mapMarks+"m map)"):"Board Practice Paper (80m)"};
     setTestName(names[target]||"Test");
     setTestCls("10");
   }
