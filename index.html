@@ -2405,6 +2405,17 @@ function _bcfg(){var b=(typeof window!=="undefined"&&window.__currentBranch)||"g
 // Per-branch doc ids: Greencity keeps the legacy GLOBAL doc names (no migration); other campuses get their own.
 // __bMeta — meta docs (config/principalChecklist) → "config"/"config_surajkund". __sharedDocId — users config docs → "__classTeachers"/"surajkund__classTeachers".
 function __bMeta(base){var b=(typeof window!=="undefined"&&window.__currentBranch)||"greencity";return b==="greencity"?base:(base+"_"+b);}
+// A section can have MORE THAN ONE class teacher (two teachers share a large section), and a teacher can hold
+// more than one section. The shared users/__classTeachers map therefore stores an ARRAY of usernames per
+// section. Documents written before this change stored a bare string, so every read goes through __ctList and
+// accepts both shapes; nothing needs migrating. Matching is by username OR display name, because the map has
+// historically been written with either.
+function __ctList(map,key){var v=map&&map[key];if(v==null)return [];return Array.isArray(v)?v.filter(Boolean).map(String):[String(v)];}
+function __ctHas(map,key,username,name){return __ctList(map,key).some(function(u){return u===String(username)||u===String(name);});}
+function __ctSectionsFor(map,username,name){return Object.keys(map||{}).filter(function(k){return __ctHas(map,k,username,name);});}
+function __ctAdd(map,key,username){var l=__ctList(map,key);if(l.indexOf(String(username))<0)l.push(String(username));map[key]=l;return map;}
+function __ctRemove(map,key,username,name){var l=__ctList(map,key).filter(function(u){return u!==String(username)&&u!==String(name);});
+  if(l.length)map[key]=l;else delete map[key];return map;}
 function __sharedDocId(base){var b=(typeof window!=="undefined"&&window.__currentBranch)||"greencity";return b==="greencity"?base:(b+base);}
 function useBranchConfig(){
   const metaDB=useFirestore("meta");
@@ -2933,7 +2944,7 @@ function PrincipalDashboard({user,attendanceDB,staffAttDB,leaveDB,disciplineDB,c
   useEffect(()=>{let cancel=false;const load=async()=>{if(!window.__db||!window.__fbGetDocs||!window.__fbQuery)return;try{const q=window.__fbQuery(window.__fbCollection(window.__db,"teacherLogs"),window.__fbWhere("date",">=",td),window.__fbWhere("date","<=",td));const s=await window.__fbGetDocs(q),ids={};let entries=0;s.forEach(dc=>{const l=dc.data();if(!l)return;entries++;if(l.teacherId||l.teacherName)ids[safeId(l.teacherId||l.teacherName)]=1;});if(!cancel)setVpTeachingPulse({entries:entries,teachers:Object.keys(ids).length});}catch(e){if(!cancel)setVpTeachingPulse(null);}};if(window.__fbReady)load();else window.addEventListener("fbready",load,{once:true});return()=>{cancel=true;};},[td]);
   const _ctDoc=useSharedDoc("users",__sharedDocId("__classTeachers")); // VP can't list users either — read the shared map directly
   const ctMap=(_ctDoc&&_ctDoc.map)||((usersDB&&usersDB.data&&usersDB.data[__sharedDocId("__classTeachers")])||{}).map||{};
-  const teacherRows=useMemo(()=>Object.keys(ctMap).map(function(secKey){var who=ctMap[secKey];var cl=secKey.split("-")[0].trim();var sec=secKey.split("-").slice(1).join("-").trim();var lbl=cl+(sec?" · "+normSection(cl,sec):"");var u=usersDB&&usersDB.data&&usersDB.data[safeId(who)];return{section:secKey,teacher:(u&&u.name)||who,att:!!markedSet[lbl]};}).sort((a,b)=>(a.att?1:0)-(b.att?1:0)||String(a.section).localeCompare(String(b.section),undefined,{numeric:true})),[ctMap,markedSet,usersDB&&usersDB.data]);
+  const teacherRows=useMemo(()=>Object.keys(ctMap).map(function(secKey){var whoList=__ctList(ctMap,secKey);var who=whoList[0]||"";var cl=secKey.split("-")[0].trim();var sec=secKey.split("-").slice(1).join("-").trim();var lbl=cl+(sec?" · "+normSection(cl,sec):"");var u=usersDB&&usersDB.data&&usersDB.data[safeId(who)];var names=whoList.map(function(w){var uu=usersDB&&usersDB.data&&usersDB.data[safeId(w)];return (uu&&uu.name)||w;});return{section:secKey,teacher:names.join(", ")||((u&&u.name)||who),att:!!markedSet[lbl]};}).sort((a,b)=>(a.att?1:0)-(b.att?1:0)||String(a.section).localeCompare(String(b.section),undefined,{numeric:true})),[ctMap,markedSet,usersDB&&usersDB.data]);
   const ctDone=teacherRows.filter(r=>r.att).length;
   // This screen coaches the class teachers, so its operational denominator is the sections that actually
   // have an accountable class teacher. Directory-only orphan sections remain visible in Attendance cleanup,
@@ -3563,7 +3574,7 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
 
   // ── PEOPLE TODAY — staff by name w/ period load; unmarked + partial + red sections w/ class-teacher contact ──
   const ctMap=useMemo(()=>{const d=(usersDB.data||{})[__sharedDocId("__classTeachers")];return (d&&d.map)||{};},[usersDB.data]);
-  const ctOf=(clsTok,sec)=>{const keys=[clsTok+"-"+sec,"Class "+clsTok+"-"+sec,clsTok+sec,String(clsTok)+"-"+String(sec||"").toUpperCase()];let un="";keys.forEach(k=>{if(!un&&ctMap[k])un=ctMap[k];});if(!un)return null;let hit=null;Object.values(_branchUsers(usersDB.data,__br)).forEach(v=>{if(v&&(v.username===un||v.name===un))hit=hit||v;});return hit?{name:hit.name||un,phone:hit.phone||hit.mobile||""}:{name:un,phone:""};};
+  const ctOf=(clsTok,sec)=>{const keys=[clsTok+"-"+sec,"Class "+clsTok+"-"+sec,clsTok+sec,String(clsTok)+"-"+String(sec||"").toUpperCase()];let un="";keys.forEach(k=>{if(!un){var l=__ctList(ctMap,k);if(l.length)un=l[0];}});if(!un)return null;let hit=null;Object.values(_branchUsers(usersDB.data,__br)).forEach(v=>{if(v&&(v.username===un||v.name===un))hit=hit||v;});return hit?{name:hit.name||un,phone:hit.phone||hit.mobile||""}:{name:un,phone:""};};
   const staffToday=useMemo(()=>{
     const tt=(timetablesDB&&timetablesDB.data)||{};
     const load=(name)=>{let total=0,uncov=0;const nk=_tKey(name);
@@ -6168,7 +6179,7 @@ function Dashboard({user,testsDB,studentsDB,attendanceDB,academicRosterDB,dirDB,
   const myCTSecs=useMemo(()=>{if(!isTeacher)return [];
     var keys;
     if(_myDoc&&Array.isArray(_myDoc.classTeacherOf)) keys=_myDoc.classTeacherOf; // primary: from the teacher's OWN doc
-    else { var m=(_ctDoc&&_ctDoc.map)||((usersDB&&usersDB.data&&usersDB.data[__sharedDocId("__classTeachers")])||{}).map||{}; keys=Object.keys(m).filter(k=>String(m[k])===String(user.username)||String(m[k])===String(user.name)); }
+    else { var m=(_ctDoc&&_ctDoc.map)||((usersDB&&usersDB.data&&usersDB.data[__sharedDocId("__classTeachers")])||{}).map||{}; keys=__ctSectionsFor(m,user.username,user.name);/*was:*/if(false)keys=Object.keys(m).filter(k=>String(m[k])===String(user.username)||String(m[k])===String(user.name)); }
     return keys.map(k=>{const body=String(k).replace(/^Class\s*/i,"");const parts=body.split("-");const cls="Class "+parts[0].trim();return {key:k,cls:cls,cn:parts[0].trim(),section:(typeof normSection==="function"?normSection(cls,parts.slice(1).join("-").trim()):parts.slice(1).join("-").trim())};});
   },[isTeacher,_myDoc,_ctDoc,usersDB&&usersDB.data,user.username,user.name]);
   const ctClasses=useMemo(()=>myCTSecs.map(cs=>{const g=attToday[cs.cls+"|"+cs.section];return Object.assign({},cs,{marked:!!(g&&g.total),present:g?g.present:0,pct:(g&&g.total)?Math.round(g.present/g.total*100):null});}),[myCTSecs,attToday]);
@@ -8572,7 +8583,7 @@ function Attendance({user,attendanceDB,studentsDB,usersDB,academicRosterDB,dirDB
   const _ctMap=(_ctDoc&&_ctDoc.map)||((usersDB&&usersDB.data&&usersDB.data[__sharedDocId("__classTeachers")])||{}).map||{};
   // The section(s) this teacher is class teacher of: prefer the explicit list on their OWN doc (always readable),
   // else derive from the shared map. A teacher may hold more than one section.
-  const myCTSecs=canMarkAll?[]:((_myDoc&&Array.isArray(_myDoc.classTeacherOf))?_myDoc.classTeacherOf:Object.keys(_ctMap).filter(function(k){return String(_ctMap[k])===String(user.username)||String(_ctMap[k])===String(user.name);}));
+  const myCTSecs=canMarkAll?[]:((_myDoc&&Array.isArray(_myDoc.classTeacherOf))?_myDoc.classTeacherOf:__ctSectionsFor(_ctMap,user.username,user.name));
   // Class list: all (for can-mark-all) or only the section(s) this teacher is the class teacher of.
   const rawClasses=canViewAll?allClassesFromDir(dirDB).filter(function(c){return typeof __isAcademicCls!=="function"||__isAcademicCls(c);}):[...new Set(myCTSecs.map(toClassKey))].filter(function(c){return typeof __isAcademicCls!=="function"||__isAcademicCls(c);});
   const aC=rawClasses;
@@ -8686,7 +8697,7 @@ function Attendance({user,attendanceDB,studentsDB,usersDB,academicRosterDB,dirDB
   // Day pulse for active registers only. Duplicate/archived documents cannot inflate the completion count.
   const dayStats=useMemo(()=>{var P=0,A=0,L=0,marked=0,docs={};Object.keys(attendanceDB.data||{}).forEach(function(id){var r=attendanceDB.data[id];if(!r||r.date!==date||!r.status||r.holiday)return;var k=__attendanceDocKey(r.cls,r.section),old=docs[k];if(!old||String(r.savedAt||"")>String(old.savedAt||""))docs[k]=Object.assign({__id:id},r);});attendanceSections.forEach(function(s){var r=docs[s.key];if(!r)return;marked++;Object.values(r.status||{}).forEach(function(v){if(v==="P")P++;else if(v==="A")A++;else if(v==="L")L++;});});var tot=P+A+L;return{P:P,A:A,L:L,marked:marked,pct:tot?Math.round((P+L)/tot*100):null,markedKeys:new Set(Object.keys(docs)),docs:docs};},[attendanceDB.data,date,attendanceSections]);
   const pendingRegisters=canViewAll?attendanceSections.filter(function(s){return !dayStats.markedKeys.has(s.key);}):[];
-  const pendingOwner=function(s){var key=s.cls+"-"+s.section,id=_ctMap[key]||_ctMap[s.key]||"";var d=id&&((usersDB.data&&usersDB.data[safeId(id)])||DEFAULT_USERS[id])||{};return{id:id,name:d.name||id,phone:d.phone||d.mobile||""};};
+  const pendingOwner=function(s){var key=s.cls+"-"+s.section,id=(__ctList(_ctMap,key)[0]||__ctList(_ctMap,s.key)[0]||"");var d=id&&((usersDB.data&&usersDB.data[safeId(id)])||DEFAULT_USERS[id])||{};return{id:id,name:d.name||id,phone:d.phone||d.mobile||""};};
   const chronicAll=useMemo(()=>{const nm={};Object.keys(_idMap).forEach(k=>{if(_idMap[k].name)nm[k]=_idMap[k].name;});return attHealth(Object.values(attendanceDB.data||{}).filter(r=>r&&r.status&&(typeof __isAcademicCls!=="function"||__isAcademicCls(r.cls))),nm,{}).flatChronic;},[attendanceDB.data,_idMap]);
 
   const followFor=function(doc,key){var f=(doc&&doc.followUp)||{};return f[safeId(String(key||""))]||f[String(key||"")]||null;};
@@ -15254,15 +15265,22 @@ service cloud.firestore {
     // what produced "Couldn't save attendance - Missing or insufficient permissions" on 2 September 2026.
     // Accept the same map the UI reads, matching on username or display name exactly as the UI does. This grants
     // nothing the UI did not already offer; it stops the two disagreeing.
-    // cls is stored already prefixed ("Class 10"), so the plain form is the one that matches the map key;
-    // the 'Class ' + cls form is kept only for older documents that stored a bare "10", exactly as
-    // ownsClassSection does above. Checking one form alone would silently never match.
+    // A section may have SEVERAL class teachers, so a map entry is a list of usernames; entries written before
+    // that change are a bare string. Accept both shapes, or a co-class-teacher is refused on save.
+    function ctEntryIsMine(entry) {
+      return (entry is list)
+        ? entry.hasAny([myUsername(), myAccountName()])
+        : (entry in [myUsername(), myAccountName()]);
+    }
+    // cls is stored already prefixed ("Class 10"), so the plain concatenation is the form that matches the map
+    // key; the 'Class ' + cls form is kept only for older documents that stored a bare "10", exactly as
+    // ownsClassSection does. Checking one form alone would silently never match.
     function ctMapSaysMine(data) {
       return exists(/databases/$(database)/documents/users/__classTeachers)
-        && ((get(/databases/$(database)/documents/users/__classTeachers).data.get('map', {})
-               .get(data.get('cls','') + '-' + data.get('section',''), '') in [myUsername(), myAccountName()])
-            || (get(/databases/$(database)/documents/users/__classTeachers).data.get('map', {})
-               .get('Class ' + data.get('cls','') + '-' + data.get('section',''), '') in [myUsername(), myAccountName()]));
+        && (ctEntryIsMine(get(/databases/$(database)/documents/users/__classTeachers).data
+              .get('map', {}).get(data.get('cls','') + '-' + data.get('section',''), ''))
+            || ctEntryIsMine(get(/databases/$(database)/documents/users/__classTeachers).data
+              .get('map', {}).get('Class ' + data.get('cls','') + '-' + data.get('section',''), '')));
     }
     function ownsClassSection(data) {
       return isAny(['teacher'])
@@ -16107,7 +16125,7 @@ function AccountsPanel({user,usersDB,studentsDB,dirDB,academicRosterDB,canManage
       if(acct&&acct.uid)await window.__fbDeleteDoc(window.__fbDoc(window.__db,"accounts",acct.uid));          // 2) delete the login (role lookup now fails → fully blocked)
       const ctId=__sharedDocId("__classTeachers");                                                            // 3) drop them from this campus's class-teacher map so no section is orphaned
       const ctm=Object.assign({},((usersDB.data&&usersDB.data[ctId])||{}).map||{});let changed=false;
-      Object.keys(ctm).forEach(function(k){if(String(ctm[k])===String(uRow.username)||String(ctm[k])===String(uRow.name)){delete ctm[k];changed=true;}});
+      Object.keys(ctm).forEach(function(k){if(__ctHas(ctm,k,uRow.username,uRow.name)){__ctRemove(ctm,k,uRow.username,uRow.name);changed=true;}});
       if(changed)await usersDB.set(ctId,{map:ctm,updatedAt:new Date().toISOString()});
       logAudit("staff-remove","users",uRow.username,{role:uRow.role,name:uRow.name},null);
       setMsg({ok:true,text:uRow.name+" removed permanently."});
@@ -21798,7 +21816,7 @@ function StaffAttendanceRegister({user,isDirector,setTab:goTab,sharedAttDB,share
       if(acctEntry)await window.__fbDeleteDoc(window.__fbDoc(window.__db,"accounts",acctEntry[0]));
       const ctId=__sharedDocId("__classTeachers");
       const ctm=Object.assign({},((usersDB.data&&usersDB.data[ctId])||{}).map||{});let changed=false;
-      Object.keys(ctm).forEach(function(k){if(String(ctm[k])===String(u.username)||String(ctm[k])===String(u.name)){delete ctm[k];changed=true;}});
+      Object.keys(ctm).forEach(function(k){if(__ctHas(ctm,k,u.username,u.name)){__ctRemove(ctm,k,u.username,u.name);changed=true;}});
       if(changed)await usersDB.set(ctId,{map:ctm,updatedAt:new Date().toISOString()});
       logAudit("staff-remove","users",u.username,{role:u.role,name:u.name},null);
       if(window.__toast)window.__toast(u.name+" permanently removed — gone from every list.","ok");
@@ -24790,11 +24808,7 @@ function AssignPanel(props) {
     if (!selTeacher) return;
     if(newSubj.trim()){setMsg("Add the typed subject first, or clear that field before saving the assignment.");return;}
     var oldCtm = ((usersDB.data && usersDB.data[__sharedDocId("__classTeachers")]) || {}).map || {};
-    var takeovers=(selCTs||[]).filter(function(k){return oldCtm[k]&&oldCtm[k]!==selTeacher;});
-    if(takeovers.length){
-      var takeoverNames=[...new Set(takeovers.map(function(k){return ctNameOf(oldCtm[k]);}))];
-      if(!await window.__confirm({title:"Reassign "+takeovers.length+" class-teacher section"+(takeovers.length===1?"":"s")+"?",body:takeovers.join(", ")+" currently belong"+(takeovers.length===1?"s":"")+" to "+takeoverNames.join(", ")+". Saving moves those sections to "+((teacherData&&teacherData.name)||selTeacher)+" and updates the previous teacher records.",confirmText:"Reassign and save"}))return;
-    }
+    var takeovers=[];  // a section may hold several class teachers, so adding one never displaces another
     setSaving(true); setMsg("");
     // MERGE into the existing user doc (don't overwrite) so phone/email/active and other profile fields survive.
     var cur = (usersDB.data && usersDB.data[safeId(selTeacher)]) || {};
@@ -24820,16 +24834,17 @@ function AssignPanel(props) {
     var ctm = Object.assign({}, oldCtm);
     // Any OTHER teacher losing a section to this one → re-sync their own-doc classTeacherOf so it doesn't go stale.
     var affected = {};
-    (selCTs || []).forEach(function(k){ if (oldCtm[k] && oldCtm[k] !== selTeacher) affected[oldCtm[k]] = true; });
-    Object.keys(ctm).forEach(function(k){ if (ctm[k] === selTeacher) delete ctm[k]; });
-    (selCTs || []).forEach(function(k){ ctm[k] = selTeacher; });
+    // Remove this teacher from every section, then add them back to the chosen ones. Any OTHER teacher already
+    // on a section stays: co-class-teachers are supported, so selecting a section no longer takes it from them.
+    Object.keys(ctm).forEach(function(k){ __ctRemove(ctm, k, selTeacher, ctNameOf(selTeacher)); });
+    (selCTs || []).forEach(function(k){ __ctAdd(ctm, k, selTeacher); });
     var writes = [
       usersDB.set(selTeacher, data),
       usersDB.set(__sharedDocId("__classTeachers"), { map: ctm, updatedAt: new Date().toISOString() })
     ];
     Object.keys(affected).forEach(function(ph){
       var phDoc = (usersDB.data && usersDB.data[safeId(ph)]) || DEFAULT_USERS[ph] || {};
-      var phSecs = Object.keys(ctm).filter(function(k){ return ctm[k] === ph; });
+      var phSecs = __ctSectionsFor(ctm, ph, ctNameOf(ph));
       writes.push(usersDB.set(ph, Object.assign({}, phDoc, { username: phDoc.username || ph, classTeacherOf: phSecs, updatedAt: new Date().toISOString() })));
     });
     try{
@@ -24952,13 +24967,16 @@ function AssignPanel(props) {
               <div style={{display:"flex",flexWrap:"wrap",gap:7}}>
                 {CLASSES.map(function(c){ return getSectionsForClass(c).map(function(s){
                   var k=c+"-"+s; var on=(selCTs||[]).indexOf(k)>=0;
-                  var holder=classTeacherMap[k]; var takenByOther=holder&&holder!==selTeacher;
+                  // A section can carry more than one class teacher, so anyone already on it is a colleague to
+                  // show, not a holder to displace. Selecting this section adds this teacher alongside them.
+                  var others=__ctList(classTeacherMap,k).filter(function(u){return String(u)!==String(selTeacher);});
+                  var sharedWith=others.length?others.map(ctNameOf).join(", "):"";
                   return <button key={k} type="button" onClick={function(){ setSelCTs(function(p){ p=p||[]; return p.indexOf(k)>=0?p.filter(function(x){return x!==k;}):p.concat([k]); }); }}
-                    title={takenByOther?("Currently "+ctNameOf(holder)+" — saving reassigns it"):""}
+                    title={sharedWith?("Also class teacher: "+sharedWith):""}
                     style={{fontSize:12,fontWeight:600,padding:"7px 11px",borderRadius:6,cursor:"pointer",fontFamily:"var(--ss-font)",
-                      border:"1.5px solid "+(on?"var(--btn-pri-bg)":(takenByOther?"#f0c98a":"var(--c-d2)")),
+                      border:"1.5px solid "+(on?"var(--btn-pri-bg)":(sharedWith?"var(--tx-gold)":"var(--c-d2)")),
                       background:on?"var(--btn-pri-bg)":"var(--c-fff)",color:on?"#fff":"var(--ap-ink)"}}>
-                    {c.replace("Class ","Cl ")+"-"+s}{takenByOther&&!on?<span style={{color:"var(--tx-red2)",marginLeft:4}}>•</span>:null}
+                    {c.replace("Class ","Cl ")+"-"+s}{sharedWith?<span title={"Also class teacher: "+sharedWith} style={{color:"var(--tx-gold)",marginLeft:4}}>•</span>:null}
                   </button>;
                 }); })}
               </div>

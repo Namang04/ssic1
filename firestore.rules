@@ -107,15 +107,22 @@ service cloud.firestore {
     // what produced "Couldn't save attendance - Missing or insufficient permissions" on 2 September 2026.
     // Accept the same map the UI reads, matching on username or display name exactly as the UI does. This grants
     // nothing the UI did not already offer; it stops the two disagreeing.
-    // cls is stored already prefixed ("Class 10"), so the plain form is the one that matches the map key;
-    // the 'Class ' + cls form is kept only for older documents that stored a bare "10", exactly as
-    // ownsClassSection does above. Checking one form alone would silently never match.
+    // A section may have SEVERAL class teachers, so a map entry is a list of usernames; entries written before
+    // that change are a bare string. Accept both shapes, or a co-class-teacher is refused on save.
+    function ctEntryIsMine(entry) {
+      return (entry is list)
+        ? entry.hasAny([myUsername(), myAccountName()])
+        : (entry in [myUsername(), myAccountName()]);
+    }
+    // cls is stored already prefixed ("Class 10"), so the plain concatenation is the form that matches the map
+    // key; the 'Class ' + cls form is kept only for older documents that stored a bare "10", exactly as
+    // ownsClassSection does. Checking one form alone would silently never match.
     function ctMapSaysMine(data) {
       return exists(/databases/$(database)/documents/users/__classTeachers)
-        && ((get(/databases/$(database)/documents/users/__classTeachers).data.get('map', {})
-               .get(data.get('cls','') + '-' + data.get('section',''), '') in [myUsername(), myAccountName()])
-            || (get(/databases/$(database)/documents/users/__classTeachers).data.get('map', {})
-               .get('Class ' + data.get('cls','') + '-' + data.get('section',''), '') in [myUsername(), myAccountName()]));
+        && (ctEntryIsMine(get(/databases/$(database)/documents/users/__classTeachers).data
+              .get('map', {}).get(data.get('cls','') + '-' + data.get('section',''), ''))
+            || ctEntryIsMine(get(/databases/$(database)/documents/users/__classTeachers).data
+              .get('map', {}).get('Class ' + data.get('cls','') + '-' + data.get('section',''), '')));
     }
     function ownsClassSection(data) {
       return isAny(['teacher'])
