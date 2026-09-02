@@ -10,6 +10,7 @@
 
 import Babel from '@babel/standalone';
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from 'fs';
+import { createHash } from 'crypto';
 
 const SRC = './index.html';
 const OUTDIR = './build';
@@ -71,6 +72,20 @@ const missing = [];
 for (const f of DEPLOY_FILES) {
   if (existsSync('./' + f)) { copyFileSync('./' + f, OUTDIR + '/' + f); copied.push(f); }
   else missing.push(f);
+}
+
+// The service worker purges its cache only when the cache NAME changes, so sw.js carried a "bump this on
+// every deploy" comment - and it went unbumped for roughly fifteen deploys in one day. Every teacher kept
+// being served the previously cached page, so fix after fix looked like it had not shipped, including the
+// Firestore rules the Director copies off the Security screen. Stamp the name from the built output instead
+// of trusting anyone to remember: identical output keeps the cache, changed output retires it.
+if (existsSync(OUTDIR + '/sw.js')) {
+  const stamp = createHash('sha1').update(html).digest('hex').slice(0, 12);
+  const sw = readFileSync(OUTDIR + '/sw.js', 'utf8');
+  const stamped = sw.replace(/const CACHE = '[^']*';/, `const CACHE = 'ssic-${stamp}';`);
+  if (stamped === sw) console.warn('  ! sw.js CACHE constant not found - cache will NOT be invalidated');
+  writeFileSync(OUTDIR + '/sw.js', stamped);
+  console.log(`  service worker    : cache ssic-${stamp} (stamped from build output)`);
 }
 if (missing.length) console.warn('  ! not found, so NOT deployed: ' + missing.join(', '));
 
