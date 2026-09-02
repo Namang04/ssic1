@@ -18138,6 +18138,15 @@ const QB_UNIT_OF_SST={
   "Money and Credit":"Economics","Globalisation and the Indian Economy":"Economics",
   "Consumer Rights":"Economics"
 };
+// Computer Applications (code 165) is a 50-mark, 2-hour theory paper plus a 50-mark practical - not the
+// 80-mark, 3-hour paper every other subject sits. Its chapters ARE its units, so no mapping table is needed.
+const QB_UNIT_MARKS_COMP={"Networking":15,"HTML":25,"Cyber Ethics":10};
+function __qbBoardTotal(lvl){ return lvl==="comp"?50:80; }
+function __qbPresets(lvl){
+  return lvl==="comp"
+    ? [[20,"~30 min"],[30,"~45 min"],[50,"2 hours \u00b7 board"]]
+    : [[20,"~30 min"],[30,"~45 min"],[40,"~1 hour"],[80,"3 hours \u00b7 board"]];
+}
 const QB_UNIT_MARKS_SST={"History":20,"Geography":20,"Political Science":20,"Economics":20};
 // CBSE 2026-27 assigns some Social Science chapters to something other than the board theory paper. The
 // questions are sound - they simply cannot be asked in the board exam - so they stay everywhere in the app
@@ -18181,15 +18190,17 @@ const QB_BLUEPRINTS={
           40:{mcq:10,ar:2,vsa:3,sa:3,la:1,cs:2} },
   board:{ sci:{mcq:16,ar:4,vsa:6,sa:7,la:3,cs:3},
           sst:{mcq:18,ar:2,vsa:4,sa:5,la:4,cs:3,mapMarks:5},
+          comp:{mcq:12,ar:0,vsa:7,sa:4,la:0,cs:3},
           def:{mcq:18,ar:2,vsa:5,sa:6,la:4,cs:3} }
 };
 function __qbBlueprint(lvl,target){
-  if(Number(target)===80) return QB_BLUEPRINTS.board[lvl]||QB_BLUEPRINTS.board.def;
+  if(Number(target)===__qbBoardTotal(lvl)) return QB_BLUEPRINTS.board[lvl]||QB_BLUEPRINTS.board.def;
   return QB_BLUEPRINTS.short[target]||QB_BLUEPRINTS.board.def;
 }
 const QB_UNIT_MARKS_X10={"Number Systems":6,"Algebra":20,"Coordinate Geometry":6,"Geometry":15,
   "Trigonometry":12,"Mensuration":10,"Statistics & Probability":11};
 function __qbUnitOf(c,lvl){ var k=String(c||"").trim();
+  if(lvl==="comp") return QB_UNIT_MARKS_COMP[k]?k:"";
   if(lvl==="sci") return QB_UNIT_OF_SCI[k]||"";
   if(lvl==="sst") return QB_UNIT_OF_SST[k]||"";
   return QB_UNIT_OF[k]||""; }
@@ -18197,9 +18208,10 @@ function __qbUnitOf(c,lvl){ var k=String(c||"").trim();
 // the generator keeps its previous behaviour rather than inventing a blueprint.
 function __qbUnitTargets(lvl,total){
   var src=(lvl==="std"||lvl==="bas")?QB_UNIT_MARKS_X10
-    :(lvl==="sci"?QB_UNIT_MARKS_SCI:(lvl==="sst"?QB_UNIT_MARKS_SST:null));
+    :(lvl==="sci"?QB_UNIT_MARKS_SCI:(lvl==="sst"?QB_UNIT_MARKS_SST
+    :(lvl==="comp"?QB_UNIT_MARKS_COMP:null)));
   if(!src) return null;
-  var k=Number(total||80)/80, out={};
+  var k=Number(total||__qbBoardTotal(lvl))/__qbBoardTotal(lvl), out={};
   Object.keys(src).forEach(function(u){ out[u]=src[u]*k; });
   return out;
 }
@@ -18396,7 +18408,7 @@ function QuestionBank({user}){
   }),[data,filterCh,filterSec,filterDiff,filterPYQ,filterSrc,filterYear,search]);
 
   // Coverage of the current (branch-aware) view — read-only, never modifies the question data.
-  const cov=useMemo(function(){var ch={},pyq=0,sec={A:0,B:0,C:0,D:0,E:0};data.forEach(function(q){if(q.c)ch[q.c]=1;if(isPYQ(q))pyq++;if(sec[q.s]!==undefined)sec[q.s]++;});return {total:data.length,chapters:Object.keys(ch).length,pyq:pyq,sec:sec};},[data]);
+  const cov=useMemo(function(){var ch={},pyq=0,board=0,sample=0,sec={A:0,B:0,C:0,D:0,E:0};data.forEach(function(q){if(q.c)ch[q.c]=1;if(isPYQ(q)){pyq++;var v=__qSrc(q);if(v&&v.kind==="Sample Paper")sample++;else board++;}if(sec[q.s]!==undefined)sec[q.s]++;});return {board:board,sample:sample,total:data.length,chapters:Object.keys(ch).length,pyq:pyq,sec:sec};},[data]);
   const totalTestMarks=testItems.reduce((s,ti)=>s+ti.q.m,0);
   // Membership keys on the UNFILTERED level index (what the builders store) so a sciSub sub-filter can't desync the ✓.
   const isInTest=(q)=>{const di=(QB_DATA[lvl]||[]).indexOf(q);return testItems.some(ti=>ti.idx===di&&ti.lvl===lvl);};
@@ -18415,7 +18427,7 @@ function QuestionBank({user}){
     const bp=__qbBlueprint(lvl,target);
     // A board paper may only draw on chapters CBSE actually examines in the theory paper. Shorter presets are
     // school tests, so they keep the whole bank - a unit test on Consumer Rights is perfectly reasonable.
-    const boardOnly=Number(target)===80;
+    const boardOnly=Number(target)===__qbBoardTotal(lvl);
     const d=boardOnly?dAll.filter(q=>__qbBoardEligible(lvl,q)):dAll;
     const used=new Set();
     const items=[];
@@ -18454,7 +18466,8 @@ function QuestionBank({user}){
     // paper is 75 marks of theory. Say so in the title rather than printing "80m" over a 75-mark paper.
     const mapMarks=(bp&&bp.mapMarks)||0;
     const names={20:"Weekly Test (20m)",30:"Unit Test (30m)",40:"Half-Term Test (40m)",
-      80:mapMarks?("Board Practice Paper ("+(80-mapMarks)+"m + "+mapMarks+"m map)"):"Board Practice Paper (80m)"};
+      80:mapMarks?("Board Practice Paper ("+(80-mapMarks)+"m + "+mapMarks+"m map)"):"Board Practice Paper (80m)",
+      50:"Board Practice Paper (50m)"};
     setTestName(names[target]||"Test");
     setTestCls("10");
   }
@@ -18607,7 +18620,8 @@ body{font-family:'Times New Roman',Georgia,serif;padding:30px 34px;color:#1a1a1a
       {/* Coverage of the current view (read-only) */}
       <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:14}}>
         {[["Questions",cov.total],["Chapters",cov.chapters]].map(function(x){return <span key={x[0]} className="ap-statchip"><b>{x[0]}</b><span className="n">{x[1]}</span></span>;})}
-        {cov.pyq>0&&<span className="ap-statchip" style={{borderColor:"var(--tx-pur)"}}><b style={{color:"var(--tx-pur)"}}>PYQ</b><span className="n" style={{background:"var(--tx-pur)"}}>{cov.pyq}</span></span>}
+        {cov.board>0&&<span className="ap-statchip" title="From board examination papers, main and compartment" style={{borderColor:"var(--tx-pur)"}}><b style={{color:"var(--tx-pur)"}}>Board</b><span className="n" style={{background:"var(--tx-pur)"}}>{cov.board}</span></span>}
+        {cov.sample>0&&<span className="ap-statchip" title="From official CBSE sample papers" style={{borderColor:"var(--tx-blu)"}}><b style={{color:"var(--tx-blu)"}}>Sample</b><span className="n" style={{background:"var(--tx-blu)"}}>{cov.sample}</span></span>}
         <span style={{width:1,height:18,background:"var(--ap-line)",margin:"0 2px"}}/>
         {["A","B","C","D","E"].map(function(s){if(!cov.sec[s])return null;return <span key={s} style={{display:"inline-flex",alignItems:"center",gap:6,background:__secTint(s),color:QB_SEC_COLOR[s],borderRadius:6,padding:"3px 10px",fontSize:11.5,fontWeight:700}}>{s}<span style={{fontFamily:"var(--ss-font)"}}>{cov.sec[s]}</span></span>;})}
       </div>
@@ -18658,7 +18672,7 @@ body{font-family:'Times New Roman',Georgia,serif;padding:30px 34px;color:#1a1a1a
               <div style={{fontSize:12.5,color:"var(--ap-muted)"}}>pick a length — we'll assemble a balanced CBSE paper</div>
             </div>
             <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-              {[[20,"~30 min"],[30,"~45 min"],[40,"~1 hour"],[80,"3 hours · board"]].map(([m,t])=>(
+              {__qbPresets(lvl).map(([m,t])=>(
                 <button key={m} onClick={()=>buildByMarks(m)} className="ss-press" style={{flex:"1 1 110px",minWidth:104,display:"flex",flexDirection:"column",alignItems:"flex-start",gap:3,padding:"13px 15px",border:"1px solid var(--c-e6)",borderRadius:8,background:"var(--c-fff)",cursor:"pointer",fontFamily:"var(--ss-font)",transition:"border-color .15s,box-shadow .15s"}}
                   onMouseEnter={e=>{e.currentTarget.style.borderColor="var(--ap-accent)";e.currentTarget.style.boxShadow="0 0 0 3px var(--ap-accent-soft)";}}
                   onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--c-e6)";e.currentTarget.style.boxShadow="none";}}>
