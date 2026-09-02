@@ -18165,12 +18165,32 @@ const QB_UNIT_OF_ENG={
   "Footprints Without Feet":"Literature"
 };
 const QB_UNIT_MARKS_ENG={"Reading":20,"Writing & Grammar":20,"Literature":40};
+// Class 12 Physics is a 70-mark, 3-hour theory paper plus 30 practical - not the 80-mark paper the generic
+// preset assumed. Section D is the pair of 4-mark case studies and Section E the three 5-mark long answers.
+const QB_UNIT_OF_PHY={
+  "Electric Charges and Fields":"Electrostatics & Current Electricity",
+  "Electrostatic Potential and Capacitance":"Electrostatics & Current Electricity",
+  "Current Electricity":"Electrostatics & Current Electricity",
+  "Moving Charges and Magnetism":"Magnetism, EMI & AC",
+  "Magnetism and Matter":"Magnetism, EMI & AC",
+  "Electromagnetic Induction":"Magnetism, EMI & AC",
+  "Alternating Current":"Magnetism, EMI & AC",
+  "Electromagnetic Waves":"EM Waves & Optics",
+  "Ray Optics and Optical Instruments":"EM Waves & Optics",
+  "Wave Optics":"EM Waves & Optics",
+  "Dual Nature of Radiation and Matter":"Dual Nature, Atoms & Nuclei",
+  "Atoms":"Dual Nature, Atoms & Nuclei",
+  "Nuclei":"Dual Nature, Atoms & Nuclei",
+  "Semiconductor Electronics":"Electronic Devices"
+};
+const QB_UNIT_MARKS_PHY={"Electrostatics & Current Electricity":16,"Magnetism, EMI & AC":17,
+  "EM Waves & Optics":18,"Dual Nature, Atoms & Nuclei":12,"Electronic Devices":7};
 const QB_UNIT_MARKS_COMP={"Networking":15,"HTML":25,"Cyber Ethics":10};
-function __qbBoardTotal(lvl){ return lvl==="comp"?50:80; }
+function __qbBoardTotal(lvl){ return lvl==="comp"?50:(lvl==="phy12"?70:80); }
 function __qbPresets(lvl){
-  return lvl==="comp"
-    ? [[20,"~30 min"],[30,"~45 min"],[50,"2 hours \u00b7 board"]]
-    : [[20,"~30 min"],[30,"~45 min"],[40,"~1 hour"],[80,"3 hours \u00b7 board"]];
+  if(lvl==="comp") return [[20,"~30 min"],[30,"~45 min"],[50,"2 hours \u00b7 board"]];
+  if(lvl==="phy12") return [[20,"~30 min"],[30,"~45 min"],[70,"3 hours \u00b7 board"]];
+  return [[20,"~30 min"],[30,"~45 min"],[40,"~1 hour"],[80,"3 hours \u00b7 board"]];
 }
 const QB_UNIT_MARKS_SST={"History":20,"Geography":20,"Political Science":20,"Economics":20};
 // CBSE 2026-27 assigns some Social Science chapters to something other than the board theory paper. The
@@ -18181,10 +18201,15 @@ const QB_CHAPTER_SCOPE={
   "Consumer Rights":"project",
   "Lifelines of National Economy":"map-only"
 };
-const QB_SCOPE_LABEL={periodic:"Periodic assessment only - not in the board paper",
+const QB_SCOPE_LABEL={mock:"From a mock paper pack, not a syllabus chapter",
+  periodic:"Periodic assessment only - not in the board paper",
   project:"Project work - not in the board paper",
   "map-only":"Only map-pointing from this chapter is examined"};
-function __qbChapterScope(lvl,c){ return (lvl==="sst")?(QB_CHAPTER_SCOPE[String(c||"").trim()]||"board"):"board"; }
+function __qbChapterScope(lvl,c){
+  var k=String(c||"").trim();
+  if(/^Mock Paper/i.test(k)) return "mock";   // a paper collection, not a chapter
+  return (lvl==="sst")?(QB_CHAPTER_SCOPE[k]||"board"):"board";
+}
 function __qbBoardEligible(lvl,q){ return __qbChapterScope(lvl,q&&q.c)==="board"; }
 function __qbScopeLabel(lvl,q){ var k=__qbChapterScope(lvl,q&&q.c); return k==="board"?"":(QB_SCOPE_LABEL[k]||""); }
 const QB_UNIT_OF_SCI={
@@ -18216,6 +18241,7 @@ const QB_BLUEPRINTS={
   board:{ sci:{mcq:16,ar:4,vsa:6,sa:7,la:3,cs:3},
           sst:{mcq:18,ar:2,vsa:4,sa:5,la:4,cs:3,mapMarks:5},
           comp:{mcq:12,ar:0,vsa:7,sa:4,la:0,cs:3},
+          phy12:{mcq:12,ar:4,vsa:5,sa:7,la:3,cs:2},
           def:{mcq:18,ar:2,vsa:5,sa:6,la:4,cs:3} }
 };
 function __qbBlueprint(lvl,target){
@@ -18225,6 +18251,7 @@ function __qbBlueprint(lvl,target){
 const QB_UNIT_MARKS_X10={"Number Systems":6,"Algebra":20,"Coordinate Geometry":6,"Geometry":15,
   "Trigonometry":12,"Mensuration":10,"Statistics & Probability":11};
 function __qbUnitOf(c,lvl){ var k=String(c||"").trim();
+  if(lvl==="phy12") return QB_UNIT_OF_PHY[k]||"";
   if(lvl==="eng") return QB_UNIT_OF_ENG[k]||"";
   if(lvl==="comp") return QB_UNIT_MARKS_COMP[k]?k:"";
   if(lvl==="sci") return QB_UNIT_OF_SCI[k]||"";
@@ -18235,7 +18262,8 @@ function __qbUnitOf(c,lvl){ var k=String(c||"").trim();
 function __qbUnitTargets(lvl,total){
   var src=(lvl==="std"||lvl==="bas")?QB_UNIT_MARKS_X10
     :(lvl==="sci"?QB_UNIT_MARKS_SCI:(lvl==="sst"?QB_UNIT_MARKS_SST
-    :(lvl==="comp"?QB_UNIT_MARKS_COMP:(lvl==="eng"?QB_UNIT_MARKS_ENG:null))));
+    :(lvl==="comp"?QB_UNIT_MARKS_COMP:(lvl==="eng"?QB_UNIT_MARKS_ENG
+    :(lvl==="phy12"?QB_UNIT_MARKS_PHY:null)))));
   if(!src) return null;
   var k=Number(total||__qbBoardTotal(lvl))/__qbBoardTotal(lvl), out={};
   Object.keys(src).forEach(function(u){ out[u]=src[u]*k; });
