@@ -47,14 +47,24 @@ service cloud.firestore {
     function isAny(roles) { return signedIn() && (role() in roles); }
     // Legacy VP accounts were encoded as role:'admin', fees:false. Distinguish them inside the rules as well as
     // the UI, otherwise a legacy VP inherits Director-only account-management rights from the 'admin' string.
+    // These distinguish a real Director from a legacy VP encoded as admin+fees:false. The fees flag lives on
+    // the accounts doc, and get() on a MISSING doc throws, which denies the write outright - so an admin whose
+    // accounts doc is absent lost the ability to save staff assignments ("Could not complete every assignment
+    // update - Missing or insufficient permissions"). Guard the lookup: no accounts doc means no fees:false
+    // marker, so an admin is a Director exactly as they were before this distinction existed.
+    function accountDoc() {
+      return get(/databases/$(database)/documents/accounts/$(request.auth.uid)).data;
+    }
+    function hasAccountDoc() {
+      return exists(/databases/$(database)/documents/accounts/$(request.auth.uid));
+    }
     function isDirectorRole() {
       return role() == 'admin'
-        && get(/databases/$(database)/documents/accounts/$(request.auth.uid)).data.get('fees', true) != false;
+        && (!hasAccountDoc() || accountDoc().get('fees', true) != false);
     }
     function isVicePrincipalRole() {
       return role() == 'vp'
-        || (role() == 'admin'
-          && get(/databases/$(database)/documents/accounts/$(request.auth.uid)).data.get('fees', true) == false);
+        || (role() == 'admin' && hasAccountDoc() && accountDoc().get('fees', true) == false);
     }
     // The caller's own admission number from their account doc (null if none).
     function myAdmNo() {
