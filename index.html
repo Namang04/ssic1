@@ -1066,7 +1066,14 @@ const QB_CHAPTER_ALIAS={
   "Vector Algebra":"Vectors",
   "Three-dimensional Geometry":"Three Dimensional Geometry",
   "Three-Dimensional Geometry":"Three Dimensional Geometry",
-  "Biodiversity and its Conservation":"Biodiversity and Conservation"
+  "Biodiversity and its Conservation":"Biodiversity and Conservation",
+  "Share Capital":"Company - Share Capital",
+  "Debentures":"Company - Debentures",
+  "Reconstitution - Admission":"Admission of a Partner",
+  "Reconstitution - Retirement":"Retirement of a Partner",
+  "Dissolution of Firm":"Dissolution of Partnership Firm",
+  "Financial Ratios":"Accounting Ratios",
+  "Valuation of Goodwill":"Goodwill"
 };
 function __canonChapter(c){ var k=String(c||"").trim(); return QB_CHAPTER_ALIAS[k]||k; }
 function __buildQB(){
@@ -18304,7 +18311,19 @@ function __qbChapterScope(lvl,c){
   if(/^Mock Paper/i.test(k)) return "mock";   // a paper collection, not a chapter
   return (lvl==="sst")?(QB_CHAPTER_SCOPE[k]||"board"):"board";
 }
-function __qbBoardEligible(lvl,q){ return __qbChapterScope(lvl,q&&q.c)==="board"; }
+// Accountancy is set in 1, 3, 4 and 6 marks. The bank also holds 2- and 5-mark questions, fine for a class
+// worksheet but impossible on a board paper, and Not-for-Profit Organisations is Class XI content sitting in
+// the Class XII bank. Neither may reach a generated board paper.
+const QB_BOARD_MARKS={acc12:[1,3,4,6]};
+const QB_NON_BOARD_CHAPTERS={acc12:["Not-for-Profit Organisations"]};
+function __qbBoardEligible(lvl,q){
+  if(__qbChapterScope(lvl,q&&q.c)!=="board") return false;
+  var bad=QB_NON_BOARD_CHAPTERS[lvl];
+  if(bad&&q&&bad.indexOf(__canonChapter(q.c))>=0) return false;
+  var ok=QB_BOARD_MARKS[lvl];
+  if(ok&&q&&ok.indexOf(Number(q.m))<0) return false;
+  return true;
+}
 function __qbScopeLabel(lvl,q){ var k=__qbChapterScope(lvl,q&&q.c); return k==="board"?"":(QB_SCOPE_LABEL[k]||""); }
 const QB_UNIT_OF_SCI={
   "Chemical Reactions and Equations":"Chemical Substances",
