@@ -18347,6 +18347,23 @@ const QB_UNIT_MARKS_SCI={"Chemical Substances":25,"World of Living":25,"Natural 
 // was being generated from the Maths blueprint, so it totalled the right 80 marks in the wrong shape.
 // The shorter presets are internal school tests with no official CBSE shape, but they must at least total what
 // their label promises - "Unit Test (30m)" was producing 25 marks, and "20m" was producing 16.
+// CBSE gives internal choice on roughly a third of every board paper - a question, then "OR", then an
+// alternative worth the same marks. Counts follow the sample papers: two in the 2-mark section, one in the
+// 3-mark section, and every long answer.
+const QB_CHOICES={vsa:2, sa:1, la:99, cs:0};
+// Accountancy is the one paper not shaped like the others: 34 questions in 1, 3, 4 and 6 marks, Part A
+// compulsory (60) and Part B an EITHER/OR between Financial Statement Analysis and Computerised Accounting
+// (20). A pupil studies one route, not both, so a generated paper must never mix them.
+const QB_ACC_ROUTES={
+  fsa:{label:"Financial Statement Analysis", chapters:["Financial Statements of a Company","Accounting Ratios",
+    "Cash Flow Statement","Tools of Analysis - Comparative Statements","Tools of Analysis - Common Size",
+    "Financial Statement Analysis"]},
+  cas:{label:"Computerised Accounting", chapters:["Computerised Accounting","Computerised Accounting - Spreadsheet",
+    "Computerised Accounting - Charts","Computerised Accounting - Coding","Computerised Accounting - Vouchers",
+    "Computerised Accounting - Security","Computerised Accounting - Database","Computerised Accounting - Pivot"]}
+};
+function __accRouteChapters(){var out=[];Object.keys(QB_ACC_ROUTES).forEach(function(k){
+  out=out.concat(QB_ACC_ROUTES[k].chapters);});return out;}
 const QB_BLUEPRINTS={
   short:{ 20:{mcq:6,ar:2,vsa:3,sa:2,la:0,cs:0},
           30:{mcq:8,ar:2,vsa:2,sa:2,la:2,cs:0},
@@ -18357,6 +18374,7 @@ const QB_BLUEPRINTS={
           phy12:{mcq:12,ar:4,vsa:5,sa:7,la:3,cs:2},
           chem12:{mcq:12,ar:4,vsa:5,sa:7,la:3,cs:2},
           bio12:{mcq:12,ar:4,vsa:5,sa:7,la:3,cs:2},
+          acc12:{byMarks:{A:{1:12,3:4,4:3,6:4}, B:{1:8,3:2,6:1}}},
           def:{mcq:18,ar:2,vsa:5,sa:6,la:4,cs:3} }
 };
 function __qbBlueprint(lvl,target){
@@ -18562,6 +18580,7 @@ function QuestionBank({user}){
   const[testCls,setTestCls]=useState("10");
 
   const[filterPYQ,setFilterPYQ]=useState(false);
+  const[partBRoute,setPartBRoute]=useState("fsa"); // Accountancy Part B is either/or, never both
   const[filterSrc,setFilterSrc]=useState("");   // paper type: Board Paper / Sample Paper / Practice Qs / Compartment
   const[filterYear,setFilterYear]=useState(""); // session the paper belongs to, e.g. 2026 or 2025-26
   const data=useMemo(()=>{const raw=QB_DATA[lvl]||[];const branched=(lvl==="sci"||lvl==="s9"||lvl==="sst9"||lvl==="e9");if(branched&&sciSub) return raw.filter(q=>q.subj===sciSub);return raw;},[lvl,sciSub]);
@@ -18627,7 +18646,7 @@ function QuestionBank({user}){
     // Each section slot is worth a fixed number of marks. Two Section D questions in Class 12 Maths carry 4
     // marks where the section is worth 5, so drawing one made an "80 mark" paper print 79. Prefer questions
     // worth what the slot is worth, and fall back to the rest only if there are not enough.
-    const SLOT_MARKS={mcq:1,ar:1,vsa:2,sa:3,la:5,cs:4};
+    const SLOT_MARKS={mcq:1,ar:1,vsa:2,sa:3,la:5,cs:4,m1:1,m3:3,m4:4,m6:6};
     function pick(pool,count,slot){
       const want=SLOT_MARKS[slot];
       const exact=want?pool.filter(q=>Number(q.m)===want):pool;
@@ -18652,12 +18671,26 @@ function QuestionBank({user}){
         unitGot[u]=(unitGot[u]||0)+(Number(q.m)||0);
       }
     }
-    pick(d.filter(q=>q.s==="A"&&q.t==="mcq"),bp.mcq,"mcq");
-    pick(d.filter(q=>q.t==="ar"),bp.ar,"ar");
-    pick(d.filter(q=>q.s==="B"),bp.vsa,"vsa");
-    pick(d.filter(q=>q.s==="C"),bp.sa,"sa");
-    pick(d.filter(q=>q.s==="D"),bp.la,"la");
-    pick(d.filter(q=>q.s==="E"),bp.cs,"cs");
+    if(bp.byMarks){
+      // Accountancy: pick by MARK VALUE, keeping Part A separate from the chosen Part B route.
+      const routeAll=__accRouteChapters();
+      const chosen=(QB_ACC_ROUTES[partBRoute]||QB_ACC_ROUTES.fsa).chapters;
+      const inA=q=>routeAll.indexOf(__canonChapter(q.c))<0;
+      const inB=q=>chosen.indexOf(__canonChapter(q.c))>=0;
+      [["A",inA],["B",inB]].forEach(function(part){
+        const plan=bp.byMarks[part[0]]||{};
+        Object.keys(plan).forEach(function(mk){
+          pick(d.filter(q=>part[1](q)&&Number(q.m)===Number(mk)), plan[mk], "m"+mk);
+        });
+      });
+    } else {
+      pick(d.filter(q=>q.s==="A"&&q.t==="mcq"),bp.mcq,"mcq");
+      pick(d.filter(q=>q.t==="ar"),bp.ar,"ar");
+      pick(d.filter(q=>q.s==="B"),bp.vsa,"vsa");
+      pick(d.filter(q=>q.s==="C"),bp.sa,"sa");
+      pick(d.filter(q=>q.s==="D"),bp.la,"la");
+      pick(d.filter(q=>q.s==="E"),bp.cs,"cs");
+    }
     // Second pass: give the choice-bearing slots an alternative of the same marks. Prefer a different chapter,
     // so the pupil is choosing between topics rather than between two questions on the same one.
     (function(){
@@ -18918,6 +18951,10 @@ body{font-family:'Times New Roman',Georgia,serif;padding:30px 34px;color:#1a1a1a
                 <button key={v||"all"} onClick={()=>setFilterDiff(v)} style={{padding:"6px 12px",borderRadius:99,border:"1px solid "+(filterDiff===v?"var(--ap-accent)":"var(--c-d2)"),background:filterDiff===v?"var(--ap-accent)":"var(--c-fff)",color:filterDiff===v?"#fff":"var(--c-1e)",fontSize:12,fontWeight:600,cursor:"pointer"}}>{l}</button>
               ))}
             </div>
+            {lvl==="acc12"&&<select value={partBRoute} onChange={e=>setPartBRoute(e.target.value)} title="Part B is an either/or - a pupil studies one route, so a generated paper must not mix them" className="ss-input" style={{padding:"7px 28px 7px 10px",borderRadius:6,border:"1px solid var(--c-d2)",fontSize:12,color:"var(--ap-ink2)",background:"var(--c-fff)",cursor:"pointer"}}>
+              <option value="fsa">Part B: Financial Statement Analysis</option>
+              <option value="cas">Part B: Computerised Accounting</option>
+            </select>}
             {hasPYQ&&<button onClick={()=>setFilterPYQ(v=>!v)} title="Show only previous-year board questions (CBSE PYQs)" style={{padding:"6px 13px",borderRadius:99,border:"1px solid "+(filterPYQ?"var(--tx-pur)":"var(--c-d2)"),background:filterPYQ?"var(--tx-pur)":"var(--c-fff)",color:filterPYQ?"#fff":"var(--c-1e)",fontSize:12,fontWeight:700,cursor:"pointer"}}>Previous Year</button>}
             {srcOpts.length>0&&<select value={filterSrc} onChange={e=>setFilterSrc(e.target.value)} title="Filter by which kind of CBSE paper the question came from" className="ss-input" style={{padding:"8px 30px 8px 13px",borderRadius:6,border:"1px solid var(--c-d2)",fontSize:12.5,color:"var(--c-1e)",background:"var(--c-fff)",cursor:"pointer"}}>
               <option value="">All sources</option>
