@@ -156,7 +156,8 @@ service cloud.firestore {
                 'Class ' + data.get('class', data.get('cls','')) + '-' + data.get('section',''),
                 data.get('class', data.get('cls','')) + '-' + data.get('section','')
               ])
-              && get(/databases/$(database)/documents/users/$(myUserDocId())).data.get('subjects', []).hasAny([data.get('subject', data.get('subj',''))])));
+              && (get(/databases/$(database)/documents/users/$(myUserDocId())).data.get('subjects', []).size() == 0
+                || get(/databases/$(database)/documents/users/$(myUserDocId())).data.get('subjects', []).hasAny([data.get('subject', data.get('subj',''))]))));
     }
     // Greencity is the LIVE, UNPREFIXED branch. Its money/PII collections below check only ROLE, so without this
     // guard a signed-in OFFICE / STAFF / PARENT account belonging to ANOTHER branch would reach Greencity's money

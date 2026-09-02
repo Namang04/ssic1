@@ -10085,7 +10085,15 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB,academicRost
       // as the exam grid.) A cleared cell (blank) deletes that student's mark; everything else is preserved.
       // Write back to the doc BEING EDITED — re-deriving the key from cls/subj/week silently forked imported
       // tests (their week is the string "week1", so the recomputed key never matches the stored doc id).
-      const docId=editing?editing.id:safeId(testKey);
+      // The document id carries the section, but an edit reused the OPEN document's id while the section
+      // field was taken from the filter on screen. Switch section while a test is open and section A's marks
+      // were written into section B's document - replacing that test with no error and no trace. 12 records
+      // in the live bank already disagree between the section in their id and the section stored inside them.
+      // If the filter no longer matches the open document, write to the key for the section actually on
+      // screen instead of overwriting the other section's record.
+      const _editSec=editing?String(editing.section||""):"";
+      const _sectionMoved=!!editing&&String(_secKey||"")!==_editSec;
+      const docId=(editing&&!_sectionMoved)?editing.id:safeId(testKey);
       const live=testsDB.data[docId]||{};
       const mergedRows=Object.assign({},live.rows||{});
       const mergedByAdm=Object.assign({},live.rowsByAdm||{});
@@ -15370,7 +15378,8 @@ service cloud.firestore {
                 'Class ' + data.get('class', data.get('cls','')) + '-' + data.get('section',''),
                 data.get('class', data.get('cls','')) + '-' + data.get('section','')
               ])
-              && get(/databases/$(database)/documents/users/$(myUserDocId())).data.get('subjects', []).hasAny([data.get('subject', data.get('subj',''))])));
+              && (get(/databases/$(database)/documents/users/$(myUserDocId())).data.get('subjects', []).size() == 0
+                || get(/databases/$(database)/documents/users/$(myUserDocId())).data.get('subjects', []).hasAny([data.get('subject', data.get('subj',''))]))));
     }
     // Greencity is the LIVE, UNPREFIXED branch. Its money/PII collections below check only ROLE, so without this
     // guard a signed-in OFFICE / STAFF / PARENT account belonging to ANOTHER branch would reach Greencity's money
