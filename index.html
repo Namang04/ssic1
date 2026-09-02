@@ -18639,6 +18639,26 @@ function QuestionBank({user}){
     pick(d.filter(q=>q.s==="C"),bp.sa,"sa");
     pick(d.filter(q=>q.s==="D"),bp.la,"la");
     pick(d.filter(q=>q.s==="E"),bp.cs,"cs");
+    // Second pass: give the choice-bearing slots an alternative of the same marks. Prefer a different chapter,
+    // so the pupil is choosing between topics rather than between two questions on the same one.
+    (function(){
+      const bySlot={B:"vsa",C:"sa",D:"la",E:"cs"};
+      const taken=new Set(items.map(t=>t.idx));
+      Object.keys(bySlot).forEach(function(sec){
+        const slot=bySlot[sec], allow=QB_CHOICES[slot]||0;
+        if(!allow) return;
+        let given=0;
+        items.filter(t=>t.q&&t.q.s===sec).forEach(function(ti){
+          if(given>=allow) return;
+          const pool=d.filter(q=>q.s===sec&&Number(q.m)===Number(ti.q.m)&&!taken.has(dAll.indexOf(q)));
+          if(!pool.length) return;
+          const other=qbShuffle(pool.filter(q=>q.c!==ti.q.c));
+          const alt=other[0]||qbShuffle(pool)[0];
+          if(!alt) return;
+          ti.alt=alt; taken.add(dAll.indexOf(alt)); given++;
+        });
+      });
+    })();
     setTestItems(items);
     // Social Science reserves 5 compulsory map marks that this bank has no outline maps for, so a generated
     // paper is 75 marks of theory. Say so in the title rather than printing "80m" over a 75-mark paper.
