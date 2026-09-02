@@ -6842,6 +6842,7 @@ function DataCenter({user, dirDB, studentsDB, testsDB, usersDB, feesDB, examsDB,
         {imp==="registrations"&&<ImportRegistrations registrationsDB={registrationsDB} user={user}/>}
       </div>}
       {view==="backup"&&<BackupCenter dirDB={dirDB} feesDB={feesDB} usersDB={usersDB} testsDB={testsDB} attendanceDB={attendanceDB} metaDB={metaDB} curSession={curSession} viewSession={viewSession} card={card}/>}
+      {view==="session"&&<SessionRepair testsDB={testsDB} examsDB={examsDB} curSession={curSession} card={card} btn={btn}/>}
       {view==="session"&&<SessionPromote user={user} dirDB={dirDB} usersDB={usersDB} studentsDB={studentsDB} testsDB={testsDB} feesDB={feesDB} attendanceDB={attendanceDB} academicRosterDB={academicRosterDB} metaDB={metaDB} curSession={curSession} viewSession={viewSession} setViewSession={setViewSession} allSessions={allSessions} card={card} btn={btn} setView={dhSetView}/>}
       {view==="trash"&&<RecentlyDeleted feesDB={feesDB} examsDB={examsDB} testsDB={testsDB} noticesDB={noticesDB}/>}
     </div>
@@ -7149,6 +7150,91 @@ function ImportRegistrations({registrationsDB, user}){
 }
 
 // Session master-switch: promote everyone to the next class and start a fresh session (archiving this year).
+
+// Tests are filed under whatever config.session said when they were SAVED, and shown only when that stamp
+// matches the session being viewed. When the session was flipped to 2026-27, every test saved before the flip
+// kept its 2025-26 stamp and disappeared from every teacher's screen at once. Nothing was deleted - the marks
+// are intact inside those documents - so this reports what is misfiled and, on an explicit click, re-files it.
+function SessionRepair({testsDB, examsDB, curSession, card, btn}){
+  const [busy,setBusy]=useState(false);
+  const [done,setDone]=useState("");
+  const raw=(testsDB&&testsDB.raw&&testsDB.raw.data)||{};
+  const rawEx=(examsDB&&examsDB.raw&&examsDB.raw.data)||{};
+  const scan=useMemo(function(){
+    var by={}, rows=[];
+    Object.keys(raw).forEach(function(k){
+      if(String(k).indexOf("__")===0) return;
+      var t=raw[k]; if(!t) return;
+      var sess=t.session||"(unstamped)";
+      if(sess===curSession) return;
+      by[sess]=by[sess]||{n:0,marks:0,first:"",last:"",classes:{}};
+      var b=by[sess]; b.n++;
+      var m=0; try{ (t.rows||[]).forEach(function(r){ if(r&&r.marks!=null&&r.marks!=="") m++; }); }catch(e){}
+      b.marks+=m;
+      var d=String(t.date||"");
+      if(d){ if(!b.first||d<b.first)b.first=d; if(!b.last||d>b.last)b.last=d; }
+      if(t.cls) b.classes[t.cls]=(b.classes[t.cls]||0)+1;
+      rows.push({id:k,sess:sess,cls:t.cls,subj:t.subj,date:t.date,name:t.name,marks:m});
+    });
+    return {by:by,rows:rows};
+  },[raw,curSession]);
+  const total=scan.rows.length;
+  const totalMarks=scan.rows.reduce(function(a,r){return a+r.marks;},0);
+
+  async function repair(){
+    if(!total) return;
+    var ok=await (window.__confirm?window.__confirm(
+      "Move "+total+" test"+(total===1?"":"s")+" into "+curSession+"?\n\nThis changes only the session label. No mark, name, date or roster row is touched, and nothing is deleted."
+    ):Promise.resolve(window.confirm("Move "+total+" tests into "+curSession+"?")));
+    if(!ok) return;
+    setBusy(true); setDone("");
+    var okN=0, fail=0;
+    for(var i=0;i<scan.rows.length;i++){
+      var r=scan.rows[i];
+      try{
+        if(testsDB.raw.patch) await testsDB.raw.patch(r.id,{session:curSession});
+        else await testsDB.raw.set(r.id,Object.assign({},raw[r.id],{session:curSession}));
+        okN++;
+      }catch(e){ fail++; }
+      if(i%10===0) setDone("Moving… "+(i+1)+" of "+scan.rows.length);
+    }
+    setBusy(false);
+    setDone(okN+" test"+(okN===1?"":"s")+" moved into "+curSession+(fail?(" · "+fail+" could not be written"):"")+". Ask a teacher to reload.");
+    try{ logAudit&&logAudit("session-repair","tests",{moved:okN,failed:fail,into:curSession}); }catch(e){}
+  }
+
+  return (
+    <div style={card} >
+      <div style={{fontSize:15,fontWeight:750,color:"var(--ap-ink)",marginBottom:3}}>Tests filed under another session</div>
+      <div style={{fontSize:12.5,color:"var(--ap-muted)",marginBottom:11}}>
+        A test is shown only when its session label matches the session being viewed. These are not deleted — their marks are intact — they are simply filed elsewhere and so invisible to teachers.
+      </div>
+      {total===0
+        ? <div style={{fontSize:13,color:"var(--tx-grn2)",fontWeight:600}}>Nothing misfiled — every test is in {curSession}.</div>
+        : (<div>
+            {Object.keys(scan.by).map(function(sessName){
+              var b=scan.by[sessName];
+              return (<div key={sessName} style={{border:"1px solid var(--ap-line)",borderRadius:8,padding:"10px 12px",marginBottom:8}}>
+                <div style={{display:"flex",gap:9,alignItems:"baseline",flexWrap:"wrap"}}>
+                  <b style={{fontSize:14,color:"var(--ap-ink)"}}>{sessName}</b>
+                  <span style={{fontSize:12.5,color:"var(--ap-muted)"}}>{b.n} test{b.n===1?"":"s"} · {b.marks} recorded mark{b.marks===1?"":"s"}</span>
+                </div>
+                <div style={{fontSize:12,color:"var(--ap-muted)",marginTop:3}}>
+                  {b.first?("Dated "+fmtDate(b.first)+" to "+fmtDate(b.last)):"No dates recorded"} · Classes: {Object.keys(b.classes).sort().join(", ")||"—"}
+                </div>
+              </div>);
+            })}
+            <div style={{display:"flex",gap:9,alignItems:"center",flexWrap:"wrap",marginTop:4}}>
+              <button className="ss-press" style={Object.assign({},btn,{opacity:busy?.6:1})} disabled={busy}
+                onClick={repair}>{busy?"Moving…":("Move all "+total+" into "+curSession)}</button>
+              <span style={{fontSize:12,color:"var(--ap-muted)"}}>{totalMarks} recorded marks will become visible again</span>
+            </div>
+          </div>)}
+      {done&&<div style={{marginTop:9,fontSize:12.5,fontWeight:600,color:"var(--tx-grn2)"}}>{done}</div>}
+    </div>
+  );
+}
+
 function SessionPromote({user, dirDB, usersDB, studentsDB, testsDB, feesDB, attendanceDB, academicRosterDB, metaDB, curSession, viewSession, setViewSession, allSessions, card, btn, setView}){
   const[msg,setMsg]=useState(""); const[busy,setBusy]=useState(false); const[confirmText,setConfirmText]=useState("");
   function nextSession(s){var m=String(s).match(/(\d{4})\D+(\d{2,4})/);if(!m)return s+" (next)";var a=parseInt(m[1])+1;var b=(parseInt(m[2])%100)+1;return a+"-"+String(b).padStart(2,"0");}
@@ -22777,8 +22863,20 @@ function App(){
   const[viewSession,setViewSession]=useState(null);
   const vSess=viewSession||curSession;
   const allSessions=useMemo(function(){var s={};s[curSession]=1;[feesDBraw,testsDBraw,attendanceDBraw,examsDBraw].forEach(function(db){Object.keys(db.data||{}).forEach(function(k){var d=db.data[k];if(d&&d.session)s[d.session]=1;});});return Object.keys(s).sort();},[curSession,feesDBraw.data,testsDBraw.data,attendanceDBraw.data,examsDBraw.data]);
+  // The session a record belongs to is decided by its DATE, not by whatever config.session happened to say
+  // when someone pressed save. The config flag is flipped by hand, and until it was flipped in June every test
+  // saved in April and May - genuinely part of 2026-27 - was stamped 2025-26 and vanished from every teacher's
+  // screen. An Indian academic session runs April to March, so April onwards belongs to the year just started.
+  function __sessionForDate(d){
+    var t=String(d||"");
+    var m=t.match(/^(\d{4})-(\d{2})/);
+    if(!m) return curSession;
+    var y=+m[1], mo=+m[2];
+    var start=(mo>=4)?y:(y-1);
+    return start+"-"+String((start+1)%100).padStart(2,"0");
+  }
   function _fsess(data){var o={};Object.keys(data||{}).forEach(function(k){var d=data[k];if(String(k).indexOf("__")===0){o[k]=d;return;}if(((d&&d.session)||"2026-27")===vSess)o[k]=d;});return o;}
-  function _wrapSess(db){return{data:_fsess(db.data),trash:db.trash,allData:db.allData,loading:db.loading,collName:db.collName,patch:db.patch,set:function(id,v){return db.set(id,(String(id).indexOf("__")===0||(v&&v.session))?v:Object.assign({},v,{session:curSession}));},del:db.del,restore:db.restore,raw:db};}
+  function _wrapSess(db){return{data:_fsess(db.data),trash:db.trash,allData:db.allData,loading:db.loading,collName:db.collName,patch:db.patch,set:function(id,v){return db.set(id,(String(id).indexOf("__")===0||(v&&v.session))?v:Object.assign({},v,{session:(v&&v.date)?__sessionForDate(v.date):curSession}));},del:db.del,restore:db.restore,raw:db};}
   const feesDB=_wrapSess(feesDBraw);
   const testsDB=__wrapMergedSubj(_wrapSess(testsDBraw)); // Cl 9/10: old Physics/Chemistry/Biology tests read back as Science
   const attendanceDB=_wrapSess(attendanceDBraw);
