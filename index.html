@@ -2161,8 +2161,13 @@ async function syncCachesForClass(studentsDB,academicRosterDB,cls,studentsArr){
   var active=studentsArr.filter(function(s){return s&&s.name&&String(s.status||"").toLowerCase()!=="left";});
   var list=[],sections={},admNo={};
   active.forEach(function(s){list.push(s.name);sections[s.name]=s.section||"";admNo[s.name]=String(s.admNo||"");});
-  try{if(studentsDB&&studentsDB.set)await studentsDB.set(cls,{cls:cls,list:list,sections:sections,admNo:admNo,updatedAt:new Date().toISOString()});}catch(e){}
-  try{if(academicRosterDB&&academicRosterDB.set)await academicRosterDB.set(cls,{students:active.map(function(s){return{admNo:String(s.admNo||""),name:s.name,section:_rosterSec(s.section,cls),contact:_attPhone(s)};}),updatedAt:new Date().toISOString()});}catch(e){}
+  // A silent failure here is exactly how the directory and the teacher screens end up disagreeing: the
+  // directory saves, the cache the teachers read does not, and nobody is told. Say so instead.
+  var _rcFail=[];
+  try{if(studentsDB&&studentsDB.set)await studentsDB.set(cls,{cls:cls,list:list,sections:sections,admNo:admNo,updatedAt:new Date().toISOString()});}
+  catch(e){_rcFail.push("class roster cache");}
+  try{if(academicRosterDB&&academicRosterDB.set)await academicRosterDB.set(cls,{students:active.map(function(s){return{admNo:String(s.admNo||""),name:s.name,section:_rosterSec(s.section,cls),contact:_attPhone(s)};}),updatedAt:new Date().toISOString()});}catch(e){_rcFail.push("teacher roster");}
+  if(_rcFail.length){try{window.__toast&&window.__toast("Saved, but the "+_rcFail.join(" and ")+" could not be updated \u2014 teacher screens may still show the old list. Run Sync roster.","err");}catch(e){}}
 }
 // Classes that actually have active students in the record (1-12 + SIP) — for class pickers.
 function allClassesFromDir(dirDB){
@@ -14536,17 +14541,21 @@ function DirectoryProfile({stu, testsDB, examsDB, studentsDB, attendanceDB, wron
     var _mig=[];
     if(admChanged){
       var _bc=function(b){var br=(typeof window!=="undefined"&&window.__currentBranch)||"greencity";return br==="greencity"?b:(br+"_"+b);};
+      // Each step below moves one kind of record to the new admission number. They used to swallow their
+      // failures, so the change could report success while attendance days, portal fees, the photo or the
+      // test links stayed under the OLD number - silently splitting the pupil in two. Collect what failed.
+      var _migFail=[];
       var _fall=(feesDB&&feesDB.raw&&feesDB.raw.allData)||(feesDB&&feesDB.data)||{};
       var _fids=Object.keys(_fall).filter(function(id){return id.indexOf("__")!==0&&String((_fall[id]||{}).admNo||"").trim()===oldAdm;});
       for(var _fi=0;_fi<_fids.length;_fi++){try{await feesDB.set(_fids[_fi],Object.assign({},_fall[_fids[_fi]],{admNo:newAdm}));}catch(e){setEmsg("⚠ Couldn't move a fee receipt to "+newAdm+" — NOTHING was changed. Check connection/permissions and retry.");if(window.__toast)window.__toast("Admission-no change aborted — fees could not be moved","err");return;}}
       if(_fids.length)_mig.push(_fids.length+" fee receipt"+(_fids.length>1?"s":""));
-      try{var _wv=feesDB&&feesDB.data&&feesDB.data.__waivers;if(_wv&&_wv.byAdm&&_wv.byAdm[oldAdm]!==undefined){var _nb=Object.assign({},_wv.byAdm);_nb[newAdm]=_nb[oldAdm];delete _nb[oldAdm];await feesDB.set("__waivers",Object.assign({},_wv,{byAdm:_nb}));_mig.push("waiver");}}catch(e){}
+      try{var _wv=feesDB&&feesDB.data&&feesDB.data.__waivers;if(_wv&&_wv.byAdm&&_wv.byAdm[oldAdm]!==undefined){var _nb=Object.assign({},_wv.byAdm);_nb[newAdm]=_nb[oldAdm];delete _nb[oldAdm];await feesDB.set("__waivers",Object.assign({},_wv,{byAdm:_nb}));_mig.push("waiver");}}catch(e){_migFail.push("waivers");}
       try{if(attendanceDB&&attendanceDB.data){var _ad=Object.keys(attendanceDB.data).filter(function(id){var d=attendanceDB.data[id];return d&&d.status&&d.status[oldAdm]!==undefined;});
         for(var _ai=0;_ai<_ad.length;_ai++){var _d=attendanceDB.data[_ad[_ai]];var _ns=Object.assign({},_d.status);_ns[newAdm]=_ns[oldAdm];delete _ns[oldAdm];try{await attendanceDB.set(_ad[_ai],Object.assign({},_d,{status:_ns}));}catch(e){}}
-        if(_ad.length)_mig.push(_ad.length+" attendance day"+(_ad.length>1?"s":""));}}catch(e){}
-      try{var _pf=await window.__fbGetDoc(window.__fbDoc(window.__db,_bc("portalFees"),oldAdm));if(_pf&&_pf.exists&&_pf.exists()){await window.__fbSetDoc(window.__fbDoc(window.__db,_bc("portalFees"),newAdm),Object.assign({},_pf.data(),{admNo:newAdm}));await window.__fbDeleteDoc(window.__fbDoc(window.__db,_bc("portalFees"),oldAdm));_mig.push("portal balance");}}catch(e){}
-      try{var _ph=await window.__fbGetDoc(window.__fbDoc(window.__db,_bc("studentPhotos"),oldAdm));if(_ph&&_ph.exists&&_ph.exists()){await window.__fbSetDoc(window.__fbDoc(window.__db,_bc("studentPhotos"),newAdm),Object.assign({},_ph.data(),{admNo:newAdm}));await window.__fbDeleteDoc(window.__fbDoc(window.__db,_bc("studentPhotos"),oldAdm));_mig.push("photo");}}catch(e){}
-      try{if(studentLinksDB&&studentLinksDB.data&&studentLinksDB.data[oldAdm]){await studentLinksDB.set(newAdm,Object.assign({},studentLinksDB.data[oldAdm],{admNo:newAdm}));await studentLinksDB.del(oldAdm);_mig.push("test link");}}catch(e){}
+        if(_ad.length)_mig.push(_ad.length+" attendance day"+(_ad.length>1?"s":""));}}catch(e){_migFail.push("attendance");}
+      try{var _pf=await window.__fbGetDoc(window.__fbDoc(window.__db,_bc("portalFees"),oldAdm));if(_pf&&_pf.exists&&_pf.exists()){await window.__fbSetDoc(window.__fbDoc(window.__db,_bc("portalFees"),newAdm),Object.assign({},_pf.data(),{admNo:newAdm}));await window.__fbDeleteDoc(window.__fbDoc(window.__db,_bc("portalFees"),oldAdm));_mig.push("portal balance");}}catch(e){_migFail.push("portal fees");}
+      try{var _ph=await window.__fbGetDoc(window.__fbDoc(window.__db,_bc("studentPhotos"),oldAdm));if(_ph&&_ph.exists&&_ph.exists()){await window.__fbSetDoc(window.__fbDoc(window.__db,_bc("studentPhotos"),newAdm),Object.assign({},_ph.data(),{admNo:newAdm}));await window.__fbDeleteDoc(window.__fbDoc(window.__db,_bc("studentPhotos"),oldAdm));_mig.push("photo");}}catch(e){_migFail.push("the photo");}
+      try{if(studentLinksDB&&studentLinksDB.data&&studentLinksDB.data[oldAdm]){await studentLinksDB.set(newAdm,Object.assign({},studentLinksDB.data[oldAdm],{admNo:newAdm}));await studentLinksDB.del(oldAdm);_mig.push("test link");}}catch(e){_migFail.push("test links");}
       try{logAudit("change-admno","studentDirectory",newAdm,{admNo:oldAdm},{admNo:newAdm});}catch(e){}
     }
     // Class change → relocate the student to the matching EXISTING class document so the roster/attendance/fees follow.
@@ -14577,7 +14586,7 @@ function DirectoryProfile({stu, testsDB, examsDB, studentsDB, attendanceDB, wron
       // portal follow the rename/section/class change automatically (no manual re-sync needed).
       if(renamed&&adm&&studentLinksDB&&studentLinksDB.set){try{await studentLinksDB.set(String(adm),Object.assign({},(studentLinksDB.data&&studentLinksDB.data[String(adm)])||{},{testName:eform.name}));}catch(e){}}
       (function(){try{var _b={},_a={},_ch=0;Object.keys(safeForm).forEach(function(k){var ov=stu[k],nv=safeForm[k];if(String(ov==null?"":ov)!==String(nv==null?"":nv)){_ch++;var _m=(k==="aadhar"||k==="aadhaar");_b[k]=_m?"•••":ov;_a[k]=_m?"•••":nv;}});if(_ch)logAudit(moved?"edit-profile+move":"edit-profile","studentDirectory",String(stu.admNo||stu.name),_b,_a);}catch(e){}})();
-      setEmsg(admChanged?("✓ Admission no. changed to "+newAdm+(_mig.length?" · moved "+_mig.join(", "):"")+". Now run “Repair fee links for existing parents” (Accounts) so the parent login follows."):"✓ Saved — marks, attendance and the portal now follow the record automatically.");setEditing(false);onClose&&onClose();}
+      setEmsg(admChanged?("✓ Admission no. changed to "+newAdm+(_mig.length?" · moved "+_mig.join(", "):"")+(_migFail.length?" ⚠ NOT moved: "+[...new Set(_migFail)].join(", ")+" — those records are still under "+oldAdm+" and need checking.":"")+". Now run “Repair fee links for existing parents” (Accounts) so the parent login follows."):"✓ Saved — marks, attendance and the portal now follow the record automatically.");setEditing(false);onClose&&onClose();}
     catch(e){setEmsg(""+((e&&e.message)||"Could not save — check rules/connection."));}
   }
   // Sections currently in use for this class (letters like A/B or streams like BIO/COMM) — the picker options.
