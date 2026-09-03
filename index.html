@@ -25365,10 +25365,17 @@ function AssignPanel(props) {
     // on a section stays: co-class-teachers are supported, so selecting a section no longer takes it from them.
     Object.keys(ctm).forEach(function(k){ __ctRemove(ctm, k, selTeacher, ctNameOf(selTeacher)); });
     (selCTs || []).forEach(function(k){ __ctAdd(ctm, k, selTeacher); });
-    var writes = [
-      usersDB.set(selTeacher, data),
-      usersDB.set(__sharedDocId("__classTeachers"), { map: ctm, updatedAt: new Date().toISOString() })
+    // Label each write so a rejection names the document that was refused. "Missing or insufficient
+    // permissions" on a multi-document save is otherwise unactionable - it took several rounds today to
+    // work out which of these Firestore was rejecting, and the answer was never in the message.
+    var writePlan = [
+      { what: "teacher profile (" + safeId(selTeacher) + ")", run: function(){ return usersDB.set(selTeacher, data); } },
+      { what: "shared class-teacher map (" + __sharedDocId("__classTeachers") + ")",
+        run: function(){ return usersDB.set(__sharedDocId("__classTeachers"), { map: ctm, updatedAt: new Date().toISOString() }); } }
     ];
+    var writes = writePlan.map(function(w){
+      return w.run().catch(function(e){ e.__doc = w.what; throw e; });
+    });
     Object.keys(affected).forEach(function(ph){
       var phDoc = (usersDB.data && usersDB.data[safeId(ph)]) || DEFAULT_USERS[ph] || {};
       var phSecs = __ctSectionsFor(ctm, ph, ctNameOf(ph));
@@ -25379,7 +25386,7 @@ function AssignPanel(props) {
       assignmentBaseRef.current=assignmentSig({classes:selCls,subjects:selSubj,teachingPairs:selPairs,qbank:selQbank,qbankClasses:selQbCls,qbankSubjects:selQbSubj,coordinator:selCoord,classTeacherOf:selCTs});
       setMsg("Saved — classes, subjects, permissions and class-teacher sections are in sync.");
     }catch(e){
-      setMsg("Could not complete every assignment update — "+((e&&e.message)||"try again")+". Because this saves several linked staff records, reload and verify before retrying.");
+      setMsg("Could not complete every assignment update [signed in as "+((user&&user.username)||"?")+", role "+((user&&user.role)||"?")+"] ("+((e&&e.__doc)||"unknown document")+") — "+((e&&e.message)||"try again")+". Because this saves several linked staff records, reload and verify before retrying.");
     }finally{setSaving(false);}
   }
 
