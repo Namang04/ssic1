@@ -3072,8 +3072,14 @@ function PrincipalDashboard({user,attendanceDB,staffAttDB,leaveDB,disciplineDB,c
   const _chkToday=today();
   const customItems=(function(){var d=(metaDB&&metaDB.data&&metaDB.data[__bMeta("principalChecklist")])||{};var items=Array.isArray(d.items)?d.items:[];return items.filter(function(it){return !it.done||((it.date||_chkToday)===_chkToday);});})();
   const[newTask,setNewTask]=useState("");
-  const _saveTasks=async(items)=>{if(!metaDB||!metaDB.set)return;try{await metaDB.set(__bMeta("principalChecklist"),{items:items,updatedAt:new Date().toISOString(),by:user.name});}catch(e){}};
-  const addTask=()=>{var t=String(newTask||"").trim();if(!t)return;_saveTasks(customItems.concat([{id:"t"+Date.now()+Math.random().toString(36).slice(2,5),text:t,done:false,date:_chkToday}]));setNewTask("");};
+  // The list renders from metaDB and the input is cleared on add, so a discarded failure loses the task the
+  // principal just typed with no sign anything went wrong. Report it, and keep the text so it can be retried.
+  const _saveTasks=async(items)=>{if(!metaDB||!metaDB.set)return false;
+    try{await metaDB.set(__bMeta("principalChecklist"),{items:items,updatedAt:new Date().toISOString(),by:user.name});return true;}
+    catch(e){try{window.__toast&&window.__toast("Could not save the checklist \u2014 "+((e&&e.message)||"unknown error"),"err");}catch(e2){}return false;}};
+  const addTask=async()=>{var t=String(newTask||"").trim();if(!t)return;
+    var ok=await _saveTasks(customItems.concat([{id:"t"+Date.now()+Math.random().toString(36).slice(2,5),text:t,done:false,date:_chkToday}]));
+    if(ok)setNewTask("");};
   const toggleTask=(id)=>_saveTasks(customItems.map(it=>it.id===id?Object.assign({},it,{done:!it.done,date:_chkToday}):it));
   const removeTask=(id)=>_saveTasks(customItems.filter(it=>it.id!==id));
   const clearDoneTasks=()=>_saveTasks(customItems.filter(it=>!it.done));
@@ -6705,7 +6711,9 @@ function LinkTestNames({user, studentsDB, academicRosterDB, studentLinksDB}){
   if(!disputed.length) return null;
   const pending=disputed.filter(d=>!linkedKeys[d.cls+"||"+nmKey(d.testName)]);
   async function doLink(cls,testName,admNo){if(!admNo)return;setBusy(cls+testName);
-    try{await studentLinksDB.set(admNo,{admNo:admNo,testName:testName,cls:cls,by:user.name,at:new Date().toISOString()});}catch(e){}setBusy("");}
+    try{await studentLinksDB.set(admNo,{admNo:admNo,testName:testName,cls:cls,by:user.name,at:new Date().toISOString()});}
+    catch(e){try{window.__toast&&window.__toast("Could not link \u201c"+testName+"\u201d \u2014 "+((e&&e.message)||"unknown error")+". The marks are still unlinked.","err");}catch(e2){}}
+    setBusy("");}
   return(
     <div className="ap-panel" style={{overflow:"hidden",marginBottom:16}}>
       <button onClick={()=>setOpen(!open)} style={{background:"none",border:"none",fontFamily:"var(--ss-font)",textAlign:"left",cursor:"pointer",display:"flex",alignItems:"center",gap:12,width:"100%",boxSizing:"border-box",padding:"13px 18px"}}>
