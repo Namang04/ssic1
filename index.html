@@ -1156,8 +1156,12 @@ function __draftStart(user, formId, ctx, blank){
 // grid is not serialised on every keystroke, and deliberately unconditional otherwise: if the form
 // differs from blank, it is on disk. Pass active=false to stop (e.g. while the real save is running).
 function useDraftAutosave(user, formId, ctx, data, meta, active){
-  var mRef = useRef(meta); mRef.current = meta;
+  var mRef = useRef(meta);   mRef.current = meta;
+  var aRef = useRef(active); aRef.current = active;
+  var dRef = useRef(data);   dRef.current = data;
+  var cRef = useRef(ctx);    cRef.current = ctx;
   var [savedAt, setSavedAt] = useState("");
+  // Normal typing: debounced, so a long note is not re-serialised on every keystroke.
   useEffect(function(){
     if(!active || !formId) return;
     var t = setTimeout(function(){
@@ -1165,18 +1169,22 @@ function useDraftAutosave(user, formId, ctx, data, meta, active){
     }, 450);
     return function(){ clearTimeout(t); };
   }, [user, formId, ctx, JSON.stringify(data), active]);
-  // A tab being closed does not wait for a 450ms timer, so write immediately on the way out.
+  // Leaving: a closing tab does not wait for a timer, and neither does walking away from the screen.
+  // Registered ONCE per form and reading live refs, deliberately. An earlier version re-registered on
+  // every data change, which meant its teardown flush fired after a SUCCESSFUL save and wrote the draft
+  // straight back with the previous render's contents - resurrecting the thing the save had just cleared.
+  // Checking aRef at flush time is what stops that: a form that has been saved is no longer active.
   useEffect(function(){
-    if(!active || !formId) return;
-    var flush = function(){ try{ __draftPut(user, formId, ctx, data, mRef.current); }catch(e){} };
+    if(!formId) return;
+    var flush = function(){ try{ if(aRef.current) __draftPut(user, formId, cRef.current, dRef.current, mRef.current); }catch(e){} };
     window.addEventListener("pagehide", flush);
     window.addEventListener("beforeunload", flush);
     return function(){
       window.removeEventListener("pagehide", flush);
       window.removeEventListener("beforeunload", flush);
-      flush();   // leaving the screen counts too: this is the "left it in between" case
+      flush();
     };
-  }, [user, formId, ctx, JSON.stringify(data), active]);
+  }, [user, formId]);
   return savedAt;
 }
 
@@ -21773,7 +21781,7 @@ function AdmissionForm({user, studentsDB, dirDB, academicRosterDB, registrations
   const[tab,setTab]=useState("student");
   // A 60-field admission across six tabs is the single largest piece of typing in the app. It now comes
   // back exactly as it was left, on this device, without anyone having to remember to do anything.
-  const[__admD]=useState(function(){return __draftStart(user,"admission","new",{nationality:"India",country:"India",house:"Unknown",gender:"",religion:"",category:"",regDate:today(),isConveyance:false,notNew:false,docBirth:false,docPhoto:false,docAddress:false,docPrevReport:false,docTransfer:false});});
+  const[__admD,__admSetD]=useState(function(){return __draftStart(user,"admission","new",{nationality:"India",country:"India",house:"Unknown",gender:"",religion:"",category:"",regDate:today(),isConveyance:false,notNew:false,docBirth:false,docPhoto:false,docAddress:false,docPrevReport:false,docTransfer:false});});
   const[f,setF]=useState(function(){return __admD.form;});
   const[admCleanSig,setAdmCleanSig]=useState("");
   const[guardian,setGuardian]=useState(false);
@@ -21811,7 +21819,7 @@ function AdmissionForm({user, studentsDB, dirDB, academicRosterDB, registrations
   const __admTouched=JSON.stringify(f)!==JSON.stringify(__admD.form);
   useDraftAutosave(user,"admission","new",f,{label:"Admission form",sub:((f.name||"unnamed pupil")+(f.cls?" \u00b7 Class "+f.cls:""))},__admTouched);
   useEffect(()=>{window.__admissionDirty=admissionDirty?"student admission":"";const h=e=>{if(admissionDirty){e.preventDefault();e.returnValue="";}};window.addEventListener("beforeunload",h);return()=>{window.__admissionDirty="";window.removeEventListener("beforeunload",h);};},[admissionDirty]);
-  const clearAdmission=()=>{if(admissionDirty&&!window.confirm("Start over and discard every unsaved admission detail?"))return;__draftBin(user,"admission","new");try{setF(JSON.parse(admCleanSig));}catch(_){return;}setGuardian(false);setAttempted(false);setAckSig("");setLastAdmitted(null);setMsg("");setTab("student");window.scrollTo(0,0);};
+  const clearAdmission=()=>{if(admissionDirty&&!window.confirm("Start over and discard every unsaved admission detail?"))return;var _blank;try{_blank=JSON.parse(admCleanSig);}catch(_){return;}__draftBin(user,"admission","new");__admSetD({form:_blank,restored:false,at:""});setF(_blank);setGuardian(false);setAttempted(false);setAckSig("");setLastAdmitted(null);setMsg("");setTab("student");window.scrollTo(0,0);};
   const REQ={regNo:"Registration No.",regDate:"Registration Date",firstName:"First Name",gender:"Gender",nationality:"Nationality",classSec:"Class",fatherFirst:"Father's First Name"};
   const inSt={width:"100%",padding:"10px 12px",borderRadius:6,border:"1px solid var(--c-d2)",fontSize:13,outline:"none",fontFamily:"var(--ss-font)",background:"var(--c-fff)",color:"var(--ap-ink)",boxSizing:"border-box"};
   const lblSt={fontSize:11,fontWeight:600,color:"var(--c-64)",marginBottom:4,display:"block"};
@@ -21905,7 +21913,7 @@ function AdmissionForm({user, studentsDB, dirDB, academicRosterDB, registrations
       setMsg("✓ "+rec.name+" admitted (Reg "+f.regNo+"). Student Records and class rosters are synced."+(docPending.length?(" Provisional onboarding: "+docPending.length+" document item"+(docPending.length===1?"":"s")+" still pending."):" Documents checked complete.")+_pipeWarn);
       setLastAdmitted({name:rec.name,admNo:String(f.regNo),cls:sc,section:streamSec,mobile:f.mobile||f.fatherMobile||"",dob:f.dob||"",pending:docPending.slice()});
       var _nextAdmission={nationality:"India",country:"India",house:"Unknown",gender:"",religion:"",category:"",regDate:today(),isConveyance:false,notNew:false,docBirth:false,docPhoto:false,docAddress:false,docPrevReport:false,docTransfer:false,regNo:String((parseInt(f.regNo)||lastReg)+1)};
-      __draftKill(user,"admission","new");setF(_nextAdmission);setAdmCleanSig(JSON.stringify(_nextAdmission));
+      __draftKill(user,"admission","new");__admSetD({form:_nextAdmission,restored:false,at:""});setF(_nextAdmission);setAdmCleanSig(JSON.stringify(_nextAdmission));
       setAttempted(false);setAckSig("");
       setTab("student");window.scrollTo(0,0);
     }catch(e){setMsg("Could not save — "+((e&&e.message)||"check connection / Firestore rules"));}
