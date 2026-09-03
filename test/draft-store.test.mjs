@@ -8,7 +8,12 @@ globalThis.localStorage={
 };
 globalThis.window={__currentBranch:"greencity"};
 globalThis.safeId=s=>String(s).replace(/[^A-Za-z0-9_-]+/g,"_");
-(0,eval)(await import('node:fs').then(fs=>fs.readFileSync('draft-pure.js','utf8')));
+// Read the store out of index.html itself, so these tests can never pass against a stale copy.
+const html = (await import('node:fs')).readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+const a = html.indexOf('var __DRAFT_P = "ssic_draft1_";');
+const b = html.indexOf('// Use in a useState initialiser');
+if (a < 0 || b < 0) { console.error('  could not find the draft store in index.html'); process.exit(2); }
+(0,eval)(html.slice(a, b));
 
 const U={username:"dilip"}, V={username:"asha"};
 let pass=0, fail=0;
