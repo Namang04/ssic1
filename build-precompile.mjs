@@ -79,6 +79,19 @@ for (const f of DEPLOY_FILES) {
 // being served the previously cached page, so fix after fix looked like it had not shipped, including the
 // Firestore rules the Director copies off the Security screen. Stamp the name from the built output instead
 // of trusting anyone to remember: identical output keeps the cache, changed output retires it.
+// index.html asks for the question bank as "ssic-content.js?v=8" - a fixed number that has never been bumped,
+// while the file behind it changes constantly. Same URL means the browser and the service worker both keep
+// serving whatever copy they already hold, so corrections land on one device and not another and question
+// totals disagree between machines. Stamp the query from a hash of the content file itself: change the
+// content and the URL changes with it; leave it alone and the cached copy is still used.
+if (existsSync(OUTDIR + '/ssic-content.js')) {
+  const cstamp = createHash('sha1').update(readFileSync(OUTDIR + '/ssic-content.js')).digest('hex').slice(0, 12);
+  const before = html;
+  html = html.replace(/ssic-content\.js\?v=[A-Za-z0-9]+/g, `ssic-content.js?v=${cstamp}`);
+  if (html === before) console.warn('  ! no ssic-content.js?v= reference found in index.html - the bank may serve stale');
+  else { writeFileSync(OUTDIR + '/index.html', html); console.log(`  question bank     : ?v=${cstamp} (stamped from content)`); }
+}
+
 if (existsSync(OUTDIR + '/sw.js')) {
   const stamp = createHash('sha1').update(html).digest('hex').slice(0, 12);
   const sw = readFileSync(OUTDIR + '/sw.js', 'utf8');

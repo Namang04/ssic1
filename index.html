@@ -18127,13 +18127,22 @@ function AccountSettings({user,usersDB,onUpdate}){
     <div className="fi" style={{display:"flex",flexDirection:"column",gap:18,maxWidth:580}}>
       <div>
         <div className="ap-hi">Account</div>
-        <div className="ap-hisub">{canRename?"Update your display name and password.":"Change your password and review your staff identity."}</div>
+        <div className="ap-hisub">{canRename?"Update your display name and password."
+            :(["parent","student"].indexOf(user.role)>=0
+               ? "Change your password and review your account."
+               : "Change your password and review your staff identity.")}</div>
       </div>
       <div className="ap-panel" style={{padding:18,display:"flex",alignItems:"center",gap:15}}>
         <div className="ap-avt" style={{width:48,height:48,fontSize:16,background:"linear-gradient(140deg,#0071e3,#34a0ff)"}}>{(user.name||"U").split(" ").filter(Boolean).map(w=>w[0]).slice(0,2).join("").toUpperCase()}</div>
         <div style={{flex:1,minWidth:0}}>
           <div style={{fontSize:16,fontWeight:700,color:"var(--ap-ink)"}}>{user.username}</div>
-          <div style={{fontSize:13,color:"var(--ap-muted)",textTransform:"capitalize"}}>{user.role} · {user.classes?.join(", ")||"All classes"}</div>
+          {/* A parent has no classes, so the old fallback printed "All classes" at them and the screen read as a
+                    reused staff page. Show the class list only where one means something. */}
+                <div style={{fontSize:13,color:"var(--ap-muted)",textTransform:"capitalize"}}>{
+                  user.role==="parent" ? "Parent"
+                  : user.role==="student" ? ("Student"+(user.cls?" · "+user.cls:""))
+                  : (user.role+" · "+((user.classes&&user.classes.join(", "))||"All classes"))
+                }</div>
         </div>
       </div>
       <div className="ap-panel" style={{padding:22}}>
