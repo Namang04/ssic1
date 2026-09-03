@@ -6271,7 +6271,8 @@ function Dashboard({user,testsDB,studentsDB,attendanceDB,academicRosterDB,dirDB,
   const coordNoLog=coordDueRows.filter(function(r){return r.missing>0;}).sort(function(a,b){return b.missing-a.missing;}).slice(0,4);
   const myCTSecs=useMemo(()=>{if(!isTeacher)return [];
     var keys;
-    if(_myDoc&&Array.isArray(_myDoc.classTeacherOf)) keys=_myDoc.classTeacherOf; // primary: from the teacher's OWN doc
+    // Empty means unknown, not none - fall through to the shared map rather than reporting no sections.
+    if(_myDoc&&Array.isArray(_myDoc.classTeacherOf)&&_myDoc.classTeacherOf.length) keys=_myDoc.classTeacherOf;
     else { var m=(_ctDoc&&_ctDoc.map)||((usersDB&&usersDB.data&&usersDB.data[__sharedDocId("__classTeachers")])||{}).map||{}; keys=__ctSectionsFor(m,user.username,user.name);/*was:*/if(false)keys=Object.keys(m).filter(k=>String(m[k])===String(user.username)||String(m[k])===String(user.name)); }
     return keys.map(k=>{const body=String(k).replace(/^Class\s*/i,"");const parts=body.split("-");const cls="Class "+parts[0].trim();return {key:k,cls:cls,cn:parts[0].trim(),section:(typeof normSection==="function"?normSection(cls,parts.slice(1).join("-").trim()):parts.slice(1).join("-").trim())};});
   },[isTeacher,_myDoc,_ctDoc,usersDB&&usersDB.data,user.username,user.name]);
@@ -8677,7 +8678,11 @@ function Attendance({user,attendanceDB,studentsDB,usersDB,academicRosterDB,dirDB
   const _ctMap=(_ctDoc&&_ctDoc.map)||((usersDB&&usersDB.data&&usersDB.data[__sharedDocId("__classTeachers")])||{}).map||{};
   // The section(s) this teacher is class teacher of: prefer the explicit list on their OWN doc (always readable),
   // else derive from the shared map. A teacher may hold more than one section.
-  const myCTSecs=canMarkAll?[]:((_myDoc&&Array.isArray(_myDoc.classTeacherOf))?_myDoc.classTeacherOf:__ctSectionsFor(_ctMap,user.username,user.name));
+  // An EMPTY classTeacherOf is not an answer, it is the absence of one. Array.isArray([]) is true, so an empty
+  // array used to win outright and the shared-map fallback never ran - which is why teachers whose profile was
+  // blanked by a bad save could not mark class attendance even though the shared map still knew their section.
+  const myCTSecs=canMarkAll?[]:((_myDoc&&Array.isArray(_myDoc.classTeacherOf)&&_myDoc.classTeacherOf.length)
+    ?_myDoc.classTeacherOf:__ctSectionsFor(_ctMap,user.username,user.name));
   // Class list: all (for can-mark-all) or only the section(s) this teacher is the class teacher of.
   const rawClasses=canViewAll?allClassesFromDir(dirDB).filter(function(c){return typeof __isAcademicCls!=="function"||__isAcademicCls(c);}):[...new Set(myCTSecs.map(toClassKey))].filter(function(c){return typeof __isAcademicCls!=="function"||__isAcademicCls(c);});
   const aC=rawClasses;
@@ -25276,7 +25281,9 @@ function AssignPanel(props) {
   var assignmentDraftDirty = assignmentReady && (assignmentDraftSig !== assignmentBaseRef.current || !!newSubj.trim());
   assignmentDirtyRef.current = assignmentDraftDirty;
   var assignmentCtm = ((usersDB.data && usersDB.data[__sharedDocId("__classTeachers")]) || {}).map || {};
-  var assignmentSavedCts = Object.keys(assignmentCtm).filter(function(k){ return assignmentCtm[k] === selTeacher; });
+  // Same list-vs-string trap as the loader: this feeds the signature that detects a newer saved assignment
+  // arriving from the server, and comparing a list to a username is never true.
+  var assignmentSavedCts = __ctSectionsFor(assignmentCtm, selTeacher, ctNameOf(selTeacher));
   var assignmentSourceSig = assignmentSig({classes:teacherData.classes||[],subjects:teacherData.subjects||[],teachingPairs:teacherData.teachingPairs||[],qbank:teacherData.qbank===true,qbankClasses:teacherData.qbankClasses||[],qbankSubjects:teacherData.qbankSubjects||[],coordinator:teacherData.coordinator===true,classTeacherOf:assignmentSavedCts});
 
   // Load a teacher's saved assignment, but never let an unrelated live users update erase an in-progress draft.
@@ -25424,7 +25431,8 @@ function AssignPanel(props) {
   var missingTTPairs=ttAccess.pairs.filter(function(p){return selPairs.indexOf(p)<0;});
   function addTimetableAccess(){setSelCls(function(p){return [...new Set((p||[]).concat(ttAccess.classes))];});setSelSubj(function(p){return [...new Set((p||[]).concat(ttAccess.subjects))];});setSelPairs(function(p){return [...new Set((p||[]).concat(ttAccess.pairs))];});setMsg("Added the timetable's exact class–section–subject load to the draft — review it, then Save Assignment.");}
   var allSectionKeys=[];CLASSES.forEach(function(c){getSectionsForClass(c).forEach(function(s){allSectionKeys.push(c+"-"+s);});});
-  var unownedSections=allSectionKeys.filter(function(k){return !assignmentCtm[k];});
+  // An entry holding an empty list is still truthy, so test the list length rather than the value.
+  var unownedSections=allSectionKeys.filter(function(k){return __ctList(assignmentCtm,k).length===0;});
   var teachersWithoutAccess=teachers.filter(function(e){var d=(usersDB.data&&usersDB.data[safeId(e[0])])||{};return !(d.classes||[]).length||!(d.subjects||[]).length;});
   var assignedTeachers=teachers.length-teachersWithoutAccess.length;
 
