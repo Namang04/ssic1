@@ -18830,7 +18830,7 @@ function QuestionBank({user}){
     const actualMarks=kept.reduce(function(s,ti){return s+(Number(ti.q.m)||0);},0);
     // A board paper runs its official duration rather than a marks-based estimate: 80 marks is 3 hours in
     // English, Maths, Science and Social Science, and Computer Applications sits 2 hours for its 50.
-    const timeMin=(Number(target)===__qbBoardTotal(lvl))?(lvl==="comp"?120:180):Math.max(15,Math.round(actualMarks*1.5));
+    const timeMin=(Number(actualMarks)===__qbBoardTotal(lvl))?(lvl==="comp"?120:180):Math.max(15,Math.round(actualMarks*1.5));
     const baseName=(testName||"Test").replace(/\s*\(\d+\s*m\)\s*$/i,"").trim();  // drop the ambiguous "(30m)" bucket suffix
     const name=baseName+" — "+actualMarks+" mark"+(actualMarks===1?"":"s");
     const bySection={};
@@ -22560,7 +22560,7 @@ function StaffAttendanceRegister({user,isDirector,setTab:goTab,sharedAttDB,share
       </div>}
 
       {/* ── ASSIGNMENTS ── */}
-      {stab==="assignments"&&<AssignPanel usersDB={usersDB} dirDB={dirDB} studentsDB={studentsDB} ttDB={timetableDB} ttSetDB={ttSetDB}/>} 
+      {stab==="assignments"&&<AssignPanel user={user} usersDB={usersDB} dirDB={dirDB} studentsDB={studentsDB} ttDB={timetableDB} ttSetDB={ttSetDB}/>} 
 
       {/* ── REGISTER ── */}
       {stab==="register"&&<React.Fragment>
@@ -23429,7 +23429,7 @@ function App(){
         {tab==="teacherlog"&&!isParent&&<TeacherLogPanel user={user} ttDB={ttDB} ttSetDB={ttSetDB} leaveDB={leaveDB} usersDB={usersDB}/>} 
         {tab==="attendance"&&!isParent&&<Attendance user={user} attendanceDB={attendanceDB} studentsDB={studentsDB} usersDB={usersDB} academicRosterDB={academicRosterDB} dirDB={dirDB} calendarDB={calendarDB} complaintsDB={complaintsDB} setTab={setTab}/>} 
         {tab==="staffatt"&&(isAdmin||user.role==="vp")&&<StaffAttendanceRegister user={user} isDirector={isDirector} setTab={setTab} sharedAttDB={staffAttDB} sharedUsersDB={usersDB} sharedLeaveDB={leaveDB} sharedCalDB={calendarDB} sharedTimetableDB={ttDB} sharedTTSetDB={ttSetDB} sharedDirDB={dirDB} sharedStudentsDB={studentsDB}/>} 
-        {tab==="assign"&&isAdmin&&<AssignPanel usersDB={usersDB} dirDB={dirDB} studentsDB={studentsDB} ttDB={ttDB} ttSetDB={ttSetDB}/>} 
+        {tab==="assign"&&isAdmin&&<AssignPanel user={user} usersDB={usersDB} dirDB={dirDB} studentsDB={studentsDB} ttDB={ttDB} ttSetDB={ttSetDB}/>} 
         {tab==="security"&&isDirector&&<SecurityPanel user={user} usersDB={usersDB}/>}
         {tab==="branchsetup"&&isDirector&&<BranchSetup user={user}/>}
         {tab==="trash"&&isDirector&&<RecentlyDeleted feesDB={feesDB} examsDB={examsDB} testsDB={testsDB} noticesDB={noticesDB}/>}
@@ -25224,6 +25224,7 @@ function MyTimetablePanel(props) {
 
 <script type="text/babel">
 function AssignPanel(props) {
+  var user = props.user;   // never passed before: the catch below referenced it and threw
   var usersDB = props.usersDB;
   var dirDB = props.dirDB;
   var studentsDB = props.studentsDB;

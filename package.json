@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build": "node build-precompile.mjs"
+    "build": "node build-precompile.mjs",
+    "check": "node check-undeclared.mjs index.html"
   },
   "dependencies": {
     "@babel/standalone": "7.23.2"
