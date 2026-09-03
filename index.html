@@ -25283,7 +25283,7 @@ function AssignPanel(props) {
   useEffect(function(){
     var d = (usersDB.data && usersDB.data[safeId(selTeacher)]) || {};
     var ctm = ((usersDB.data && usersDB.data[__sharedDocId("__classTeachers")]) || {}).map || {};
-    var saved={classes:d.classes||[],subjects:d.subjects||[],teachingPairs:d.teachingPairs||[],qbank:d.qbank===true,qbankClasses:d.qbankClasses||[],qbankSubjects:d.qbankSubjects||[],coordinator:d.coordinator===true,classTeacherOf:Object.keys(ctm).filter(function(k){return ctm[k]===selTeacher;})};
+    var saved={classes:d.classes||[],subjects:d.subjects||[],teachingPairs:d.teachingPairs||[],qbank:d.qbank===true,qbankClasses:d.qbankClasses||[],qbankSubjects:d.qbankSubjects||[],coordinator:d.coordinator===true,classTeacherOf:__ctSectionsFor(ctm,selTeacher,ctNameOf(selTeacher))};
     if(assignmentSourceSig===assignmentSourceSeenRef.current&&assignmentReady)return;
     assignmentSourceSeenRef.current=assignmentSourceSig;
     if(!assignmentReady||!assignmentDirtyRef.current){
@@ -25350,6 +25350,10 @@ function AssignPanel(props) {
     var ctm = Object.assign({}, oldCtm);
     // Any OTHER teacher losing a section to this one → re-sync their own-doc classTeacherOf so it doesn't go stale.
     var affected = {};
+    // NOTE: this removes-then-re-adds, so it depends entirely on selCTs having been LOADED correctly. When the
+    // map became a list of usernames, the loader was still comparing it as a string, so selCTs came back empty
+    // and every save quietly stripped the teacher of every section they were class teacher of. The loader now
+    // reads through __ctSectionsFor. Anything that reads this map must go through the __ct* helpers.
     // Remove this teacher from every section, then add them back to the chosen ones. Any OTHER teacher already
     // on a section stays: co-class-teachers are supported, so selecting a section no longer takes it from them.
     Object.keys(ctm).forEach(function(k){ __ctRemove(ctm, k, selTeacher, ctNameOf(selTeacher)); });
