@@ -7,7 +7,9 @@ try { Babel = createRequire(import.meta.url)('@babel/standalone'); }
 catch { console.error('  @babel/standalone is not installed here. Run: npm install'); process.exit(2); }
 
 const FILE = process.argv[2] || '/Users/namangupta/repos/ssic1/index.html';
-const html = readFileSync(FILE, 'utf8');
+let html;
+try { html = readFileSync(FILE, 'utf8'); }
+catch { console.error(`  cannot read ${FILE}`); process.exit(2); }   // 2 = cannot check, 1 = findings
 
 // pull out each babel block with the line it starts on
 const blocks = [];
@@ -89,5 +91,8 @@ for (const { b } of asts) {
 
 findings.sort((a, b2) => a.line - b2.line);
 if (!findings.length) { console.log('  no undeclared identifiers'); process.exit(0); }
-console.log(`  ${findings.length} undeclared identifier(s):\n`);
-for (const f of findings) console.log(`  ${FILE.split('/').pop()}:${f.line}  ${f.name}`);
+console.error(`  ${findings.length} undeclared identifier(s):\n`);
+for (const f of findings) console.error(`  ${FILE.split('/').pop()}:${f.line}  ${f.name}`);
+// Exit non-zero, or this reports failures and still reads as a pass to npm, a hook or CI -
+// which is the exact silent-success fault this tool exists to catch.
+process.exit(1);

@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "build": "node build-precompile.mjs",
-    "check": "node check-undeclared.mjs index.html"
+    "check": "node check-undeclared.mjs index.html",
+    "test": "node test/check-undeclared.test.mjs && node check-undeclared.mjs index.html"
   },
   "dependencies": {
     "@babel/standalone": "7.23.2"
