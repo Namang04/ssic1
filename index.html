@@ -1046,6 +1046,235 @@ function __compressImg(file,maxDim,quality){return new Promise(function(resolve,
   fr.onerror=reject;fr.readAsDataURL(file);});}
 const {useState,useMemo,useEffect,useCallback,useRef}=React;
 
+// ---------------------------------------------------------------------------
+// DRAFT SAFETY NET
+// ---------------------------------------------------------------------------
+// "Nothing should ever be lost. If it is left in between, show it as a draft and do not delete it."
+//
+// Every half-filled form writes itself to this device as a draft while it is being typed. Coming
+// back to the same form restores it. Leaving the app, reloading, crashing, going offline or a save
+// being refused by permissions all leave the work intact, because the draft is written locally and
+// does not depend on Firestore, the network, or the rules being right.
+//
+// NOTHING here ever deletes a draft on its own. A draft leaves only two ways:
+//   1. the real save succeeded, so the record now exists for real  -> __draftKill
+//   2. a person explicitly chose to discard it                     -> __draftBin (recoverable)
+// Discarded drafts go to a bin and stay there. There is no timer, no cap-driven eviction of live
+// work, and no cleanup pass. If storage is genuinely full we drop binned items oldest-first and,
+// failing that, refuse to write and say so - we never sacrifice a live draft to make room.
+var __DRAFT_P = "ssic_draft1_";        // live drafts
+var __DRAFT_B = "ssic_draftbin1_";     // discarded, still recoverable
+function __draftWho(user){
+  try{
+    var b = String(window.__currentBranch || "branch");
+    var u = (user && (user.username || user.name)) || "user";
+    return safeId(b) + "_" + safeId(String(u));
+  }catch(e){ return "branch_user"; }
+}
+// A draft is keyed to the exact thing being worked on, so a half-entered form for Class 9-A never
+// surfaces when the same screen is opened for 9-B.
+function __draftKey(user, formId, ctx){ return __DRAFT_P + __draftWho(user) + "_" + safeId(String(formId||"form")) + "_" + safeId(String(ctx==null?"":ctx)); }
+function __draftRead(k){ try{ var r = localStorage.getItem(k); if(!r) return null; var v = JSON.parse(r); return (v && typeof v==="object" && v.v===1) ? v : null; }catch(e){ return null; } }
+function __draftKeys(user, prefix){
+  var out = [];
+  try{ var me = prefix + __draftWho(user) + "_";
+    for(var i=0;i<localStorage.length;i++){ var k = localStorage.key(i); if(k && k.indexOf(me)===0) out.push(k); }
+  }catch(e){}
+  return out;
+}
+// Write, and if the device is out of room make space from the BIN only - never from live drafts.
+function __draftWrite(user, k, payload){
+  var body;
+  try{ body = JSON.stringify(payload); }catch(e){ return false; }
+  for(var attempt=0; attempt<3; attempt++){
+    try{ localStorage.setItem(k, body); return true; }
+    catch(e){
+      var bin = __draftKeys(user, __DRAFT_B).map(function(bk){ var v=__draftRead(bk); return {k:bk, at:(v&&v.at)||""}; })
+                  .sort(function(a,b){ return String(a.at).localeCompare(String(b.at)); });
+      if(!bin.length) return false;
+      try{ localStorage.removeItem(bin[0].k); }catch(e2){ return false; }
+    }
+  }
+  return false;
+}
+// meta: {label, sub} - what this draft IS, in words a person recognises on the Drafts screen.
+function __draftPut(user, formId, ctx, data, meta){
+  if(!formId) return false;
+  var m = meta || {};
+  return __draftWrite(user, __draftKey(user, formId, ctx), {
+    v:1, formId:String(formId), ctx:String(ctx==null?"":ctx), data:data,
+    label:String(m.label||formId), sub:String(m.sub||""), at:new Date().toISOString(),
+    by:((user&&(user.name||user.username))||"")
+  });
+}
+function __draftGet(user, formId, ctx){ return __draftRead(__draftKey(user, formId, ctx)); }
+// The record was really saved, so the draft has served its purpose. This is the ONLY hard delete.
+function __draftKill(user, formId, ctx){ try{ localStorage.removeItem(__draftKey(user, formId, ctx)); return true; }catch(e){ return false; } }
+// A person chose to throw it away. Keep it anyway, in the bin, where they can get it back.
+function __draftBin(user, formId, ctx){
+  var k = __draftKey(user, formId, ctx), v = __draftRead(k);
+  if(!v) return false;
+  v.binnedAt = new Date().toISOString();
+  var ok = __draftWrite(user, __DRAFT_B + k.slice(__DRAFT_P.length), v);
+  if(ok){ try{ localStorage.removeItem(k); }catch(e){} }
+  return ok;
+}
+function __draftUnbin(user, binKey){
+  var v = __draftRead(binKey); if(!v) return false;
+  var ok = __draftWrite(user, __DRAFT_P + binKey.slice(__DRAFT_B.length), v);
+  if(ok){ try{ localStorage.removeItem(binKey); }catch(e){} }
+  return ok;
+}
+function __draftPurge(binKey){ try{ localStorage.removeItem(binKey); return true; }catch(e){ return false; } }
+function __draftAll(user){
+  return __draftKeys(user, __DRAFT_P).map(function(k){ var v=__draftRead(k); return v?Object.assign({key:k}, v):null; })
+    .filter(Boolean).sort(function(a,b){ return String(b.at).localeCompare(String(a.at)); });
+}
+function __draftBinAll(user){
+  return __draftKeys(user, __DRAFT_B).map(function(k){ var v=__draftRead(k); return v?Object.assign({key:k}, v):null; })
+    .filter(Boolean).sort(function(a,b){ return String(b.binnedAt||b.at).localeCompare(String(a.binnedAt||a.at)); });
+}
+function __draftAge(iso){
+  try{
+    var t = new Date(iso).getTime(); if(!t) return "";
+    var m = Math.round((Date.now()-t)/60000);
+    if(m < 1) return "just now";
+    if(m < 60) return m + " min ago";
+    var h = Math.round(m/60); if(h < 24) return h + (h===1?" hour ago":" hours ago");
+    var d = Math.round(h/24); return d + (d===1?" day ago":" days ago");
+  }catch(e){ return ""; }
+}
+
+// Use in a useState initialiser:  const[form,setForm]=useState(()=>__draftStart(user,"admission",ctx,blank).form)
+// Returns the draft if one is waiting, otherwise the blank form, plus when it was left.
+function __draftStart(user, formId, ctx, blank){
+  var d = __draftGet(user, formId, ctx);
+  if(d && d.data && typeof d.data === "object") return { form: Object.assign({}, blank, d.data), restored: true, at: d.at };
+  return { form: blank, restored: false, at: "" };
+}
+// Keeps the draft written while the person is typing. Deliberately debounced, so a 40-row marks
+// grid is not serialised on every keystroke, and deliberately unconditional otherwise: if the form
+// differs from blank, it is on disk. Pass active=false to stop (e.g. while the real save is running).
+function useDraftAutosave(user, formId, ctx, data, meta, active){
+  var mRef = useRef(meta); mRef.current = meta;
+  var [savedAt, setSavedAt] = useState("");
+  useEffect(function(){
+    if(!active || !formId) return;
+    var t = setTimeout(function(){
+      if(__draftPut(user, formId, ctx, data, mRef.current)) setSavedAt(new Date().toISOString());
+    }, 450);
+    return function(){ clearTimeout(t); };
+  }, [user, formId, ctx, JSON.stringify(data), active]);
+  // A tab being closed does not wait for a 450ms timer, so write immediately on the way out.
+  useEffect(function(){
+    if(!active || !formId) return;
+    var flush = function(){ try{ __draftPut(user, formId, ctx, data, mRef.current); }catch(e){} };
+    window.addEventListener("pagehide", flush);
+    window.addEventListener("beforeunload", flush);
+    return function(){
+      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("beforeunload", flush);
+      flush();   // leaving the screen counts too: this is the "left it in between" case
+    };
+  }, [user, formId, ctx, JSON.stringify(data), active]);
+  return savedAt;
+}
+
+// The visible half of the promise: unfinished work is never silently sitting in storage. Whenever
+// this device holds a draft, a quiet pill says so and opens the list. It renders NOTHING when there
+// are no drafts, so it cannot alter anyone's screen until they actually have work in progress.
+// Every branch is defensive: a failure here must never blank the app.
+function DraftsInbox(props){
+  var user = props && props.user;
+  var [open, setOpen] = useState(false);
+  var [tick, setTick] = useState(0);
+  var live = [], binned = [];
+  try{ live = __draftAll(user) || []; binned = __draftBinAll(user) || []; }catch(e){ live = []; binned = []; }
+  // Re-read when a draft is written elsewhere in the app, and when another tab changes storage.
+  useEffect(function(){
+    var bump = function(){ setTick(function(n){ return n+1; }); };
+    window.addEventListener("storage", bump);
+    window.__draftChanged = bump;
+    return function(){ window.removeEventListener("storage", bump); if(window.__draftChanged===bump) window.__draftChanged = null; };
+  }, []);
+  if(!user) return null;
+  if(!live.length && !binned.length) return null;
+
+  var discard = function(d){
+    try{
+      if(!window.confirm("Discard this draft?\n\n" + d.label + (d.sub ? " · " + d.sub : "") + "\n\nIt moves to Discarded below and can be brought back — it is not deleted."))return;
+      __draftBin(user, d.formId, d.ctx); setTick(function(n){ return n+1; });
+    }catch(e){}
+  };
+  var restore = function(b){ try{ __draftUnbin(user, b.key); setTick(function(n){ return n+1; }); }catch(e){} };
+
+  var row = function(d, isBin){
+    return (
+      <div key={d.key} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderTop:"1px solid var(--bd-1)"}}>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:12.5,fontWeight:700,color:"var(--tx-1)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.label}</div>
+          <div style={{fontSize:11,color:"var(--tx-2)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+            {(d.sub ? d.sub + " · " : "") + (isBin ? "discarded " + __draftAge(d.binnedAt || d.at) : "left " + __draftAge(d.at))}
+          </div>
+        </div>
+        <button onClick={function(){ isBin ? restore(d) : discard(d); }}
+          style={{fontSize:11,fontWeight:700,background:"none",border:"1px solid var(--bd-1)",borderRadius:6,
+                  padding:"4px 9px",cursor:"pointer",color:isBin?"var(--ap-accent)":"var(--tx-2)",whiteSpace:"nowrap"}}>
+          {isBin ? "Bring back" : "Discard"}
+        </button>
+      </div>
+    );
+  };
+
+  return (
+    // Bottom-LEFT and below the modal layer on purpose: toasts already own the bottom-right corner
+    // (ToastHost, z-index 4000) and full-screen modals sit at 1000, so this must not cover either.
+    <div style={{position:"fixed",left:14,bottom:"calc(14px + env(safe-area-inset-bottom,0px))",zIndex:900,maxWidth:"min(380px, calc(100vw - 28px))"}}>
+      {open &&
+        <div style={{background:"var(--card)",border:"1px solid var(--bd-1)",borderRadius:12,boxShadow:"0 10px 30px rgba(0,0,0,.18)",
+                     padding:"12px 14px",marginBottom:8,maxHeight:"min(60vh, 420px)",overflowY:"auto"}}>
+          <div style={{fontSize:13,fontWeight:800,color:"var(--tx-1)"}}>Unfinished work on this device</div>
+          <div style={{fontSize:11,color:"var(--tx-2)",marginTop:2,marginBottom:6}}>
+            Open the same screen again and the draft comes back on its own. Nothing here is deleted on its own.
+          </div>
+          {live.map(function(d){ return row(d, false); })}
+          {!live.length && <div style={{fontSize:11.5,color:"var(--tx-2)",padding:"9px 0",borderTop:"1px solid var(--bd-1)"}}>No unfinished drafts.</div>}
+          {binned.length > 0 &&
+            <div style={{marginTop:12}}>
+              <div style={{fontSize:11,fontWeight:800,color:"var(--tx-2)",textTransform:"uppercase",letterSpacing:".04em"}}>Discarded · kept</div>
+              {binned.map(function(b){ return row(b, true); })}
+            </div>}
+        </div>}
+      <button onClick={function(){ setOpen(!open); }}
+        style={{background:"var(--bg-amb)",border:"1px solid var(--bd-amb)",color:"var(--tx-gold)",borderRadius:999,
+                padding:"8px 14px",fontSize:12,fontWeight:800,cursor:"pointer",boxShadow:"0 4px 14px rgba(0,0,0,.12)"}}>
+        {live.length ? (live.length + " unfinished draft" + (live.length===1?"":"s")) : "Discarded drafts"}
+      </button>
+    </div>
+  );
+}
+
+// Shown at the top of a form whose contents came back from a draft, so restored work is never
+// mistaken for a fresh blank form - and so the person always has a deliberate way to clear it.
+function DraftBanner(props){
+  var restored = props.restored, at = props.at, savedAt = props.savedAt, onDiscard = props.onDiscard;
+  if(!restored && !savedAt) return null;
+  if(!restored){
+    return <div style={{fontSize:11.5,color:"var(--tx-2)",marginBottom:8,fontWeight:600}}>Draft saved on this device · {__draftAge(savedAt)}</div>;
+  }
+  return (
+    <div style={{background:"var(--bg-amb)",border:"1px solid var(--bd-amb)",borderRadius:8,padding:"9px 12px",marginBottom:12,
+                 display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+      <div style={{fontSize:12.5,fontWeight:700,color:"var(--tx-gold)",flex:1,minWidth:180}}>
+        Draft restored — you left this unfinished {__draftAge(at)}. Nothing was lost.
+      </div>
+      {onDiscard && <button onClick={onDiscard} className="ss-btn-ghost"
+        style={{fontSize:11.5,fontWeight:700,color:"var(--tx-gold)",background:"none",border:"1px solid var(--bd-amb)",
+                borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>Discard draft</button>}
+    </div>
+  );
+}
+
 // Question-bank data lives in inert script blocks of type text/qb-data, so the browser
 // does NOT parse ~3.3MB of JS on initial load. It is compiled once, lazily, the first time
 // any feature reads QB_DATA — never for parents/non-qbank teachers, and only after login
@@ -21542,7 +21771,10 @@ function Field({label,children}){return <div><Lbl c={label}/>{children}</div>;}
 function AdmissionForm({user, studentsDB, dirDB, academicRosterDB, registrationsDB, openModule}){
   const adm=useFirestore("admissions");
   const[tab,setTab]=useState("student");
-  const[f,setF]=useState({nationality:"India",country:"India",house:"Unknown",gender:"",religion:"",category:"",regDate:today(),isConveyance:false,notNew:false,docBirth:false,docPhoto:false,docAddress:false,docPrevReport:false,docTransfer:false});
+  // A 60-field admission across six tabs is the single largest piece of typing in the app. It now comes
+  // back exactly as it was left, on this device, without anyone having to remember to do anything.
+  const[__admD]=useState(function(){return __draftStart(user,"admission","new",{nationality:"India",country:"India",house:"Unknown",gender:"",religion:"",category:"",regDate:today(),isConveyance:false,notNew:false,docBirth:false,docPhoto:false,docAddress:false,docPrevReport:false,docTransfer:false});});
+  const[f,setF]=useState(function(){return __admD.form;});
   const[admCleanSig,setAdmCleanSig]=useState("");
   const[guardian,setGuardian]=useState(false);
   const[saving,setSaving]=useState(false);
@@ -21574,8 +21806,12 @@ function AdmissionForm({user, studentsDB, dirDB, academicRosterDB, registrations
   // Registration → Admit prefill remains protected as real unsaved work instead of being mistaken for defaults.
   useEffect(()=>{if(admCleanSig||!f.regNo)return;setAdmCleanSig(JSON.stringify({nationality:"India",country:"India",house:"Unknown",gender:"",religion:"",category:"",regDate:today(),isConveyance:false,notNew:false,docBirth:false,docPhoto:false,docAddress:false,docPrevReport:false,docTransfer:false,regNo:String(f.regNo)}));},[f.regNo,admCleanSig]);
   const admissionDirty=!!admCleanSig&&JSON.stringify(f)!==admCleanSig;
+  // Deliberately NOT gated on admissionDirty: that flag only arms once the next registration number has
+  // loaded, so anything typed before it arrived would still be lost. The draft tracks the form itself.
+  const __admTouched=JSON.stringify(f)!==JSON.stringify(__admD.form);
+  useDraftAutosave(user,"admission","new",f,{label:"Admission form",sub:((f.name||"unnamed pupil")+(f.cls?" \u00b7 Class "+f.cls:""))},__admTouched);
   useEffect(()=>{window.__admissionDirty=admissionDirty?"student admission":"";const h=e=>{if(admissionDirty){e.preventDefault();e.returnValue="";}};window.addEventListener("beforeunload",h);return()=>{window.__admissionDirty="";window.removeEventListener("beforeunload",h);};},[admissionDirty]);
-  const clearAdmission=()=>{if(admissionDirty&&!window.confirm("Start over and discard every unsaved admission detail?"))return;try{setF(JSON.parse(admCleanSig));}catch(_){return;}setGuardian(false);setAttempted(false);setAckSig("");setLastAdmitted(null);setMsg("");setTab("student");window.scrollTo(0,0);};
+  const clearAdmission=()=>{if(admissionDirty&&!window.confirm("Start over and discard every unsaved admission detail?"))return;__draftBin(user,"admission","new");try{setF(JSON.parse(admCleanSig));}catch(_){return;}setGuardian(false);setAttempted(false);setAckSig("");setLastAdmitted(null);setMsg("");setTab("student");window.scrollTo(0,0);};
   const REQ={regNo:"Registration No.",regDate:"Registration Date",firstName:"First Name",gender:"Gender",nationality:"Nationality",classSec:"Class",fatherFirst:"Father's First Name"};
   const inSt={width:"100%",padding:"10px 12px",borderRadius:6,border:"1px solid var(--c-d2)",fontSize:13,outline:"none",fontFamily:"var(--ss-font)",background:"var(--c-fff)",color:"var(--ap-ink)",boxSizing:"border-box"};
   const lblSt={fontSize:11,fontWeight:600,color:"var(--c-64)",marginBottom:4,display:"block"};
@@ -21669,7 +21905,7 @@ function AdmissionForm({user, studentsDB, dirDB, academicRosterDB, registrations
       setMsg("✓ "+rec.name+" admitted (Reg "+f.regNo+"). Student Records and class rosters are synced."+(docPending.length?(" Provisional onboarding: "+docPending.length+" document item"+(docPending.length===1?"":"s")+" still pending."):" Documents checked complete.")+_pipeWarn);
       setLastAdmitted({name:rec.name,admNo:String(f.regNo),cls:sc,section:streamSec,mobile:f.mobile||f.fatherMobile||"",dob:f.dob||"",pending:docPending.slice()});
       var _nextAdmission={nationality:"India",country:"India",house:"Unknown",gender:"",religion:"",category:"",regDate:today(),isConveyance:false,notNew:false,docBirth:false,docPhoto:false,docAddress:false,docPrevReport:false,docTransfer:false,regNo:String((parseInt(f.regNo)||lastReg)+1)};
-      setF(_nextAdmission);setAdmCleanSig(JSON.stringify(_nextAdmission));
+      __draftKill(user,"admission","new");setF(_nextAdmission);setAdmCleanSig(JSON.stringify(_nextAdmission));
       setAttempted(false);setAckSig("");
       setTab("student");window.scrollTo(0,0);
     }catch(e){setMsg("Could not save — "+((e&&e.message)||"check connection / Firestore rules"));}
@@ -21678,6 +21914,7 @@ function AdmissionForm({user, studentsDB, dirDB, academicRosterDB, registrations
   const TABS=[["student","Student Details"],["parent","Parent Details"],["previous","Previous Details"],["documents","Documents & Readiness"],["hindi","Hindi Detail"],["emergency","Emergency Contact"]];
   return(
     <div style={{maxWidth:1100,margin:"0 auto"}}>
+      <DraftBanner restored={__admD.restored} at={__admD.at} onDiscard={clearAdmission}/>
       <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",flexWrap:"wrap",gap:12,marginBottom:6}}>
         <div><div className="ap-hi">Complete admission</div><p className="ap-hisub" style={{margin:"4px 0 0"}}>Creates one student record, syncs class systems, and leaves an explicit fee, document and login handoff · Session {window.__SESSION||"2026-27"}</p></div>
         <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
@@ -23278,7 +23515,7 @@ function App(){
   const jumpStudent=(adm,name)=>{if(!__guardTab("directory"))return;setJumpAdm(String(adm||name||""));window.scrollTo(0,0);};
 
   return(
-    <div className="ap-shell"><ToastHost/><ConfirmHost/><OfflineBanner/><ReadOnlySessionBanner user={user}/><StaffPhonePrompt user={user} onSaved={ph=>setUser(u=>u?{...u,phone:ph}:u)}/>
+    <div className="ap-shell"><ToastHost/><ConfirmHost/><OfflineBanner/><ReadOnlySessionBanner user={user}/><DraftsInbox user={user}/><StaffPhonePrompt user={user} onSaved={ph=>setUser(u=>u?{...u,phone:ph}:u)}/>
       <div className={"ap-scrim"+(navOpen?" open":"")} onClick={()=>setNavOpen(false)}/>
       {/* Mobile quick-bar — the five most-used screens, one thumb-tap away (phone widths only; parents keep their own nav) */}
       {!isParent&&(()=>{
