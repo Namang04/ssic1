@@ -3426,7 +3426,7 @@ function DirectorDashboard({user,studentsDB,staffAttDB,attendanceDB,leaveDB,fees
       cNet+=pi.net;cCash+=pi.cash;expected+=pi.net;collected+=pi.cash;dues+=pi.bal;overdue+=pi.overdue;
       if(pi.bal>0)defaulters++;
       if(pi.overdue>0){overdueN++;rows.push({name:s.name,admNo:s.admNo,cls:c.replace("Class ","Cl "),section:normSection(c,s.section),overdue:pi.overdue,bal:pi.bal,paid:pi.cash,net:pi.net});}});
-      if(cNet>0)perClass.push({cls:c.replace("Class ","Cl "),fullCls:c,pct:Math.round(cCash/cNet*100)});});   // fullCls: the bars deep-link on it; without it the tooltip read "Open undefined defaulters" and the jump was discarded
+      if(cNet>0)perClass.push({cls:c.replace("Class ","Cl "),fullCls:c,pct:Math.round(cCash/cNet*100),collected:cCash,expected:cNet});});   // fullCls: the bars deep-link on it; without it the tooltip read "Open undefined defaulters" and the jump was discarded
     rows.sort((a,b)=>b.overdue-a.overdue);
     // Total collected = EVERY receipt in the ledger (active + left + today's just-added / new admissions not yet
     // on a roster), summed directly — same as the Fees page, so today's collection is never dropped from the headline.
@@ -4402,7 +4402,7 @@ function DirectorWorkspaceDashboard({user,studentsDB,staffAttDB,attendanceDB,lea
       cNet+=pi.net;cCash+=pi.cash;expected+=pi.net;collected+=pi.cash;dues+=pi.bal;overdue+=pi.overdue;
       if(pi.bal>0)defaulters++;
       if(pi.overdue>0){overdueN++;rows.push({name:s.name,admNo:s.admNo,cls:c.replace("Class ","Cl "),section:normSection(c,s.section),overdue:pi.overdue,bal:pi.bal,paid:pi.cash,net:pi.net});}});
-      if(cNet>0)perClass.push({cls:c.replace("Class ","Cl "),fullCls:c,pct:Math.round(cCash/cNet*100)});});   // fullCls: the bars deep-link on it; without it the tooltip read "Open undefined defaulters" and the jump was discarded
+      if(cNet>0)perClass.push({cls:c.replace("Class ","Cl "),fullCls:c,pct:Math.round(cCash/cNet*100),collected:cCash,expected:cNet});});   // fullCls: the bars deep-link on it; without it the tooltip read "Open undefined defaulters" and the jump was discarded
     rows.sort((a,b)=>b.overdue-a.overdue);
     // Total collected = EVERY receipt in the ledger (active + left + today's just-added / new admissions not yet
     // on a roster), summed directly — same as the Fees page, so today's collection is never dropped from the headline.
@@ -4541,7 +4541,7 @@ function DirectorWorkspaceDashboard({user,studentsDB,staffAttDB,attendanceDB,lea
                 <div className="dir-focus-room"><div className="dir-focus-class">{selectedRoom.cls}{selectedRoom.section||""}</div><div style={{minWidth:0}}><div className="dir-focus-subject">{selectedRoom.subject}</div><div className="dir-focus-teacher">{selectedRoom.teacher} · {selectedRoom.period}, {selectedRoom.time}</div></div></div>
                 <div className="dir-focus-stat"><div className="dir-focus-label">Attendance</div><div className={"dir-focus-value "+(selectedRoomContext.attendanceMarked?"good":"warn")}>{selectedRoomContext.attendanceMarked?"Register marked":"Not marked yet"}</div></div>
                 <div className="dir-focus-stat"><div className="dir-focus-label">Teacher status</div><div className={"dir-focus-value "+(["present","late"].includes(selectedRoomContext.teacherState)?"good":"warn")}>{STLAB[selectedRoomContext.teacherState]||"Not marked"}{selectedRoom.state==="cover"?" · substitute":""}</div></div>
-                <div className="dir-focus-actions"><button onClick={()=>setTab("attendance")}>Attendance</button><button className="primary" onClick={()=>setTab("timetable")}>Open class timetable</button></div>
+                <div className="dir-focus-actions"><button onClick={()=>{try{var _c=String((selectedRoom&&selectedRoom.cls)||""),_s=String((selectedRoom&&selectedRoom.section)||"");var _all=(typeof allClassesFromDir==="function"&&dirDB)?allClassesFromDir(dirDB):[];var _n=function(x){return String(x||"").replace(/class/gi,"").replace(/[\s_]+/g,"").toLowerCase();};var _hit=_all.find(function(k){return _n(k)&&_n(k)===_n(_c);});window.__attJump={cls:_hit||(/^class\s/i.test(_c)?_c:"Class "+_c),date:today,atab:"mark"};if(_s&&_s.indexOf("+")<0)window.__attJump.sec=_s;}catch(_){}setTab("attendance");}}>Attendance</button><button className="primary" onClick={()=>setTab("timetable")}>Open class timetable</button></div>
               </div>
             )}
             <div className="dir-room-legend"><span><i></i>Teacher assigned</span><span><i className="cover"></i>Substitute cover</span><span><i className="warn"></i>Teacher or subject needed</span>{liveBoard.rows.length>12&&<span>+{liveBoard.rows.length-12} more rooms in Timetable</span>}</div>

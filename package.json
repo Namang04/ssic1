@@ -5,7 +5,7 @@
   "scripts": {
     "build": "node build-precompile.mjs",
     "check": "node check-undeclared.mjs index.html",
-    "test": "node test/check-undeclared.test.mjs && node test/check-hooks.test.mjs && node check-undeclared.mjs index.html && node check-hooks.mjs index.html"
+    "test": "node test/check-undeclared.test.mjs && node test/check-hooks.test.mjs && node test/attendance-jump.test.mjs && node check-undeclared.mjs index.html && node check-hooks.mjs index.html"
   },
   "dependencies": {
     "@babel/standalone": "7.23.2"
