@@ -13395,7 +13395,7 @@ function UnrosteredPayments({user,payments,studentsDB,feesDB}){
   );
 }
 
-function Fees({user,feesDB,studentsDB,academicRosterDB,dirDB,metaDB,intentsDB,feeCloseDB}){
+function Fees({user,session,feesDB,studentsDB,academicRosterDB,dirDB,metaDB,intentsDB,feeCloseDB}){
   const isDirector=user.role==="admin"&&user.fees!==false; // only the director may edit/delete a payment; office can add only
   // one-shot deep-link from the Director cockpit: window.__feesJump={sub,gq} (sub read here; gq below nulls the flag)
   const _feesFocus=(function(){try{return window.__feesJump&&window.__feesJump.focus;}catch(_){return "";}})();
@@ -13658,7 +13658,7 @@ td.r,th.r{text-align:right}
     }
     const receiptNo="SSC/"+String(window.__SESSION||"2026-27").replace(/^20/,"")+"/"+String(n).padStart(4,"0");
     const id="pay_"+Date.now()+"_"+Math.random().toString(36).slice(2,7);
-    const rec={cls,student,admNo:selAdm,amount:amt,mode:isConc?"Concession":mode,ref:(!isConc&&mode!=="Cash")?payRef.trim():"",note:note.trim()||(isConc?"Concession / discount":""),date:payDate,receiptNo:isConc?"":receiptNo,by:user.name,disc:isConc,createdAt:new Date().toISOString()}; // a concession must not consume a receipt number (the next cash receipt would reuse it)
+    const rec={session:session||undefined,cls,student,admNo:selAdm,amount:amt,mode:isConc?"Concession":mode,ref:(!isConc&&mode!=="Cash")?payRef.trim():"",note:note.trim()||(isConc?"Concession / discount":""),date:payDate,receiptNo:isConc?"":receiptNo,by:user.name,disc:isConc,createdAt:new Date().toISOString()}; // a concession must not consume a receipt number (the next cash receipt would reuse it)
     const paidBefore=paid;
     try{await feesDB.set(id,rec);}catch(e){setSaving(false);alert("Could not record — "+(e&&e.message?e.message:"please check your connection and try again.")+(isConc?"":"\nNo receipt was printed."));return;}
     // Auto-publish THIS student's new balance to the parent portal (portalFees/{admNo}) so the parent sees
@@ -23437,7 +23437,7 @@ function App(){
         {tab==="testschedule"&&!isParent&&<TestSchedulePanel user={user} ttSetDB={ttSetDB} usersDB={usersDB} setTab={setTab}/>}
         {tab==="focusgroup"&&(isAdmin||isVP)&&<FocusGroupPanel usersDB={usersDB} wrongDB={wrongDB} dirDB={dirDB}/>}
         {tab==="insights"&&(isAdmin||isVP||user.coordinator===true)&&<Insights testsDB={testsDB} studentsDB={studentsDB} attendanceDB={attendanceDB} wrongDB={wrongDB} usersDB={usersDB} dirDB={dirDB} academicRosterDB={academicRosterDB}/>} 
-        {tab==="fees"&&canFees&&<Fees user={user} feesDB={feesDB} studentsDB={studentsDB} academicRosterDB={academicRosterDB} dirDB={dirDB} metaDB={metaDB} intentsDB={paymentIntentsDB} feeCloseDB={feeCloseDB}/>} 
+        {tab==="fees"&&canFees&&<Fees user={user} session={viewSession||curSession} feesDB={feesDB} studentsDB={studentsDB} academicRosterDB={academicRosterDB} dirDB={dirDB} metaDB={metaDB} intentsDB={paymentIntentsDB} feeCloseDB={feeCloseDB}/>} 
         {tab==="salary"&&canFees&&<SalaryPanel user={user} sharedAttDB={isDirector?staffAttDB:null} sharedUsersDB={usersDB} sharedCalDB={calendarDB} sharedLeaveDB={leaveDB}/>} 
         {tab==="admission"&&(isDirector||isOffice)&&<AdmissionForm user={user} studentsDB={studentsDB} dirDB={dirDB} academicRosterDB={academicRosterDB} registrationsDB={registrationsDB} openModule={setTab}/>}
         {tab==="directory"&&(isAdmin||isOffice||user.role==="vp")&&<StudentDirectory user={user} dirDB={dirDB} testsDB={testsDB} examsDB={examsDB} studentsDB={studentsDB} attendanceDB={attendanceDB} wrongDB={wrongDB} feesDB={feesDB} canFees={canFees} academicRosterDB={academicRosterDB} studentLinksDB={studentLinksDB} jumpAdm={jumpAdm} onJumpDone={()=>setJumpAdm("")}/>}
