@@ -6980,6 +6980,26 @@ function ImportStudents({dirDB, curSession, card, btn}){
   </>;
 }
 
+// Which pupil a fee row belongs to. Lifted out of ImportFees so it can be tested against the real code.
+// The ORDER is the whole point:
+//   1. an admission number that matches an ACTIVE pupil;
+//   2. an admission number that matches a pupil who has LEFT. This used to run only after every name
+//      guess had failed, so a left pupil's receipt went to whichever active classmate shared her first
+//      name: receipt #193 (Arohi Mishra, left, adm 2052) was filed under Arohi Sharma, adm 667;
+//   3. exact name in the class, active then left - still allowed alongside a cited number, because the
+//      TechRelevant export sometimes carries a mistyped number against a correct name (#459);
+//   4. fuzzy and unique-first-name guesses - ONLY for rows that cite no admission number at all.
+//      A receipt that names an admission number is never re-homed to a different child by a guess.
+function __feeResolvePupil(idx,adm,name,cn){
+  var hit=null; if(adm&&idx.byAdm[adm])hit=idx.byAdm[adm];
+  var leftHit=(!hit&&adm&&idx.leftByAdm[adm])||null;
+  var strict=!!adm;
+  if(!hit&&!leftHit&&name){var pool=idx.byClsName[cn]||{}; if(pool[nmKey(name)])hit=pool[nmKey(name)]; else if(pool[nmKey(name)]!==null){var best=-1,bk=null;Object.keys(pool).forEach(function(k){var rr=__ratio(k,nmKey(name));if(rr>best){best=rr;bk=k;}});if(!strict&&bk&&best>=0.82&&pool[bk])hit=pool[bk]; /* a null (same-name pair) winner blocks the fuzzy match → Unlinked */
+  if(!hit){var ft=nmKey(name).split(" ")[0];var fc=Object.keys(pool).filter(function(k){return k.split(" ")[0]===ft;});if(!strict&&fc.length===1&&pool[fc[0]])hit=pool[fc[0]];}}} /* tombstones COUNT toward first-name ambiguity but are never returned */// unique first-name in class → safe match
+  if(!hit&&!leftHit&&name){var lp=idx.leftByClsName[cn]||{}; if(lp[nmKey(name)])leftHit=lp[nmKey(name)];} /* null (ambiguous) slots stay unmatched on purpose */
+  return {hit:hit,leftHit:leftHit};
+}
+
 function ImportFees({feesDB, dirDB, curSession, viewSession, card, btn, canReplace}){
   const[msg,setMsg]=useState(""); const[busy,setBusy]=useState(false); const[preview,setPreview]=useState(null); const[replace,setReplace]=useState(false);
   const pastView=!!viewSession&&viewSession!==curSession;   // never replace while viewing an archived year
@@ -7015,10 +7035,7 @@ function ImportFees({feesDB, dirDB, curSession, viewSession, card, btn, canRepla
       var receiptNo=__col(r,["Receipt No","Receipt","Receipt #"]);
       if(!receiptNo){var sn=__col(r,["Receipt No.","__EMPTY","","Sr","Sr No","S.No","Serial","Sl No","#"]);var sp=String(sn).split(/[-–]/);if(sp.length>1)receiptNo=sp[sp.length-1].trim();else if(/^\d+$/.test(String(sn).trim()))receiptNo=String(sn).trim();}
       var note=__col(r,["Note","Detail","Particulars"]);
-      var hit=null; if(adm&&idx.byAdm[adm])hit=idx.byAdm[adm];
-      if(!hit&&name){var pool=idx.byClsName[cn]||{}; if(pool[nmKey(name)])hit=pool[nmKey(name)]; else if(pool[nmKey(name)]!==null){var best=-1,bk=null;Object.keys(pool).forEach(function(k){var rr=__ratio(k,nmKey(name));if(rr>best){best=rr;bk=k;}});if(bk&&best>=0.82&&pool[bk])hit=pool[bk]; /* a null (same-name pair) winner blocks the fuzzy match → Unlinked */
-        if(!hit){var ft=nmKey(name).split(" ")[0];var fc=Object.keys(pool).filter(function(k){return k.split(" ")[0]===ft;});if(fc.length===1&&pool[fc[0]])hit=pool[fc[0]];}}} /* tombstones COUNT toward first-name ambiguity but are never returned */// unique first-name in class → safe match
-      var leftHit=null; if(!hit){ if(adm&&idx.leftByAdm[adm])leftHit=idx.leftByAdm[adm]; else if(name){var lp=idx.leftByClsName[cn]||{}; if(lp[nmKey(name)])leftHit=lp[nmKey(name)];} } /* null (ambiguous) slots stay unmatched on purpose */ // fall back to students who left
+      var _res=__feeResolvePupil(idx,adm,name,cn),hit=_res.hit,leftHit=_res.leftHit;
       var who=hit||leftHit;
       var base={admNo:who?String(who.admNo):(adm||""),student:who?who.name:name,cls:"Class "+(who?who.clsNum:cn),date:date,receiptNo:receiptNo,note:note,session:curSession};
       var recs=[];
