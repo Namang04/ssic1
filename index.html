@@ -1818,6 +1818,8 @@ var __MERGE_CLASSES=/^Class (9|10)$/;   // classes whose old split marks must re
 // Parent subject a split part belongs to — "Physics" on Class 9 reads as "Science". Anything else is returned
 // untouched, so this is safe to call on every test in the collection.
 var __SPLIT_PARENT={};Object.keys(__SUBJ_SPLIT).forEach(function(p){__SUBJ_SPLIT[p].forEach(function(c){__SPLIT_PARENT[c]=p;});});
+// Class 11-12 "Computer" IS the Computer Science course. Teachers assigned plain "Computer" saved 21 XI/XII tests
+// under a subject the class list does not offer, so every Computer Science view showed those tests as missing.
 function __canonTestSubj(cls,subj){
   if(!__MERGE_CLASSES.test(String(cls)))return subj;
   return __SPLIT_PARENT[subj]||subj;
@@ -1999,6 +2001,120 @@ function __mkSettled(test,adm,name){
   var st=__mkState(test,adm,name);
   return st==="A"||st==="E";
 }
+// ── Does a saved test belong to this pupil? (one rule for every marks screen, 2026-09-14) ──
+// Class 11-12 keep the STREAM in the directory ("BIO", "MATH(COMP)") while tests are saved against the section
+// LETTER. Screens compared the two raw values, so every sectioned XI/XII test looked missing on the Director's
+// Test Tracker, Class Progress, Participation and student reports. Both sides now go through normSection.
+// A test also belongs to a pupil when it holds that pupil's own mark or state: a combined paper entered once
+// under one section must not hide the other section's marks.
+function __testAppliesTo(cls,t,sec,adm,name){
+  if(!t)return false;
+  if(!t.section||!sec)return true;
+  if(normSection(cls,t.section)===normSection(cls,sec))return true;
+  var v=_markOf(t,adm,name);if(v!==undefined&&v!=="")return true;
+  return !!__mkState(t,adm,name);
+}
+// Recorded entries in a saved test (marks plus Absent/Exempt/Makeup states). Used to choose between two saved
+// copies of the same test, so an empty copy can never hide the copy that holds the marks.
+function __testFill(t){
+  if(!t)return 0;
+  var cnt=function(m){var n=0;for(var k in (m||{})){var v=m[k];if(v!==undefined&&v!==null&&v!=="")n++;}return n;};
+  return Math.max(cnt(t.rowsByAdm),cnt(t.rows))+Math.max(cnt(t.statesByAdm),cnt(t.states));
+}
+// Of two copies of one test (callers pass them oldest first) keep the one with more recorded; a tie keeps the
+// later save, exactly as before.
+function __betterTestCopy(prev,t){if(!prev)return t;return __testFill(t)>=__testFill(prev)?t:prev;}
+// For ONE pupil's report: prefer the copy that holds this pupil's own entry, then the fuller copy.
+function __pickForStudent(prev,t,adm,name){if(!prev)return t;var hp=__mkSettled(prev,adm,name),ht=__mkSettled(t,adm,name);if(hp!==ht)return ht?t:prev;return __betterTestCopy(prev,t);}
+
+// Test Tracker only (2026-09-14). Class 11-12 Computer tests are saved as "Computer" (the teacher's assignment
+// says "Computer") while the class list says "Computer Science", so the tracker showed an empty Computer Science
+// column beside a Computer one. The TRACKER reads the two as one subject. Nothing is renamed anywhere else: the
+// teacher's Enter Marks, Topics, Syllabus and copy-check records are filed under "Computer" and stay as they are.
+function __ttSeniorSubj(cls,subj){
+  if(subj!=="Computer"||!/^Class (11|12)$/.test(String(cls).trim()))return subj;
+  var l=(typeof __testSubjectsFor==="function")?(__testSubjectsFor(cls)||[]):[];
+  return (l.indexOf("Computer Science")>=0&&l.indexOf("Computer")<0)?"Computer Science":subj;
+}
+function __ttFoldTest(t){if(!t||!t.subj)return t;var s=__ttSeniorSubj(t.cls,t.subj);return s===t.subj?t:Object.assign({},t,{subj:s});}
+// ── Test-record repair planner (Test Center → Repair records, Director only, 2026-09-14) ── PURE: it reads the
+// saved tests and returns a plan; Apply writes it. It never changes a mark VALUE. It (1) moves each pupil's
+// entry into the copy of the same test for the pupil's OWN section (creating that copy if none exists; a clash
+// is left for review), (2) removes empty, identical or complementary copies of one test, (3) turns a 0 into
+// Absent only where the attendance register marks that pupil absent that day, and (4) lists what only a
+// teacher can settle. It renames no subject: a teacher's Topics and Syllabus records are filed by subject name.
+function __testRepairPlan(tests,rosterOf,attendance,todayIso){
+  var clone=function(o){return JSON.parse(JSON.stringify(o||{}));};
+  var docs={},seenIds={};
+  Object.keys(tests||{}).forEach(function(id){seenIds[id]=1;if(id.indexOf("__")===0)return;var t=tests[id];if(!t||t.deleted===true||!t.cls||!t.subj)return;docs[id]=clone(t);});
+  var before=clone(docs),notes={},created={},removed={},review=[];
+  var counts={moved:0,created:0,emptyRemoved:0,identicalRemoved:0,merged:0,emptied:0,absent:0};
+  var note=function(id,msg){(notes[id]=notes[id]||[]).push(msg);};
+  var has=function(v){return v!==undefined&&v!==null&&v!=="";};
+  var rawSubj=function(t){return t.subjOrig!==undefined?t.subjOrig:t.subj;};
+  var topicKey=function(t){return (t.topics||[]).map(function(x){return String(x||"").trim().toLowerCase();}).sort().join("¦");};
+  var secOf=function(t){return normSection(t.cls,t.section||"");};
+  var label=function(t){return (t.cls||"")+(t.section?"-"+secOf(t):"")+" · "+(t.subj||"")+" · "+(t.testDate||"no date")+((t.topics&&t.topics.length)?" · "+t.topics.join(", "):"");};
+  var R={};
+  var roster=function(cls){if(R[cls])return R[cls];var list=(rosterOf(cls)||[]).map(function(s){return{admNo:String(s.admNo||""),name:String(s.name||""),section:normSection(cls,s.section||"")};});var byAdm={},byName={},byKey={};list.forEach(function(s){if(s.admNo)byAdm[s.admNo]=s;if(s.name)byName[s.name]=byName[s.name]?"dup":s;var k=nmKey(s.name);byKey[k]=byKey[k]?"dup":s;});R[cls]={byAdm:byAdm,byName:byName,byKey:byKey};return R[cls];};
+  var who=function(cls,key,isAdm){var r=roster(cls);if(isAdm)return r.byAdm[String(key)]||null;var a=__admInBrack(key);if(a&&r.byAdm[a])return r.byAdm[a];var n=r.byName[key];if(n)return n==="dup"?null:n;var k=r.byKey[nmKey(key)];return (k&&k!=="dup")?k:null;};
+  var pupilsIn=function(t){var m={},out=[];var add=function(q){if(q&&!m[q.admNo||q.name]){m[q.admNo||q.name]=1;out.push(q);}};
+    ["rows","states"].forEach(function(f){Object.keys(t[f]||{}).forEach(function(k){if(has(t[f][k]))add(who(t.cls,k,false));});});
+    ["rowsByAdm","statesByAdm"].forEach(function(f){Object.keys(t[f]||{}).forEach(function(a){if(has(t[f][a]))add(who(t.cls,a,true));});});return out;};
+  var entriesOf=function(t,p){var e={rows:{},rowsByAdm:{},states:{},statesByAdm:{}};
+    ["rows","states"].forEach(function(f){Object.keys(t[f]||{}).forEach(function(k){if(has(t[f][k])&&who(t.cls,k,false)===p)e[f][k]=t[f][k];});});
+    ["rowsByAdm","statesByAdm"].forEach(function(f){if(p.admNo&&has((t[f]||{})[p.admNo]))e[f][p.admNo]=t[f][p.admNo];});return e;};
+  var valueFor=function(t,p){var v=_markOf(t,p.admNo,p.name);if(has(v))return{k:"m",v:String(v)};var s=__mkState(t,p.admNo,p.name);return s?{k:"s",v:s}:null;};
+  var dropEntries=function(t,e){["rows","rowsByAdm","states","statesByAdm"].forEach(function(f){Object.keys(e[f]).forEach(function(k){if(t[f])delete t[f][k];});});};
+  var addEntries=function(t,e){["rows","rowsByAdm","states","statesByAdm"].forEach(function(f){t[f]=t[f]||{};Object.keys(e[f]).forEach(function(k){t[f][k]=e[f][k];});});};
+  var live=function(id){return !!docs[id]&&!removed[id];};
+  // 1. each pupil's entry into the copy of the test for the pupil's own section
+  var newId=function(t,S){var base=safeId(t.cls+"__"+rawSubj(t)+"__sec"+S+"__week"+(t.week||"x")),id=base,n=1;while(seenIds[id]||docs[id]){id=base+"__r"+(n++);}return id;};
+  Object.keys(docs).forEach(function(id){var t=docs[id];if(!t.section||removed[id])return;var X=secOf(t),bySec={};
+    pupilsIn(t).forEach(function(p){if(p.section&&p.section!==X)(bySec[p.section]=bySec[p.section]||[]).push(p);});
+    Object.keys(bySec).forEach(function(Y){
+      var cands=Object.keys(docs).filter(function(j){var u=docs[j];return j!==id&&live(j)&&u.cls===t.cls&&rawSubj(u)===rawSubj(t)&&secOf(u)===Y&&String(u.testDate||"")===String(t.testDate||"")&&String(u.total||"")===String(t.total||"");});
+      if(cands.length>1){var same=cands.filter(function(j){return topicKey(docs[j])===topicKey(t);});if(same.length===1)cands=same;}
+      if(cands.length>1){review.push({id:id,label:label(t),reason:bySec[Y].length+" Section "+Y+" pupil(s) are in this test, but Section "+Y+" has more than one test that day — choose the one they sat"});return;}
+      var tid=cands[0];
+      if(!tid){tid=newId(t,Y);var nd={cls:t.cls,subj:t.subj,section:Y,week:t.week,total:t.total,testDate:t.testDate,topics:(t.topics||[]).slice(),name:t.name||((t.topics||[])[0])||"Test",by:t.by||"",at:t.at||"",firstSavedAt:t.firstSavedAt||t.at||"",rows:{},rowsByAdm:{},states:{},statesByAdm:{},createdByRepair:{from:id}};if(t.subjOrig!==undefined)nd.subjOrig=t.subjOrig;if(t.session)nd.session=t.session;docs[tid]=nd;created[tid]=1;counts.created++;note(tid,"new Section "+Y+" copy for pupils whose marks were filed under Section "+X);}
+      var target=docs[tid],moved=0;
+      bySec[Y].forEach(function(p){var mine=valueFor(t,p),theirs=valueFor(target,p);
+        if(mine&&theirs&&(mine.k!==theirs.k||mine.v!==theirs.v)){review.push({id:id,label:label(t),reason:p.name+" has a different entry in the Section "+Y+" copy of this test ("+mine.v+" here, "+theirs.v+" there) — left as it is"});return;}
+        var e=entriesOf(t,p);if(!theirs)addEntries(target,e);dropEntries(t,e);moved++;});
+      if(moved){counts.moved+=moved;note(id,moved+" Section "+Y+" entr"+(moved===1?"y":"ies")+" moved to the Section "+Y+" copy");note(tid,moved+" entr"+(moved===1?"y":"ies")+" brought in from the Section "+X+" copy");}
+    });
+  });
+  // a copy emptied by those moves is removed (its entries now live in the right section's copy)
+  Object.keys(docs).forEach(function(id){if(!created[id]&&!removed[id]&&__testFill(docs[id])===0&&__testFill(before[id])>0){removed[id]="all of its entries were moved to the correct section's copy";counts.emptied++;}});
+  // 2. duplicate copies of one test: same class, subject, section, date and maximum
+  var sigM=function(t){var o={};["rows","rowsByAdm","states","statesByAdm"].forEach(function(f){o[f]=Object.keys(t[f]||{}).filter(function(k){return has(t[f][k]);}).sort().map(function(k){return k+"="+t[f][k];});});return JSON.stringify(o);};
+  var groups={};Object.keys(docs).forEach(function(id){if(!live(id))return;var t=docs[id];var k=[t.cls,rawSubj(t),secOf(t),t.testDate||"",String(t.total||"")].join("|");(groups[k]=groups[k]||[]).push(id);});
+  Object.keys(groups).forEach(function(k){var ids=groups[k].slice().sort(function(a,b){return String(docs[a].at||"").localeCompare(String(docs[b].at||""));});if(ids.length<2)return;
+    var filled=ids.filter(function(j){return __testFill(docs[j])>0;});
+    if(filled.length)ids.forEach(function(j){if(!created[j]&&__testFill(docs[j])===0){removed[j]="empty copy of a test whose marks are in another copy";counts.emptyRemoved++;}});
+    var keep=null;
+    filled.forEach(function(j){if(removed[j])return;if(!keep){keep=j;return;}var a=docs[keep],b=docs[j];if(topicKey(a)!==topicKey(b))return;
+      if(sigM(a)===sigM(b)){if(created[j])return;removed[j]="identical copy of another saved test";counts.identicalRemoved++;return;}
+      var pb=pupilsIn(b),clash=pb.some(function(p){var x=valueFor(a,p),y=valueFor(b,p);return x&&y&&(x.k!==y.k||x.v!==y.v);});
+      if(clash){review.push({id:j,label:label(b),reason:"two saved copies of this test give some pupils different marks — compare them in Duplicate review"});return;}
+      if(created[j])return;
+      pb.forEach(function(p){if(!valueFor(a,p))addEntries(a,entriesOf(b,p));});note(keep,"entries of a second copy merged in");removed[j]="merged into the other copy of this test";counts.merged++;});
+  });
+  // 3. a 0 for a pupil the attendance register marks Absent that day becomes Absent
+  var att={};Object.keys(attendance||{}).forEach(function(k){var r=attendance[k];if(!r||!r.status||!r.date||r.deleted===true)return;att[r.cls+"|"+normSection(r.cls,r.section||"")+"|"+r.date]=r.status;});
+  Object.keys(docs).forEach(function(id){if(!live(id))return;var t=docs[id];if(!t.testDate)return;
+    pupilsIn(t).forEach(function(p){var v=_markOf(t,p.admNo,p.name);if(!has(v)||Number(v)!==0)return;var st=att[t.cls+"|"+p.section+"|"+t.testDate];if(!st||st[p.admNo]!=="A")return;
+      var e0=entriesOf(t,p),nk=Object.keys(e0.rows)[0]||p.name;dropEntries(t,e0);t.states=t.states||{};t.statesByAdm=t.statesByAdm||{};t.states[nk]="A";if(p.admNo)t.statesByAdm[p.admNo]="A";counts.absent++;note(id,p.name+": 0 → Absent (absent in the attendance register that day)");});});
+  // 4. what only a teacher can settle
+  Object.keys(docs).forEach(function(id){if(!live(id)||created[id])return;var t=docs[id];
+    if(!(Array.isArray(t.topics)&&t.topics.some(function(x){return String(x||"").trim();})))review.push({id:id,label:label(t),reason:"no chapter recorded — add it in Missing topics"});
+    if(t.testDate){var d=new Date(String(t.testDate)+"T12:00:00");if(!isNaN(d.getTime())&&d.getDay()===0)review.push({id:id,label:label(t),reason:"dated on a Sunday — check the test date"});if(todayIso&&String(t.testDate)>String(todayIso))review.push({id:id,label:label(t),reason:"dated in the future — check the test date"});}
+    if(__testFill(t)===0&&__testFill(before[id])===0)review.push({id:id,label:label(t),reason:"created but no marks entered yet"});});
+  var writes=[];Object.keys(docs).forEach(function(id){if(removed[id])return;if(created[id]){if(__testFill(docs[id])>0)writes.push({id:id,doc:docs[id],isNew:true,label:label(docs[id]),summary:notes[id]||[]});return;}if(JSON.stringify(docs[id])!==JSON.stringify(before[id]))writes.push({id:id,doc:docs[id],isNew:false,label:label(docs[id]),summary:notes[id]||[]});});
+  var removes=Object.keys(removed).filter(function(id){return !created[id];}).map(function(id){return{id:id,reason:removed[id],label:label(before[id]||docs[id])};});
+  return{writes:writes,removes:removes,review:review,counts:counts};
+}
 function _markOf(test,adm,name){if(!test)return undefined;var rba=test.rowsByAdm;if(rba&&adm&&rba[String(adm)]!==undefined)return rba[String(adm)];return __rowValFor(test.rows,adm,name);}
 // Notice visibility by audience — the "For …" picker now actually scopes who sees a circular (was decorative).
 // Canonical class(+section) key for parent-broadcast targeting. Directory tokens ("9", "IX", "Nursery"),
@@ -2025,7 +2141,7 @@ function _noticeVisible(n,user){var a=n&&n.audience;var r=(user&&user.role)||"";
 function __studentCanonicalTests(data,cls,section){
   var sec=normSection(cls,section||"");
   var raw=Object.entries(data||{}).map(function(e){return Object.assign({__id:e[0]},e[1]||{});}).filter(function(t){return t&&t.cls===cls&&(!t.section||!sec||normSection(cls,t.section)===sec);});
-  var versions={};raw.slice().sort(function(a,b){return String(a.at||"").localeCompare(String(b.at||""));}).forEach(function(t){var k=[normSection(cls,t.section||""),t.testDate||"",t.total||"",(t.topics||[]).map(function(x){return String(x||"").trim().toLowerCase();}).sort().join("¦")].join("|");versions[k]=t;});
+  var versions={};raw.slice().sort(function(a,b){return String(a.at||"").localeCompare(String(b.at||""));}).forEach(function(t){var k=[normSection(cls,t.section||""),t.testDate||"",t.total||"",(t.topics||[]).map(function(x){return String(x||"").trim().toLowerCase();}).sort().join("¦")].join("|");versions[k]=__betterTestCopy(versions[k],t);});
   return{tests:Object.values(versions),duplicates:Math.max(0,raw.length-Object.keys(versions).length)};
 }
 // Class/section leaderboard keyed by admission no. — merges name-keyed (rows) + admNo-keyed (rowsByAdm)
@@ -9164,7 +9280,94 @@ function Attendance({user,attendanceDB,studentsDB,usersDB,academicRosterDB,dirDB
    one clean list, and one-tap Delete (soft — goes to Recently Deleted, restorable). Built because the test
    tooling had scattered across 6 screens and the old "how many tests has each teacher taken + delete" view
    was buried under Resources → Admin → Tests where the director couldn't find it. Admin/VP-legacy only. */
-function TestCenter({user,testsDB,usersDB}){
+// ── Repair records (Test Center, Director only) ── shows every planned change first; Apply writes them with a
+// per-record undo snapshot (repairLog.prev); removed copies go to Recently Deleted; "Undo" reverses a whole run.
+function TestRepairPanel({user,testsDB,dirDB,studentsDB,academicRosterDB,attendanceDB}){
+  const[busy,setBusy]=useState("");
+  const[showAll,setShowAll]=useState(false);
+  const[showReview,setShowReview]=useState(false);
+  const plan=useMemo(()=>{try{return __testRepairPlan(testsDB.data||{},c=>rosterForCls(dirDB,studentsDB,c,academicRosterDB),(attendanceDB&&attendanceDB.data)||{},today());}catch(e){return{error:String((e&&e.message)||e),writes:[],removes:[],review:[],counts:{}};}},[testsDB.data,dirDB&&dirDB.data,studentsDB&&studentsDB.data,academicRosterDB&&academicRosterDB.data,attendanceDB&&attendanceDB.data]);
+  const runs=useMemo(()=>{const m={};Object.values(testsDB.allData||{}).forEach(t=>{if(!t)return;(t.repairLog||[]).forEach(e=>{if(!e||!e.run||String(e.run).indexOf("undo_")===0)return;const r=m[e.run]=m[e.run]||{run:e.run,at:e.at,by:e.by,n:0,undone:false};r.n++;});(t.repairLog||[]).forEach(e=>{if(e&&String(e.run||"").indexOf("undo_")===0){const r=m[String(e.run).slice(5)];if(r)r.undone=true;}});});return Object.values(m).sort((a,b)=>String(b.at||"").localeCompare(String(a.at||"")));},[testsDB.allData]);
+  const c=plan.counts||{};
+  const total=plan.writes.length+plan.removes.length;
+  const by=(user&&(user.name||user.username))||"Director";
+  const snap=d=>d?{subj:d.subj,section:d.section||"",rows:d.rows||{},rowsByAdm:d.rowsByAdm||{},states:d.states||{},statesByAdm:d.statesByAdm||{}}:null;
+  const apply=async()=>{
+    if(busy||!total)return;
+    if(!(await window.__confirm({title:"Apply "+total+" repair"+(total===1?"":"s")+"?",body:"Marks move to each pupil's own section's copy of the same test, empty and identical copies go to Recently Deleted, and a 0 becomes Absent only where the register shows the pupil absent. No mark value is changed or invented. The whole run can be undone from this page.",confirmText:"Apply repairs"})))return;
+    setBusy("apply");const run="rep_"+Date.now(),now=new Date().toISOString(),all=testsDB.allData||{};let ok=0,fail=0;
+    for(const w of plan.writes){const prevDoc=all[w.id]||null;const doc=Object.assign({},w.doc,{repairLog:((prevDoc&&prevDoc.repairLog)||[]).concat([{run:run,at:now,by:by,what:(w.summary||[]).join("; "),prev:w.isNew?null:snap(prevDoc)}]).slice(-10)});if(w.isNew)doc.createdByRepair=Object.assign({},doc.createdByRepair||{},{run:run,at:now,by:by});try{await testsDB.set(w.id,doc);ok++;}catch(e){fail++;}}
+    for(const r of plan.removes){const prevDoc=all[r.id];if(!prevDoc)continue;const doc=Object.assign({},prevDoc,{deleted:true,deletedBy:by,deletedAt:now,repairLog:(prevDoc.repairLog||[]).concat([{run:run,at:now,by:by,what:"removed: "+r.reason,prev:null,removed:true}]).slice(-10)});try{await testsDB.set(r.id,doc);ok++;}catch(e){fail++;}}
+    try{logAudit("test-repair","tests",run,null,{writes:plan.writes.length,removes:plan.removes.length,ok:ok,fail:fail});}catch(e){}
+    setBusy("");
+    if(window.__toast)window.__toast(fail?("Repaired "+ok+"; "+fail+" could not be saved — check the connection and apply again"):("Repaired "+ok+" test record"+(ok===1?"":"s")+". Undo is available below."),fail?"err":"ok");
+  };
+  const undo=async(run)=>{
+    if(busy)return;
+    if(!(await window.__confirm({title:"Undo this repair?",body:"Every test this repair changed goes back to how it was, copies it created are removed, and copies it removed come back. Marks entered in those tests after the repair are lost.",danger:true,confirmText:"Undo repair"})))return;
+    setBusy("undo");const now=new Date().toISOString();let ok=0,fail=0;
+    for(const [id,t] of Object.entries(testsDB.allData||{})){if(!t)continue;
+      const mine=(t.repairLog||[]).filter(e=>e&&e.run===run),isNew=!!(t.createdByRepair&&t.createdByRepair.run===run);
+      if(!mine.length&&!isNew)continue;
+      const next=Object.assign({},t);
+      if(isNew){next.deleted=true;next.deletedBy=by;next.deletedAt=now;}
+      else{const e=mine[0];if(e.removed){delete next.deleted;delete next.deletedBy;delete next.deletedAt;next.restoredAt=now;}if(e.prev)["subj","section","rows","rowsByAdm","states","statesByAdm"].forEach(f=>{if(e.prev[f]!==undefined)next[f]=e.prev[f];});}
+      next.repairLog=(t.repairLog||[]).concat([{run:"undo_"+run,at:now,by:by,what:"undid repair "+run}]).slice(-10);
+      try{await testsDB.set(id,next);ok++;}catch(e){fail++;}
+    }
+    try{logAudit("test-repair-undo","tests",run,null,{ok:ok,fail:fail});}catch(e){}
+    setBusy("");
+    if(window.__toast)window.__toast(fail?("Undid "+ok+"; "+fail+" could not be saved"):("Repair undone — "+ok+" record"+(ok===1?"":"s")+" restored"),fail?"err":"ok");
+  };
+  const pill={fontSize:11,fontWeight:700,borderRadius:8,padding:"3px 10px"};
+  const rows=plan.writes.map(w=>({k:"w"+w.id,label:w.label,what:(w.isNew?"New copy: ":"")+((w.summary||[]).join("; ")||"updated")})).concat(plan.removes.map(r=>({k:"r"+r.id,label:r.label,what:"Removed (restorable): "+r.reason})));
+  const btn={background:"var(--ap-accent)",color:"#fff",border:"1px solid var(--ap-accent)",borderRadius:6,padding:"9px 16px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"};
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      <div className="ap-panel" style={{padding:16,display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
+        <div style={{minWidth:240,flex:1}}>
+          <div style={{fontSize:14,fontWeight:700,color:"var(--ap-ink)"}}>{total?(total+" test record"+(total===1?"":"s")+" can be repaired automatically"):"No automatic repairs needed"}</div>
+          <div style={{fontSize:12,color:"var(--ap-muted)",marginTop:3,lineHeight:1.5}}>Nothing changes until you press Apply. No mark value is altered or invented: marks only move into the pupil's own section's copy of the same test, and removed copies go to Recently Deleted.</div>
+        </div>
+        <button className="ss-press" onClick={apply} disabled={!total||!!busy} style={{...btn,opacity:(!total||busy)?.5:1,cursor:(!total||busy)?"default":"pointer"}}>{busy==="apply"?"Repairing…":("Apply "+total+" repair"+(total===1?"":"s"))}</button>
+      </div>
+      {plan.error&&<div className="ap-panel" style={{padding:14,color:"var(--tx-red)",fontSize:12.5}}>Could not build the repair list: {plan.error}</div>}
+      <div className="grid4 m2col" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14}}>
+        <StatCard label="Marks moved to own section" val={c.moved||0} icon="check" color="var(--brand)" sub={(c.created||0)+" section cop"+((c.created||0)===1?"y":"ies")+" created"}/>
+        <StatCard label="Copies removed" val={(c.emptyRemoved||0)+(c.identicalRemoved||0)+(c.merged||0)+(c.emptied||0)} icon="clip" color="var(--tx-org2)" sub="empty, identical or merged"/>
+        <StatCard label="Needs a teacher" val={plan.review.length} icon="warn" color="var(--tx-gold)" sub="listed below, not changed"/>
+        <StatCard label="0 → Absent" val={c.absent||0} icon="calendar" color="var(--tx-red)" sub="absent in the register that day"/>
+      </div>
+      {rows.length>0&&<div className="ap-panel" style={{overflow:"hidden"}}>
+        <div className="ap-panelh"><div className="ttl">What Apply will change</div><span style={{fontSize:11.5,color:"var(--ap-muted)"}}>{rows.length} record{rows.length===1?"":"s"}</span></div>
+        {(showAll?rows:rows.slice(0,30)).map((r,i)=>(
+          <div key={r.k} style={{padding:"10px 16px",borderTop:i?"1px solid var(--c-f0)":"none"}}>
+            <div style={{fontSize:12.5,fontWeight:650,color:"var(--ap-ink)"}}>{r.label}</div>
+            <div style={{fontSize:11.5,color:"var(--ap-muted)",marginTop:2,lineHeight:1.45}}>{r.what}</div>
+          </div>))}
+        {rows.length>30&&<div style={{display:"flex",justifyContent:"center",padding:"12px 16px",borderTop:"1px solid var(--c-f0)"}}><button className="ss-press" onClick={()=>setShowAll(!showAll)} style={{background:"var(--c-fff)",color:"var(--ap-accent)",border:"1px solid var(--ap-line2)",borderRadius:6,padding:"8px 15px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>{showAll?"Show first 30":"Show all "+rows.length}</button></div>}
+      </div>}
+      {plan.review.length>0&&<div className="ap-panel" style={{overflow:"hidden"}}>
+        <div className="ap-panelh"><div className="ttl">Needs a teacher — not changed automatically</div><span style={{...pill,background:"var(--bg-org)",color:"var(--tx-org2)"}}>{plan.review.length}</span></div>
+        {(showReview?plan.review:plan.review.slice(0,20)).map((r,i)=>(
+          <div key={r.id+"|"+i} style={{padding:"10px 16px",borderTop:i?"1px solid var(--c-f0)":"none"}}>
+            <div style={{fontSize:12.5,fontWeight:650,color:"var(--ap-ink)"}}>{r.label}</div>
+            <div style={{fontSize:11.5,color:"var(--ap-muted)",marginTop:2,lineHeight:1.45}}>{r.reason}</div>
+          </div>))}
+        {plan.review.length>20&&<div style={{display:"flex",justifyContent:"center",padding:"12px 16px",borderTop:"1px solid var(--c-f0)"}}><button className="ss-press" onClick={()=>setShowReview(!showReview)} style={{background:"var(--c-fff)",color:"var(--ap-accent)",border:"1px solid var(--ap-line2)",borderRadius:6,padding:"8px 15px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>{showReview?"Show first 20":"Show all "+plan.review.length}</button></div>}
+      </div>}
+      {runs.length>0&&<div className="ap-panel" style={{overflow:"hidden"}}>
+        <div className="ap-panelh"><div className="ttl">Repairs applied</div><span style={{fontSize:11.5,color:"var(--ap-muted)"}}>newest first</span></div>
+        {runs.map((r,i)=>(
+          <div key={r.run} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 16px",borderTop:i?"1px solid var(--c-f0)":"none",flexWrap:"wrap"}}>
+            <div style={{flex:1,minWidth:180,fontSize:12.5,color:"var(--ap-ink)"}}>{r.at?new Date(r.at).toLocaleString("en-IN",{dateStyle:"medium",timeStyle:"short"}):"—"} · {r.by||"—"} · {r.n} record{r.n===1?"":"s"}{r.undone?" · undone":""}</div>
+            {!r.undone&&<button className="ss-press" onClick={()=>undo(r.run)} disabled={!!busy} style={{background:"var(--c-fff)",color:"var(--tx-red)",border:"1px solid var(--bd-red)",borderRadius:6,padding:"6px 12px",fontSize:11.5,fontWeight:700,cursor:busy?"default":"pointer",fontFamily:"var(--ss-font)"}}>{busy==="undo"?"Undoing…":"Undo"}</button>}
+          </div>))}
+      </div>}
+    </div>
+  );
+}
+function TestCenter({user,testsDB,usersDB,dirDB,studentsDB,academicRosterDB,attendanceDB}){
   const isDir=user.role==="admin"&&user.fees!==false;
   const[view,setView]=useState("all");   // "all" | "notopic" | "duplicates"
   const ymNow=today().slice(0,7);
@@ -9241,7 +9444,7 @@ function TestCenter({user,testsDB,usersDB}){
       </div>
       {/* Two pages: the full register, and the chase-list of tests with no topic recorded. */}
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-        {[["all","All tests",null],["notopic","Missing topics",noTopicAll.length],["duplicates","Duplicate review",duplicateExtraCount]].map(function(v){
+        {[["all","All tests",null],["notopic","Missing topics",noTopicAll.length],["duplicates","Duplicate review",duplicateExtraCount]].concat(isDir?[["repair","Repair records",null]]:[]).map(function(v){
           var on=view===v[0];
           return <button key={v[0]} onClick={function(){setView(v[0]);}} className="ss-press"
             style={{display:"flex",alignItems:"center",gap:7,background:on?"var(--ap-accent)":"var(--c-fff)",color:on?"#fff":"var(--ap-ink2)",border:"1px solid "+(on?"var(--ap-accent)":"var(--ap-line)"),borderRadius:6,padding:"9px 15px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"var(--ss-font)"}}>
@@ -9361,6 +9564,7 @@ function TestCenter({user,testsDB,usersDB}){
                 </div>)}
               </div>);})}
           </div>)}
+      {view==="repair"&&isDir&&<TestRepairPanel user={user} testsDB={testsDB} dirDB={dirDB} studentsDB={studentsDB} academicRosterDB={academicRosterDB} attendanceDB={attendanceDB}/>}
       <div style={{fontSize:11.5,color:"var(--ap-muted)",padding:"0 4px 20px"}}>Deleted tests go to <b>Settings → Recently Deleted</b> and can be restored. Marks entry stays under <b>Tests → Enter Marks</b>.</div>
     </div>
   );
@@ -9370,9 +9574,9 @@ function TestTracker({user,testsDB,studentsDB,usersDB,dirDB,academicRosterDB}){
   const[month,setMonth]=useState(ymNow);
   const[expected,setExpected]=useState(2);
   const monthLabel=(()=>{try{const[y,m]=month.split("-");return new Date(Number(y),Number(m)-1,1).toLocaleDateString("en-IN",{month:"long",year:"numeric"});}catch(e){return month;}})();
-  const monthTests=useMemo(()=>Object.values(testsDB.data||{}).filter(t=>t&&t.testDate&&String(t.testDate).slice(0,7)===month),[testsDB.data,month]);
+  const monthTests=useMemo(()=>Object.values(testsDB.data||{}).filter(t=>t&&t.testDate&&String(t.testDate).slice(0,7)===month).map(__ttFoldTest),[testsDB.data,month]);
   const prevMonth=useMemo(()=>{try{const[y,m]=month.split("-").map(Number);const d=new Date(y,m-2,1);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");}catch(e){return "";}},[month]);
-  const prevMonthTests=useMemo(()=>Object.values(testsDB.data||{}).filter(t=>t&&t.testDate&&String(t.testDate).slice(0,7)===prevMonth),[testsDB.data,prevMonth]);
+  const prevMonthTests=useMemo(()=>Object.values(testsDB.data||{}).filter(t=>t&&t.testDate&&String(t.testDate).slice(0,7)===prevMonth).map(__ttFoldTest),[testsDB.data,prevMonth]);
   const months=useMemo(()=>{const set=new Set([ymNow]);Object.values(testsDB.data||{}).forEach(t=>{if(t&&t.testDate)set.add(String(t.testDate).slice(0,7));});return [...set].sort().reverse();},[testsDB.data]);
   // A teacher sees ONLY their own classes/subjects (the compliance "chase teachers" board is admin-only; teachers land on Remedial).
   const isTeacherTT=!!user&&user.role==="teacher";
@@ -9383,12 +9587,13 @@ function TestTracker({user,testsDB,studentsDB,usersDB,dirDB,academicRosterDB}){
   const teachPairs=useMemo(()=>{if(!isTeacherTT)return null;
     var s=new Set();
     var exact=__teacherPairs(user).map(__teacherPairParts).filter(Boolean);
-    if(exact.length){exact.forEach(function(p){var x=p.subj==="English Language"||p.subj==="English Literature"?"English":p.subj==="Social Studies"?"Social Science":p.subj==="Accounts"?"Accountancy":p.subj==="Information Technology"?"Computer Science":p.subj;s.add(p.cls+"|"+x);});return s;}
+    if(exact.length){exact.forEach(function(p){var x=p.subj==="English Language"||p.subj==="English Literature"?"English":p.subj==="Social Studies"?"Social Science":p.subj==="Accounts"?"Accountancy":p.subj==="Information Technology"?"Computer Science":p.subj;x=__ttSeniorSubj(p.cls,x);s.add(p.cls+"|"+x);});return s;}
     var mine=(user.subjects||[]).map(function(x){return x==="English Language"||x==="English Literature"?"English":x==="Social Studies"?"Social Science":x==="Accounts"?"Accountancy":x==="Information Technology"?"Computer Science":x;});
     [...(teachClassSet||[])].forEach(function(c){
       var all=__testSubjectsFor(c);
-      var sub=mine.length?all.filter(function(x){return mine.indexOf(x)>=0;}):[];
-      if(!sub.length&&mine.length)sub=mine; // the teacher's subject isn't in the class's list → still theirs
+      var mineC=mine.map(function(x){return __ttSeniorSubj(c,x);});
+      var sub=mineC.length?all.filter(function(x){return mineC.indexOf(x)>=0;}):[];
+      if(!sub.length&&mineC.length)sub=mineC; // the teacher's subject isn't in the class's list → still theirs
       sub.forEach(function(x){s.add(c+"|"+x);});
     });
     return s;
@@ -9407,32 +9612,38 @@ function TestTracker({user,testsDB,studentsDB,usersDB,dirDB,academicRosterDB}){
     if(customSubjects.length){
       const cs=new Set(customSubjects),seen={};__academicClasses().forEach(c=>seen[c]={});
       const add=(c,s)=>{if(m[c]&&!seen[c][s]){seen[c][s]=1;m[c].push(s);}};
-      Object.values(allUsers).forEach(u=>{if(!u||u.role!=="teacher"||!u.classes||!u.subjects)return;const tc=getTeacherClasses(u);(u.subjects||[]).forEach(s=>{if(cs.has(s))tc.forEach(c=>add(c,s));});});
-      Object.values(testsDB.data||{}).forEach(t=>{if(t&&t.cls&&t.subj&&cs.has(t.subj))add(t.cls,t.subj);});
+      Object.values(allUsers).forEach(u=>{if(!u||u.role!=="teacher"||!u.classes||!u.subjects)return;const tc=getTeacherClasses(u);(u.subjects||[]).forEach(s=>{if(cs.has(s))tc.forEach(c=>add(c,__ttSeniorSubj(c,s)));});});
+      Object.values(testsDB.data||{}).forEach(t=>{if(t&&t.cls&&t.subj&&cs.has(t.subj))add(t.cls,__ttSeniorSubj(t.cls,t.subj));});
     }
     return m;
   },[allUsers,customSubjects,testsDB.data]);
   const _ttTestSig=t=>[t.cls||"",normSection(t.cls||"",t.section||""),t.subj||"",t.testDate||"",t.total||"",(t.topics||[]).map(x=>String(x||"").trim().toLowerCase()).sort().join("¦")].join("|");
-  const _ttCanonical=rows=>{const m={};rows.slice().sort((a,b)=>String(a.at||"").localeCompare(String(b.at||""))).forEach(t=>{m[_ttTestSig(t)]=t;});return Object.values(m);};
+  const _ttCanonical=rows=>{const m={};rows.slice().sort((a,b)=>String(a.at||"").localeCompare(String(b.at||""))).forEach(t=>{const k=_ttTestSig(t);m[k]=__betterTestCopy(m[k],t);});return Object.values(m);};
+  // The same paper regardless of which section it was filed under - one sitting counts once per section.
+  const _ttPaperSig=t=>[t.cls||"",t.subj||"",t.testDate||"",t.total||"",(t.topics||[]).map(x=>String(x||"").trim().toLowerCase()).sort().join("¦")].join("|");
   const uniqueMonthTests=useMemo(()=>_ttCanonical(monthTests),[monthTests]);
   const matrix=useMemo(()=>classes.map(cls=>{
     const base=__testSubjectsFor(cls);
     const subjects=base.concat((customByCls[cls]||[]).filter(s=>base.indexOf(s)<0));
-    const students=rosterForCls(dirDB,studentsDB,cls,academicRosterDB); // [{admNo,name,...}] from the record
+    // Sections as LETTERS: Class 11-12 directory rows carry the stream ("BIO"), tests the letter ("B").
+    const students=rosterForCls(dirDB,studentsDB,cls,academicRosterDB).map(s=>Object.assign({},s,{stream:String(s.section||""),section:normSection(cls,s.section||"")})); // [{admNo,name,section}] from the record
     const sections=[...new Set(students.map(s=>s.section).filter(Boolean))].sort();if(!sections.length)sections.push("");
     const senior=Number(String(cls).replace(/\D/g,""))>=11;
-    const assignedToSection=(sec,subj)=>Object.values(allUsers).some(u=>u&&(u.role==="teacher"||u.role==="vp")&&(u.subjects||[]).some(s=>__canonTestSubj(cls,s)===subj)&&(u.classes||[]).some(c=>{const p=String(c).split("-");return p[0].trim()===cls&&p.length>1&&normSection(cls,p.slice(1).join("-"))===sec;}));
-    const seniorCore=(sec,subj)=>{const s=String(sec||"").toUpperCase(),common=subj==="English";if(common)return true;if(s.indexOf("BIO")===0&&["Physics","Chemistry","Biology"].includes(subj))return true;if(s.indexOf("MATH")===0&&["Physics","Chemistry","Mathematics"].includes(subj))return true;if(s.indexOf("COMM")===0&&["Accountancy","Business Studies","Economics"].includes(subj))return true;if(s.indexOf("HUM")===0&&["History","Political Science","Geography","Sociology","Psychology"].includes(subj))return true;if(s.indexOf("COMP")>=0&&subj==="Computer Science")return true;return false;};
+    const assignedToSection=(sec,subj)=>Object.values(allUsers).some(u=>u&&(u.role==="teacher"||u.role==="vp")&&(u.subjects||[]).some(s=>__ttSeniorSubj(cls,__canonTestSubj(cls,s))===subj)&&(u.classes||[]).some(c=>{const p=String(c).split("-");return p[0].trim()===cls&&p.length>1&&normSection(cls,p.slice(1).join("-"))===sec;}));
+    const compSecs=new Set(students.filter(s=>/COMP/i.test(s.stream||"")).map(s=>s.section));
+    const seniorCore=(sec,subj)=>{const s=String(sec||"").toUpperCase(),common=subj==="English";if(common)return true;const pcb=s==="B"||s.indexOf("BIO")===0,pcm=s==="A"||s.indexOf("MATH")===0,com=s==="C"||s.indexOf("COMM")===0,hum=s==="D"||s.indexOf("HUM")===0;if(pcb&&["Physics","Chemistry","Biology"].includes(subj))return true;if(pcm&&["Physics","Chemistry","Mathematics"].includes(subj))return true;if(com&&["Accountancy","Business Studies","Economics"].includes(subj))return true;if(hum&&["History","Political Science","Geography","Sociology","Psychology"].includes(subj))return true;if((s.indexOf("COMP")>=0||compSecs.has(sec))&&subj==="Computer Science")return true;return false;};
     const relevantSections=(subj,pool)=>sections.filter(sec=>!senior||seniorCore(sec,subj)||assignedToSection(sec,subj)||pool.some(t=>t.cls===cls&&t.subj===subj&&t.section&&normSection(cls,t.section)===sec));
-    const countCoverage=(pool,subj)=>{const ts=pool.filter(t=>t.cls===cls&&t.subj===subj),scope=relevantSections(subj,pool);let done=0;const detail=scope.map(sec=>{const applicable=_ttCanonical(ts.filter(t=>!t.section||normSection(cls,t.section)===sec));const n=Math.min(applicable.length,expected);done+=n;return{section:sec||"All",done:n,raw:applicable.length};});return{done,required:scope.length*expected,detail};};
+    const countCoverage=(pool,subj)=>{const ts=pool.filter(t=>t.cls===cls&&t.subj===subj),scope=relevantSections(subj,pool);let done=0;const detail=scope.map(sec=>{const kids=students.filter(s=>s.section===sec);const sat=t=>{if(!kids.length)return false;let n=0;kids.forEach(s=>{if(__mkSettled(t,s.admNo,s.name))n++;});return n*2>=kids.length;};const pm={};_ttCanonical(ts.filter(t=>!t.section||normSection(cls,t.section)===sec||sat(t))).forEach(t=>{const k=_ttPaperSig(t);pm[k]=__betterTestCopy(pm[k],t);});const applicable=Object.values(pm);const n=Math.min(applicable.length,expected);done+=n;return{section:sec||"All",done:n,raw:applicable.length};});return{done,required:scope.length*expected,detail};};
+    // Every recorded mark once per pupil per paper: the pupil's own-section copy first, then any copy holding it.
+    const _marksFrom=tests=>{const out=[],seen={},can=_ttCanonical(tests);[true,false].forEach(own=>can.forEach(t=>students.forEach(s=>{const mine=!t.section||!s.section||normSection(cls,t.section)===s.section;if(mine!==own)return;const v=_markOf(t,s.admNo,s.name);if(v===undefined||v==="")return;const k=(s.admNo||s.name)+"|"+_ttPaperSig(t);if(seen[k])return;seen[k]=1;out.push(pct(Number(v),t.total));})));return out;};
     const cells=subjects.map(subj=>{
       const ts=monthTests.filter(t=>t.cls===cls&&t.subj===subj);
       const canonical=_ttCanonical(ts),cov=countCoverage(monthTests,subj),prevCov=countCoverage(prevMonthTests,subj);
-      const ps=[];canonical.forEach(t=>students.filter(s=>!t.section||!s.section||normSection(cls,t.section)===s.section).forEach(s=>{const v=_markOf(t,s.admNo,s.name);if(v!==undefined&&v!=="")ps.push(pct(Number(v),t.total));}));
+      const ps=_marksFrom(ts);
       const avg=ps.length?Math.round(ps.reduce((a,b)=>a+b,0)/ps.length):null;
       return{subj,count:cov.done,required:cov.required,sections:cov.detail,prevCount:prevCov.done,avg,duplicates:Math.max(0,ts.length-canonical.length),behind:cov.required>0&&cov.done<cov.required};
     }).filter(c=>c.required>0);
-    const poolAvg=ts=>{const a=[];_ttCanonical(ts).forEach(t=>students.filter(s=>!t.section||!s.section||normSection(cls,t.section)===s.section).forEach(s=>{const v=_markOf(t,s.admNo,s.name);if(v!==undefined&&v!=="")a.push(pct(Number(v),t.total));}));return a.length?Math.round(a.reduce((x,y)=>x+y,0)/a.length):null;};
+    const poolAvg=ts=>{const a=_marksFrom(ts);return a.length?Math.round(a.reduce((x,y)=>x+y,0)/a.length):null;};
     const classAvg=poolAvg(monthTests.filter(t=>t.cls===cls));
     const prevAvg=poolAvg(prevMonthTests.filter(t=>t.cls===cls));
     const trend=(classAvg!=null&&prevAvg!=null)?classAvg-prevAvg:null;
@@ -9601,7 +9812,7 @@ function TestParticipation({user,testsDB,studentsDB,dirDB,academicRosterDB,setTa
   const _roster=rosterForCls(dirDB,studentsDB,cls,academicRosterDB);
   const _rrows=__uniqRosterRows(_roster);                 // same-name students get a distinct admission-tagged key
   const allStudents=_rrows.map(r=>r.key);
-  const classSections=(()=>{var m={};_rrows.forEach(r=>{m[r.key]=r.section;});return m;})();
+  const classSections=(()=>{var m={};_rrows.forEach(r=>{m[r.key]=normSection(cls,r.section||"");});return m;})(); // letters: XI-XII directory rows carry the stream
   const admOf=(()=>{var m={};_rrows.forEach(r=>{m[r.key]=r.admNo;});return m;})();
   const _realOf=(()=>{var m={};_rrows.forEach(r=>{m[r.key]=r.realName;});return m;})();
   const _assignedSections=__teacherSecsFor(user,cls,subj);
@@ -9618,10 +9829,10 @@ function TestParticipation({user,testsDB,studentsDB,dirDB,academicRosterDB,setTa
   const _settled=(t,s)=>__mkSettled(t,admOf[s],_realOf[s]||s);
   const _stateOf=(t,s)=>__mkState(t,admOf[s],_realOf[s]||s);
   // All tests for this class+subject, sorted by week
-  const rTests=useMemo(()=>Object.entries(testsDB.data).map(([_i,_t])=>Object.assign({__id:_i},_t)).filter(function(t){if(t.cls!==cls||t.subj!==subj)return false;if(canSeeAllSections||!_assignedSections.length||!t.section)return true;return _assignedSections.indexOf(normSection(cls,t.section))>=0;}).sort((a,b)=>a.week-b.week),[testsDB.data,cls,subj,canSeeAllSections,_assignedSections.join("|")]);
+  const rTests=useMemo(()=>Object.entries(testsDB.data).map(([_i,_t])=>Object.assign({__id:_i},_t)).filter(function(t){if(t.cls!==cls||t.subj!==subj)return false;if(canSeeAllSections||!_assignedSections.length||!t.section)return true;return _assignedSections.indexOf(normSection(cls,t.section))>=0;}).sort((a,b)=>a.week-b.week).reduce(function(acc,t){var k=[normSection(cls,t.section||""),t.testDate||"",t.total||"",(t.topics||[]).map(function(x){return String(x||"").trim().toLowerCase();}).sort().join("¦")].join("|");var i=acc.idx[k];if(i===undefined){acc.idx[k]=acc.list.length;acc.list.push(t);}else{var a=acc.list[i],f1=__testFill(a),f2=__testFill(t);if(f2>f1||(f2===f1&&String(t.at||"")>String(a.at||"")))acc.list[i]=t;}return acc;},{idx:{},list:[]}).list,[testsDB.data,cls,subj,canSeeAllSections,_assignedSections.join("|")]);
   // A pupil belongs to one section. When managers view "All sections", never score an A pupil against a B test.
   // Tests with no section are legacy whole-class tests and remain applicable to everyone in the class.
-  const _testsForStudent=s=>rTests.filter(t=>!t.section||normSection(cls,t.section)===classSections[s]);
+  const _testsForStudent=s=>rTests.filter(t=>__testAppliesTo(cls,t,classSections[s],admOf[s],_realOf[s]||s));
   // Per-student participation + completion stats. Attempted and administratively complete are deliberately
   // separate: Absent/Exempt is a finished teacher entry, but it is not a test attempt.
   const stats=useMemo(()=>students.map(s=>{
@@ -9634,7 +9845,7 @@ function TestParticipation({user,testsDB,studentsDB,dirDB,academicRosterDB,setTa
   }),[students,rTests,classSections]);
   // Per-test entry stats, scoped to the test's own section.
   const testStats=useMemo(()=>rTests.map(test=>{
-    const roster=students.filter(s=>!test.section||classSections[s]===normSection(cls,test.section));
+    const roster=students.filter(s=>__testAppliesTo(cls,test,classSections[s],admOf[s],_realOf[s]||s));
     const pending=roster.filter(s=>!_settled(test,s));
     const recorded=roster.filter(s=>_settled(test,s)).length;
     return{__id:test.__id,week:test.week,date:test.testDate,section:test.section||"",topics:test.topics||[],pendingCount:pending.length,pendingList:pending,recorded,total:roster.length};
@@ -10413,7 +10624,7 @@ function ClassOverview({user,testsDB,studentsDB,dirDB,jumpStudent,openProfile,ac
   const rawTests=useMemo(()=>Object.values(testsDB.data||{}).filter(tt=>tt&&tt.cls===cls&&__teacherCanReadTest(user,tt)&&(period!=="month"||String(tt.testDate||"").slice(0,7)===today().slice(0,7))),[testsDB.data,cls,user,period]);
   // Same class/section/subject/date/topic can exist under several legacy week IDs. Use the latest saved version
   // for analysis so a duplicate neither raises a child's evidence count nor moves averages and rankings twice.
-  const allTests=useMemo(()=>{const m={};rawTests.slice().sort((a,b)=>String(a.at||"").localeCompare(String(b.at||""))).forEach(t=>{const k=[t.cls||"",normSection(t.cls||"",t.section||""),t.subj||"",t.testDate||"",t.total||"",(t.topics||[]).map(x=>String(x||"").trim().toLowerCase()).sort().join("¦")].join("|");m[k]=t;});return Object.values(m);},[rawTests]);
+  const allTests=useMemo(()=>{const m={};rawTests.slice().sort((a,b)=>String(a.at||"").localeCompare(String(b.at||""))).forEach(t=>{const k=[t.cls||"",normSection(t.cls||"",t.section||""),t.subj||"",t.testDate||"",t.total||"",(t.topics||[]).map(x=>String(x||"").trim().toLowerCase()).sort().join("¦")].join("|");m[k]=__betterTestCopy(m[k],t);});return Object.values(m);},[rawTests]);
   const repeatedTests=Math.max(0,rawTests.length-allTests.length);
   const scopeSubjects=teacherScoped?getTeacherSubjects(user,cls):[];
   const scopeSections=teacherScoped?[...new Set(__teacherSecsFor(user,cls).concat(__teacherCTSectsFor(user,cls)))]:[];
@@ -10672,7 +10883,7 @@ function ClassProgress({user,testsDB,studentsDB,dirDB,academicRosterDB,jumpStude
   const _roster=rosterForCls(dirDB,studentsDB,cls,academicRosterDB);
   const _rrows=__uniqRosterRows(_roster);                 // same-name students get a distinct admission-tagged key
   const allStudents=_rrows.map(r=>r.key);
-  const classSections=(()=>{var m={};_rrows.forEach(r=>{m[r.key]=r.section;});return m;})();
+  const classSections=(()=>{var m={};_rrows.forEach(r=>{m[r.key]=normSection(cls,r.section||"");});return m;})(); // letters: XI-XII directory rows carry the stream
   const admOf=(()=>{var m={};_rrows.forEach(r=>{m[r.key]=r.admNo;});return m;})();
   const _realOf=(()=>{var m={};_rrows.forEach(r=>{m[r.key]=r.realName;});return m;})();
   const _val=(t,s)=>_markOf(t,admOf[s],_realOf[s]||s); // score for student s in test t, admission-no.-first
@@ -10682,10 +10893,12 @@ function ClassProgress({user,testsDB,studentsDB,dirDB,academicRosterDB,jumpStude
   const[filterSec,setFilterSec]=useState((_cpJump&&_cpJump.section)||"");
   const scopedStudents=canSeeAllSections||!_assignedSections.length?allStudents:allStudents.filter(s=>_assignedSections.indexOf(classSections[s])>=0);
   const students=filterSec?scopedStudents.filter(s=>classSections[s]===filterSec):scopedStudents;
-  const rawTests=useMemo(()=>Object.entries(testsDB.data).map(([_i,_t])=>Object.assign({__id:_i},_t)).filter(function(t){if(t.cls!==cls||t.subj!==subj)return false;if(!canSeeAllSections&&_assignedSections.length&&t.section&&_assignedSections.indexOf(normSection(cls,t.section))<0)return false;if(filterSec&&t.section&&normSection(cls,t.section)!==filterSec)return false;return true;}),[testsDB.data,cls,subj,canSeeAllSections,_assignedSections.join("|"),filterSec]);
-  const rTests=useMemo(()=>{const m={};rawTests.slice().sort((a,b)=>String(a.at||"").localeCompare(String(b.at||""))).forEach(t=>{const k=[normSection(cls,t.section||""),t.testDate||"",t.total||"",(t.topics||[]).map(x=>String(x||"").trim().toLowerCase()).sort().join("¦")].join("|");m[k]=t;});return Object.values(m).sort((a,b)=>String(a.testDate||"").localeCompare(String(b.testDate||""))||Number(a.week||0)-Number(b.week||0));},[rawTests,cls]);
+  // A test filed under another section still shows when it holds marks of the pupils on screen (combined paper).
+  const _cpHolds=t=>students.some(s=>{const v=_markOf(t,admOf[s],_realOf[s]||s);return (v!==undefined&&v!=="")||!!__mkState(t,admOf[s],_realOf[s]||s);});
+  const rawTests=useMemo(()=>Object.entries(testsDB.data).map(([_i,_t])=>Object.assign({__id:_i},_t)).filter(function(t){if(t.cls!==cls||t.subj!==subj)return false;if(!canSeeAllSections&&_assignedSections.length&&t.section&&_assignedSections.indexOf(normSection(cls,t.section))<0&&!_cpHolds(t))return false;if(filterSec&&t.section&&normSection(cls,t.section)!==filterSec&&!_cpHolds(t))return false;return true;}),[testsDB.data,cls,subj,canSeeAllSections,_assignedSections.join("|"),filterSec,students.join("|")]);
+  const rTests=useMemo(()=>{const m={};rawTests.slice().sort((a,b)=>String(a.at||"").localeCompare(String(b.at||""))).forEach(t=>{const k=[normSection(cls,t.section||""),t.testDate||"",t.total||"",(t.topics||[]).map(x=>String(x||"").trim().toLowerCase()).sort().join("¦")].join("|");m[k]=__betterTestCopy(m[k],t);});return Object.values(m).sort((a,b)=>String(a.testDate||"").localeCompare(String(b.testDate||""))||Number(a.week||0)-Number(b.week||0));},[rawTests,cls]);
   const repeatedTests=Math.max(0,rawTests.length-rTests.length);
-  const _cpApplies=(t,s)=>!t.section||!classSections[s]||normSection(cls,t.section)===classSections[s];
+  const _cpApplies=(t,s)=>__testAppliesTo(cls,t,classSections[s],admOf[s],_realOf[s]||s);
   const stats=useMemo(()=>students.map(s=>{const mine=rTests.filter(t=>_cpApplies(t,s));const sc=mine.map(t=>({t,v:_val(t,s)})).filter(x=>x.v!==undefined&&x.v!=="").map(x=>({id:x.t.__id,week:x.t.week,p:pct(Number(x.v),x.t.total),date:x.t.testDate}));const avg=sc.length?Math.round(sc.reduce((a,b)=>a+b.p,0)/sc.length):null;const trend=trendOf(sc.map(x=>x.p));const sec=classSections[s]||"-";const roll=allStudents.filter(n=>(classSections[n]||"-")===sec).sort((a,b)=>String(a).localeCompare(String(b))).indexOf(s)+1;const given=sc.length;const pendingTests=mine.filter(t=>!__mkSettled(t,admOf[s],_realOf[s]||s));return{name:s,sc,avg,trend,roll,sec,given,total:mine.length,pending:pendingTests.length,pendingWeeks:pendingTests.map(t=>t.week)};}),[students,rTests,allStudents,classSections]);
   const pendingPerTest=useMemo(()=>rTests.map(test=>students.filter(s=>_cpApplies(test,s)&&!__mkSettled(test,admOf[s],_realOf[s]||s)).length),[rTests,students]);
   const classAvg=useMemo(()=>{const all=stats.flatMap(s=>s.sc.map(x=>x.p));return all.length?Math.round(all.reduce((a,b)=>a+b,0)/all.length):null;},[stats]);
@@ -10923,8 +11136,8 @@ function StudentReport({user,testsDB,studentsDB,dirDB,academicRosterDB,jumpStude
   const padm=String((_srRoster.find(s=>s.name===student)||{}).admNo||""); /* admission no. from the directory-first roster → marks read admNo-first */
   const reportSec=String((_srRoster.find(s=>s.name===student)||{}).section||"");
   const sd=useMemo(()=>subjects.map(subj=>{
-    const raw=Object.entries(testsDB.data).map(([_i,_t])=>Object.assign({__id:_i},_t)).filter(t=>t.cls===cls&&t.subj===subj&&__teacherCanReadTest(user,t)&&(!t.section||!reportSec||normSection(cls,t.section)===reportSec));
-    const versions={};raw.slice().sort((a,b)=>String(a.at||"").localeCompare(String(b.at||""))).forEach(t=>{const k=[normSection(cls,t.section||""),t.testDate||"",t.total||"",(t.topics||[]).map(x=>String(x||"").trim().toLowerCase()).sort().join("¦")].join("|");versions[k]=t;});
+    const raw=Object.entries(testsDB.data).map(([_i,_t])=>Object.assign({__id:_i},_t)).filter(t=>t.cls===cls&&t.subj===subj&&__teacherCanReadTest(user,t)&&__testAppliesTo(cls,t,reportSec,padm,student));
+    const versions={};raw.slice().sort((a,b)=>String(a.at||"").localeCompare(String(b.at||""))).forEach(t=>{const k=[t.testDate||"",t.total||"",(t.topics||[]).map(x=>String(x||"").trim().toLowerCase()).sort().join("¦")].join("|");versions[k]=__pickForStudent(versions[k],t,padm,student);});
     const rel=Object.values(versions).sort((a,b)=>String(a.testDate||"").localeCompare(String(b.testDate||""))||Number(a.week||0)-Number(b.week||0));
     const sc=rel.map(t=>{const v=_markOf(t,padm,student);return{id:t.__id,week:t.week,p:pct(Number(v??0),t.total),topics:t.topics||[],date:t.testDate,has:v!==undefined&&v!==""};}).filter(x=>x.has);
     const avg=sc.length?Math.round(sc.reduce((a,b)=>a+b.p,0)/sc.length):null;
@@ -11111,8 +11324,8 @@ function StudentProfile({user,testsDB,examsDB,studentsDB,attendanceDB,wrongDB,fe
   const subjects=useMemo(()=>{var all=__testSubjectsWithLegacy(cls);if(user.role!=="teacher"||user.coordinator===true)return all;var own=getTeacherSubjects(user,cls),seen={};own.forEach(s=>seen[s]=1);Object.values(testsDB.data||{}).forEach(t=>{if(t&&t.cls===cls&&__teacherCanReadTest(user,t))seen[t.subj]=1;});return all.filter(s=>seen[s]);},[cls,user,testsDB.data]);
   const _spSec=sections[student]||"";
   const sd=useMemo(()=>subjects.map(subj=>{
-    const raw=Object.entries(testsDB.data).map(([_i,_t])=>Object.assign({__id:_i},_t)).filter(t=>t.cls===cls&&t.subj===subj&&__teacherCanReadTest(user,t)&&(!t.section||!_spSec||normSection(cls,t.section)===_spSec));
-    const versions={};raw.slice().sort((a,b)=>String(a.at||"").localeCompare(String(b.at||""))).forEach(t=>{const k=[normSection(cls,t.section||""),t.testDate||"",t.total||"",(t.topics||[]).map(x=>String(x||"").trim().toLowerCase()).sort().join("¦")].join("|");versions[k]=t;});
+    const raw=Object.entries(testsDB.data).map(([_i,_t])=>Object.assign({__id:_i},_t)).filter(t=>t.cls===cls&&t.subj===subj&&__teacherCanReadTest(user,t)&&__testAppliesTo(cls,t,_spSec,padm,student));
+    const versions={};raw.slice().sort((a,b)=>String(a.at||"").localeCompare(String(b.at||""))).forEach(t=>{const k=[t.testDate||"",t.total||"",(t.topics||[]).map(x=>String(x||"").trim().toLowerCase()).sort().join("¦")].join("|");versions[k]=__pickForStudent(versions[k],t,padm,student);});
     const rel=Object.values(versions).sort((a,b)=>String(a.testDate||"").localeCompare(String(b.testDate||""))||Number(a.week||0)-Number(b.week||0));
     const sc=rel.map(t=>{const v=_markOf(t,padm,student);return{id:t.__id,week:t.week,p:pct(Number(v??0),t.total),topics:t.topics||[],date:t.testDate,has:v!==undefined&&v!==""};});
     const taken=sc.filter(x=>x.has);
@@ -11450,8 +11663,8 @@ function ParentView({user,testsDB,examsDB,studentsDB,academicRosterDB,attendance
   const subjects=__testSubjectsWithLegacy(cls);
   const sd=useMemo(()=>subjects.map(subj=>{
     const ownSec=normSection(cls,_mySec||"");
-    const raw=Object.entries(_testData).map(([_i,_t])=>Object.assign({__id:_i},_t)).filter(t=>t.cls===cls&&t.subj===subj&&(!t.section||!ownSec||normSection(cls,t.section)===ownSec));
-    const versions={};raw.slice().sort((a,b)=>String(a.at||"").localeCompare(String(b.at||""))).forEach(t=>{const k=[normSection(cls,t.section||""),t.testDate||"",t.total||"",(t.topics||[]).map(x=>String(x||"").trim().toLowerCase()).sort().join("¦")].join("|");versions[k]=t;});
+    const raw=Object.entries(_testData).map(([_i,_t])=>Object.assign({__id:_i},_t)).filter(t=>t.cls===cls&&t.subj===subj&&__testAppliesTo(cls,t,ownSec,padm,student));
+    const versions={};raw.slice().sort((a,b)=>String(a.at||"").localeCompare(String(b.at||""))).forEach(t=>{const k=[t.testDate||"",t.total||"",(t.topics||[]).map(x=>String(x||"").trim().toLowerCase()).sort().join("¦")].join("|");versions[k]=__pickForStudent(versions[k],t,padm,student);});
     const rel=Object.values(versions).sort((a,b)=>String(a.testDate||"").localeCompare(String(b.testDate||""))||Number(a.week||0)-Number(b.week||0));
     const sc=rel.map(t=>{const v=_markOf(t,padm,student);return{id:t.__id,week:t.week,p:pct(Number(v??0),t.total),topics:t.topics||[],date:t.testDate,has:v!==undefined&&v!==""};}).filter(x=>x.has);
     const avg=sc.length?Math.round(sc.reduce((a,b)=>a+b.p,0)/sc.length):null;
@@ -14476,8 +14689,8 @@ function DirectoryProfile({stu, testsDB, examsDB, studentsDB, attendanceDB, wron
   const roll=rosterName?(rosterList.filter(n=>((_profSecs[n]||"")===_profSec)).sort((a,b)=>String(a).localeCompare(String(b))).indexOf(rosterName)+1)||null:null;
   const subjects=academicCls?(__testSubjectsWithLegacy(academicCls)):[];
   const sd=useMemo(()=>{ if(!academicCls)return []; return subjects.map(subj=>{
-    const raw=Object.entries(testsDB.data||{}).map(([_i,_t])=>Object.assign({__id:_i},_t)).filter(t=>t.cls===academicCls&&t.subj===subj&&(!t.section||!_profSec||normSection(academicCls,t.section)===_profSec));
-    const versions={};raw.slice().sort((a,b)=>String(a.at||"").localeCompare(String(b.at||""))).forEach(t=>{const k=[normSection(academicCls,t.section||""),t.testDate||"",t.total||"",(t.topics||[]).map(x=>String(x||"").trim().toLowerCase()).sort().join("¦")].join("|");versions[k]=t;});
+    const raw=Object.entries(testsDB.data||{}).map(([_i,_t])=>Object.assign({__id:_i},_t)).filter(t=>t.cls===academicCls&&t.subj===subj&&__testAppliesTo(academicCls,t,_profSec,adm,testName));
+    const versions={};raw.slice().sort((a,b)=>String(a.at||"").localeCompare(String(b.at||""))).forEach(t=>{const k=[t.testDate||"",t.total||"",(t.topics||[]).map(x=>String(x||"").trim().toLowerCase()).sort().join("¦")].join("|");versions[k]=__pickForStudent(versions[k],t,adm,testName);});
     const rel=Object.values(versions).sort((a,b)=>String(a.testDate||"").localeCompare(String(b.testDate||""))||Number(a.week||0)-Number(b.week||0));
     const sc=rel.map(t=>{const raw=_markOf(t,adm,testName);return{id:t.__id,week:t.week,p:pct(Number(raw||0),t.total),topics:t.topics||[],date:t.testDate,has:(raw!==undefined&&raw!=="")};});
     const taken=sc.filter(x=>x.has);
@@ -23426,7 +23639,7 @@ function App(){
         {tab==="topics"&&!isParent&&<ManageTopics user={user} usersDB={usersDB} topicsDB={topicsDB}/>}
         {tab==="syllabus"&&!isParent&&!isStudent&&<SyllabusTracker user={user} topicsDB={topicsDB} syllabusDB={syllabusDB} copyChecksDB={copyChecksDB} dirDB={dirDB} studentsDB={studentsDB} academicRosterDB={academicRosterDB}/>}
         {tab==="copies"&&!isParent&&!isStudent&&<SyllabusTracker mode="copies" user={user} topicsDB={topicsDB} syllabusDB={syllabusDB} copyChecksDB={copyChecksDB} dirDB={dirDB} studentsDB={studentsDB} academicRosterDB={academicRosterDB}/>}
-        {tab==="testcenter"&&(isAdmin||isVP||user.coordinator===true)&&<TestCenter user={user} testsDB={testsDB} usersDB={usersDB}/>} 
+        {tab==="testcenter"&&(isAdmin||isVP||user.coordinator===true)&&<TestCenter user={user} testsDB={testsDB} usersDB={usersDB} dirDB={dirDB} studentsDB={studentsDB} academicRosterDB={academicRosterDB} attendanceDB={attendanceDB}/>} 
         {tab==="tracker"&&!isParent&&<TestTracker user={user} testsDB={testsDB} studentsDB={studentsDB} usersDB={usersDB} dirDB={dirDB} academicRosterDB={academicRosterDB}/>}
         {tab==="participation"&&!isParent&&<TestParticipation user={user} testsDB={testsDB} studentsDB={studentsDB} dirDB={dirDB} academicRosterDB={academicRosterDB} setTab={setTab}/>}
         {tab==="enter"&&!isParent&&<EnterMarks user={user} testsDB={testsDB} topicsDB={topicsDB} studentsDB={studentsDB} dirDB={dirDB} ttSetDB={ttSetDB} academicRosterDB={academicRosterDB}/>}
