@@ -13,7 +13,7 @@ globalThis.__testSubjectsFor=c=>/^Class 1[12]$/.test(c)?["Mathematics","Physics"
 (0,eval)([line(/^const nmKey=.*$/m), safeIdSrc, line(/^var __MK_STATES=.*$/m), line(/^var __SUBJ_SPLIT=.*$/m), line(/^var __MERGE_CLASSES=.*$/m),
   line(/^var __SPLIT_PARENT=.*$/m), grab('__ttSeniorSubj'), grab('__ttFoldTest'),
   grab('normSection'), grab('__admInBrack'), grab('__rowValFor'), grab('_markOf'), grab('__mkState'), grab('__mkSettled'),
-  grab('__testAppliesTo'), grab('__testFill'), grab('__betterTestCopy'), grab('__pickForStudent'), grab('__canonTestSubj'), grab('__testRepairPlan')].join('\n')
+  grab('__testAppliesTo'), grab('__testFill'), grab('__betterTestCopy'), grab('__pickForStudent'), grab('__compCSEligible'), grab('__compAsCS'), grab('__canonTestSubj'), grab('__testRepairPlan')].join('\n')
   .replace(/^const (nmKey|safeId)=/gm,'globalThis.$1=').replace(/^var /gm,'globalThis.'));
 let pass=0,fail=0; const ok=(n,c)=>{c?pass++:(fail++,console.log("  FAIL:",n));};
 // ── helpers ──

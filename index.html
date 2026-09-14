@@ -1820,7 +1820,20 @@ var __MERGE_CLASSES=/^Class (9|10)$/;   // classes whose old split marks must re
 var __SPLIT_PARENT={};Object.keys(__SUBJ_SPLIT).forEach(function(p){__SUBJ_SPLIT[p].forEach(function(c){__SPLIT_PARENT[c]=p;});});
 // Class 11-12 "Computer" IS the Computer Science course. Teachers assigned plain "Computer" saved 21 XI/XII tests
 // under a subject the class list does not offer, so every Computer Science view showed those tests as missing.
+// Class 11-12 "Computer" and the class list's "Computer Science" (2026-09-14). A teacher assigned "Computer" was
+// shown "Computer" in Class 11-12, where the exams and the school syllabus say "Computer Science": the exam screen
+// hid the Computer Science column from them and the Topics picker offered no chapters. The Director's switch in
+// Test Center (Repair records) first copies that teacher's Topics, Syllabus progress and copy checks to the
+// "Computer Science" records, then sets computerAsCS in the branch config. Until then this is false and nothing
+// anywhere changes. Every teacher screen and the exam screen take subject names through __canonTestSubj.
+function __compCSEligible(cls){
+  if(!/^Class (11|12)$/.test(String(cls).trim()))return false;
+  var l=(typeof __testSubjectsFor==="function")?(__testSubjectsFor(cls)||[]):[];
+  return l.indexOf("Computer Science")>=0&&l.indexOf("Computer")<0;
+}
+function __compAsCS(cls){var c=(typeof _bcfg==="function")?_bcfg():{};return !!(c&&c.computerAsCS===true)&&__compCSEligible(cls);}
 function __canonTestSubj(cls,subj){
+  if(subj==="Computer"&&__compAsCS(cls))return "Computer Science";
   if(!__MERGE_CLASSES.test(String(cls)))return subj;
   return __SPLIT_PARENT[subj]||subj;
 }
@@ -2037,6 +2050,46 @@ function __ttSeniorSubj(cls,subj){
   return (l.indexOf("Computer Science")>=0&&l.indexOf("Computer")<0)?"Computer Science":subj;
 }
 function __ttFoldTest(t){if(!t||!t.subj)return t;var s=__ttSeniorSubj(t.cls,t.subj);return s===t.subj?t:Object.assign({},t,{subj:s});}
+// ── Class 11-12 Computer → Computer Science: what to copy before the switch goes on (PURE) ──
+// The "Computer" records are never changed or removed; the switch only changes which name the screens use, so
+// switching it off restores today's view exactly. A "Computer Science" record that already exists keeps all it
+// holds; only chapters, statuses or ticks it lacks are added. Running it twice writes nothing the second time.
+function __compCSPlan(topics,syllabus,copyChecks,classes){
+  var OLD="Computer",NEW="Computer Science",writes=[],counts={topics:0,syllabus:0,copyChecks:0,chapters:0};
+  var clone=function(o){return JSON.parse(JSON.stringify(o||{}));};
+  var live=function(d){return !!d&&d.deleted!==true;};
+  var union=function(a,b){var s={},o=[];(a||[]).concat(b||[]).forEach(function(x){var k=String(x);if(!s[k]){s[k]=1;o.push(x);}});return o;};
+  var addMissing=function(into,from){var n=0;Object.keys(from||{}).forEach(function(k){if(into[k]===undefined){into[k]=from[k];n++;}});return n;};
+  topics=topics||{};syllabus=syllabus||{};copyChecks=copyChecks||{};
+  (classes||[]).forEach(function(cls){
+    var oldTop=topics[safeId(cls+"__"+OLD)],nk=safeId(cls+"__"+NEW),curTop=topics[nk];
+    if(live(oldTop)&&Array.isArray(oldTop.list)&&oldTop.list.length){
+      var base=(live(curTop)&&Array.isArray(curTop.list))?curTop.list:[],merged=union(base,oldTop.list);
+      if(merged.length>base.length){writes.push({coll:"topics",id:nk,isNew:!live(curTop),doc:Object.assign(live(curTop)?clone(curTop):{},{key:cls+"__"+NEW,list:merged,copiedFrom:safeId(cls+"__"+OLD)})});counts.topics++;counts.chapters+=merged.length-base.length;}
+    }
+    var pre=safeId(cls+"__");
+    Object.keys(syllabus).forEach(function(id){var d=syllabus[id];if(!live(d))return;var sec;
+      if(d.subj!==undefined){if(d.cls!==cls||d.subj!==OLD)return;sec=String(d.sec||"");}
+      else{if(id.indexOf(pre)!==0||!/__Computer$/.test(id))return;sec=id.slice(pre.length,id.length-"__Computer".length);}
+      var nid=safeId(sec?(cls+"__"+sec+"__"+NEW):(cls+"__"+NEW)),cur=syllabus[nid],out,added=0;
+      if(live(cur)){out=clone(cur);
+        if(d.statusHash){out.statusHash=out.statusHash||{};added+=addMissing(out.statusHash,d.statusHash);}
+        if(d.status){out.status=out.status||{};added+=addMissing(out.status,d.status);}
+        ["copyChapters","hiddenCopyChapters"].forEach(function(f){if(Array.isArray(d[f])){var m=union(out[f]||[],d[f]);added+=m.length-(out[f]||[]).length;out[f]=m;}});
+        if(!added)return;
+      }else out=clone(d);
+      out.cls=cls;out.subj=NEW;if(sec)out.sec=sec;out.copiedFrom=id;
+      writes.push({coll:"syllabus",id:nid,isNew:!live(cur),doc:out});counts.syllabus++;
+    });
+    Object.keys(copyChecks).forEach(function(id){var d=copyChecks[id];if(!live(d)||d.cls!==cls||d.subj!==OLD||!d.chapter)return;
+      var nid=__ccKey(cls,d.sec||"",NEW,d.chapter),cur=copyChecks[nid],out;
+      if(live(cur)){var ch=Object.assign({},cur.checked||{});if(!addMissing(ch,d.checked||{}))return;out=clone(cur);out.checked=ch;}
+      else{out=clone(d);out.subj=NEW;}
+      out.copiedFrom=id;writes.push({coll:"copyChecks",id:nid,isNew:!live(cur),doc:out});counts.copyChecks++;
+    });
+  });
+  return{writes:writes,counts:counts};
+}
 // ── Test-record repair planner (Test Center → Repair records, Director only, 2026-09-14) ── PURE: it reads the
 // saved tests and returns a plan; Apply writes it. It never changes a mark VALUE. It (1) moves each pupil's
 // entry into the copy of the same test for the pupil's OWN section (creating that copy if none exists; a clash
@@ -9282,7 +9335,61 @@ function Attendance({user,attendanceDB,studentsDB,usersDB,academicRosterDB,dirDB
    was buried under Resources → Admin → Tests where the director couldn't find it. Admin/VP-legacy only. */
 // ── Repair records (Test Center, Director only) ── shows every planned change first; Apply writes them with a
 // per-record undo snapshot (repairLog.prev); removed copies go to Recently Deleted; "Undo" reverses a whole run.
-function TestRepairPanel({user,testsDB,dirDB,studentsDB,academicRosterDB,attendanceDB}){
+// Director switch for Class 11-12 "Computer" → "Computer Science" (see __compAsCS): copies first, then switches.
+function ComputerCSCard({user,teachers,topicsDB,syllabusDB,copyChecksDB}){
+  const{cfg,save,loading}=useBranchConfig();
+  const[busy,setBusy]=useState("");
+  const on=cfg.computerAsCS===true;
+  const classes=["Class 11","Class 12"].filter(__compCSEligible);
+  const plan=useMemo(()=>__compCSPlan((topicsDB&&topicsDB.data)||{},(syllabusDB&&syllabusDB.data)||{},(copyChecksDB&&copyChecksDB.data)||{},classes),[topicsDB&&topicsDB.data,syllabusDB&&syllabusDB.data,copyChecksDB&&copyChecksDB.data,classes.join("|")]);
+  const who=useMemo(()=>(teachers||[]).filter(u=>{const subs=(u.subjects||[]).concat(__teacherPairs(u).map(p=>(__teacherPairParts(p)||{}).subj));if(subs.indexOf("Computer")<0)return false;return (getTeacherClasses(u)||[]).some(c=>classes.indexOf(String(c).split("-")[0].trim())>=0);}).map(u=>u.name),[teachers,classes.join("|")]);
+  if(!classes.length&&!on)return null;
+  const by=(user&&(user.name||user.username))||"Director";
+  const dbOf=k=>k==="topics"?topicsDB:k==="syllabus"?syllabusDB:copyChecksDB;
+  const nW=plan.writes.length,c=plan.counts;
+  const whoTxt=who.length?who.join(", "):"Teachers assigned Computer";
+  const copyAll=async()=>{let ok=0,fail=0;const now=new Date().toISOString();for(const w of plan.writes){try{await dbOf(w.coll).set(w.id,Object.assign({},w.doc,{copiedAt:now,copiedBy:by}));ok++;}catch(e){fail++;}}return{ok,fail};};
+  const switchOn=async()=>{
+    if(busy||loading)return;
+    if(!(await window.__confirm({title:"Use Computer Science in Class XI and XII?",body:whoTxt+" will see Computer Science instead of Computer for Class XI and XII in Enter Marks, Topics, Syllabus, copy checking and exam marks. Their Class XI and XII chapter lists, syllabus progress and copy checks are copied across first. Their Computer records are not changed, so switching off later brings back today's view. Classes VI to X are not affected.",confirmText:"Switch on"})))return;
+    setBusy("on");
+    const r=await copyAll();
+    if(r.fail){setBusy("");window.__toast&&window.__toast(r.fail+" record"+(r.fail===1?"":"s")+" could not be copied, so the switch stays off. Check the connection and try again.","err");return;}
+    try{await save({computerAsCS:true,computerAsCSAt:new Date().toISOString(),computerAsCSBy:by});try{logAudit("computer-as-cs","meta","branchcfg",{computerAsCS:false},{computerAsCS:true,copied:r.ok});}catch(e){}window.__toast&&window.__toast("Switched on"+(r.ok?(". "+r.ok+" record"+(r.ok===1?"":"s")+" copied."):"."),"ok");}
+    catch(e){window.__toast&&window.__toast("The records were copied but the switch could not be saved. Try again.","err");}
+    setBusy("");
+  };
+  const switchOff=async()=>{
+    if(busy||loading)return;
+    if(!(await window.__confirm({title:"Go back to Computer in Class XI and XII?",body:whoTxt+" will see Computer again, with the records they had before the switch. Anything saved under Computer Science while it was on stays there, and you still see it.",danger:true,confirmText:"Switch off"})))return;
+    setBusy("off");
+    try{await save({computerAsCS:false,computerAsCSAt:new Date().toISOString(),computerAsCSBy:by});try{logAudit("computer-as-cs","meta","branchcfg",{computerAsCS:true},{computerAsCS:false});}catch(e){}window.__toast&&window.__toast("Switched off.","ok");}
+    catch(e){window.__toast&&window.__toast("The switch could not be saved. Try again.","err");}
+    setBusy("");
+  };
+  const copyRest=async()=>{if(busy)return;setBusy("copy");const r=await copyAll();setBusy("");window.__toast&&window.__toast(r.fail?(r.fail+" record"+(r.fail===1?"":"s")+" could not be copied. Try again."):("Copied "+r.ok+" record"+(r.ok===1?"":"s")+"."),r.fail?"err":"ok");};
+  const dis=!!busy||loading;
+  const btn=(primary,danger)=>({background:primary?"var(--ap-accent)":"var(--c-fff)",color:primary?"var(--btn-pri-tx)":(danger?"var(--tx-red)":"var(--ap-accent)"),border:"1px solid "+(primary?"var(--ap-accent)":(danger?"var(--bd-red)":"var(--ap-line2)")),borderRadius:6,padding:"8px 14px",fontSize:12.5,fontWeight:700,cursor:dis?"default":"pointer",opacity:dis?.55:1,fontFamily:"var(--ss-font)"});
+  const pl=(n,w)=>n+" "+w+(n===1?"":"s");
+  return(
+    <div className="ap-panel" style={{padding:16,display:"flex",flexDirection:"column",gap:10}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+        <div style={{flex:1,minWidth:220,fontSize:14,fontWeight:700,color:"var(--ap-ink)"}}>Class XI–XII: Computer and Computer Science</div>
+        <span style={{fontSize:11,fontWeight:700,borderRadius:8,padding:"3px 10px",background:on?"var(--bg-grn)":"var(--bg-org)",color:on?"var(--tx-grn2)":"var(--tx-org2)"}}>{on?"Switched on":"Off"}</span>
+      </div>
+      <div style={{fontSize:12.5,color:"var(--ap-muted)",lineHeight:1.55}}>{on
+        ?<>Class XI and XII use Computer Science for {whoTxt}. Their earlier Computer records are kept unchanged.</>
+        :<>{whoTxt} {who.length===1?"is":"are"} shown “Computer” in Class XI and XII, but the exams and the school syllabus use “Computer Science”. So the exam screen hides the Computer Science column from them, and the Topics picker offers no chapters. Switching on fixes both, for Class XI and XII only.</>}</div>
+      {!on&&<div style={{fontSize:12,color:"var(--ap-ink)"}}>{nW?<>Copied first: {pl(c.chapters,"chapter")}, {pl(c.syllabus,"syllabus record")} and {pl(c.copyChecks,"copy-check record")}.</>:"There is nothing to copy first."}</div>}
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        {!on&&<button className="ss-press" onClick={switchOn} disabled={dis} style={btn(true)}>{busy==="on"?"Switching on…":"Switch on"}</button>}
+        {on&&nW>0&&<button className="ss-press" onClick={copyRest} disabled={dis} style={btn(false)}>{busy==="copy"?"Copying…":("Copy "+pl(nW,"newer record"))}</button>}
+        {on&&<button className="ss-press" onClick={switchOff} disabled={dis} style={btn(false,true)}>{busy==="off"?"Switching off…":"Switch off"}</button>}
+      </div>
+    </div>
+  );
+}
+function TestRepairPanel({user,testsDB,dirDB,studentsDB,academicRosterDB,attendanceDB,topicsDB,syllabusDB,copyChecksDB,teachers}){
   const[busy,setBusy]=useState("");
   const[showAll,setShowAll]=useState(false);
   const[showReview,setShowReview]=useState(false);
@@ -9321,9 +9428,10 @@ function TestRepairPanel({user,testsDB,dirDB,studentsDB,academicRosterDB,attenda
   };
   const pill={fontSize:11,fontWeight:700,borderRadius:8,padding:"3px 10px"};
   const rows=plan.writes.map(w=>({k:"w"+w.id,label:w.label,what:(w.isNew?"New copy: ":"")+((w.summary||[]).join("; ")||"updated")})).concat(plan.removes.map(r=>({k:"r"+r.id,label:r.label,what:"Removed (restorable): "+r.reason})));
-  const btn={background:"var(--ap-accent)",color:"#fff",border:"1px solid var(--ap-accent)",borderRadius:6,padding:"9px 16px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"};
+  const btn={background:"var(--ap-accent)",color:"var(--btn-pri-tx)",border:"1px solid var(--ap-accent)",borderRadius:6,padding:"9px 16px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"};
   return(
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      <ComputerCSCard user={user} teachers={teachers} topicsDB={topicsDB} syllabusDB={syllabusDB} copyChecksDB={copyChecksDB}/>
       <div className="ap-panel" style={{padding:16,display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
         <div style={{minWidth:240,flex:1}}>
           <div style={{fontSize:14,fontWeight:700,color:"var(--ap-ink)"}}>{total?(total+" test record"+(total===1?"":"s")+" can be repaired automatically"):"No automatic repairs needed"}</div>
@@ -9367,7 +9475,7 @@ function TestRepairPanel({user,testsDB,dirDB,studentsDB,academicRosterDB,attenda
     </div>
   );
 }
-function TestCenter({user,testsDB,usersDB,dirDB,studentsDB,academicRosterDB,attendanceDB}){
+function TestCenter({user,testsDB,usersDB,dirDB,studentsDB,academicRosterDB,attendanceDB,topicsDB,syllabusDB,copyChecksDB}){
   const isDir=user.role==="admin"&&user.fees!==false;
   const[view,setView]=useState("all");   // "all" | "notopic" | "duplicates"
   const ymNow=today().slice(0,7);
@@ -9564,7 +9672,7 @@ function TestCenter({user,testsDB,usersDB,dirDB,studentsDB,academicRosterDB,atte
                 </div>)}
               </div>);})}
           </div>)}
-      {view==="repair"&&isDir&&<TestRepairPanel user={user} testsDB={testsDB} dirDB={dirDB} studentsDB={studentsDB} academicRosterDB={academicRosterDB} attendanceDB={attendanceDB}/>}
+      {view==="repair"&&isDir&&<TestRepairPanel user={user} testsDB={testsDB} dirDB={dirDB} studentsDB={studentsDB} academicRosterDB={academicRosterDB} attendanceDB={attendanceDB} topicsDB={topicsDB} syllabusDB={syllabusDB} copyChecksDB={copyChecksDB} teachers={teachers}/>}
       <div style={{fontSize:11.5,color:"var(--ap-muted)",padding:"0 4px 20px"}}>Deleted tests go to <b>Settings → Recently Deleted</b> and can be restored. Marks entry stays under <b>Tests → Enter Marks</b>.</div>
     </div>
   );
@@ -23639,7 +23747,7 @@ function App(){
         {tab==="topics"&&!isParent&&<ManageTopics user={user} usersDB={usersDB} topicsDB={topicsDB}/>}
         {tab==="syllabus"&&!isParent&&!isStudent&&<SyllabusTracker user={user} topicsDB={topicsDB} syllabusDB={syllabusDB} copyChecksDB={copyChecksDB} dirDB={dirDB} studentsDB={studentsDB} academicRosterDB={academicRosterDB}/>}
         {tab==="copies"&&!isParent&&!isStudent&&<SyllabusTracker mode="copies" user={user} topicsDB={topicsDB} syllabusDB={syllabusDB} copyChecksDB={copyChecksDB} dirDB={dirDB} studentsDB={studentsDB} academicRosterDB={academicRosterDB}/>}
-        {tab==="testcenter"&&(isAdmin||isVP||user.coordinator===true)&&<TestCenter user={user} testsDB={testsDB} usersDB={usersDB} dirDB={dirDB} studentsDB={studentsDB} academicRosterDB={academicRosterDB} attendanceDB={attendanceDB}/>} 
+        {tab==="testcenter"&&(isAdmin||isVP||user.coordinator===true)&&<TestCenter user={user} testsDB={testsDB} usersDB={usersDB} dirDB={dirDB} studentsDB={studentsDB} academicRosterDB={academicRosterDB} attendanceDB={attendanceDB} topicsDB={topicsDB} syllabusDB={syllabusDB} copyChecksDB={copyChecksDB}/>} 
         {tab==="tracker"&&!isParent&&<TestTracker user={user} testsDB={testsDB} studentsDB={studentsDB} usersDB={usersDB} dirDB={dirDB} academicRosterDB={academicRosterDB}/>}
         {tab==="participation"&&!isParent&&<TestParticipation user={user} testsDB={testsDB} studentsDB={studentsDB} dirDB={dirDB} academicRosterDB={academicRosterDB} setTab={setTab}/>}
         {tab==="enter"&&!isParent&&<EnterMarks user={user} testsDB={testsDB} topicsDB={topicsDB} studentsDB={studentsDB} dirDB={dirDB} ttSetDB={ttSetDB} academicRosterDB={academicRosterDB}/>}
