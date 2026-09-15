@@ -12592,6 +12592,16 @@ h3{font-size:12.5px;color:#0d1b2a;margin:14px 0 4px;text-transform:uppercase;let
 .sign{margin-top:34px;display:flex;justify-content:space-between;font-size:12px;color:#333;text-align:center}
 @media print{.card{padding:12px}}`;
 
+// Term Result list order (2026-09-15, Director): sections in order (A, B, C...; pupils with no section last) and
+// A-Z by name inside each section; onlySec keeps a single section. Returns a new array - the roster is unchanged.
+function __sectionAZ(list,secOf,onlySec){
+  var name=function(s){return String((s&&s.name)||"").trim();};
+  return (list||[]).filter(function(s){return !onlySec||secOf(s)===onlySec;}).slice().sort(function(a,b){
+    var sa=secOf(a)||"",sb=secOf(b)||"";
+    if(sa!==sb){if(!sa)return 1;if(!sb)return -1;return sa.localeCompare(sb,undefined,{numeric:true,sensitivity:"base"});}
+    return name(a).localeCompare(name(b),undefined,{sensitivity:"base"})||String((a&&a.admNo)||"").localeCompare(String((b&&b.admNo)||""),undefined,{numeric:true});
+  });
+}
 function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,examClasses=__academicClasses(),reportsOnly=false}){
   const teacherExamScoped=user.role==="teacher"&&user.coordinator!==true;
   const[tab,setTab]=useState(reportsOnly?"reports":teacherExamScoped?"marks":"exams");
@@ -12622,6 +12632,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
   const[trSaving,setTrSaving]=useState(false);
   const[trMsg,setTrMsg]=useState("");
   const[trPrevStu,setTrPrevStu]=useState(""); // student selected for the term-result report-card PREVIEW
+  const[trSec,setTrSec]=useState("");        // Term Result section: "" = all sections, grouped and A-Z
   const isMob=useIsMobile();
   const[exSec,setExSec]=useState(""); // section filter for the Enter-Marks grid (#4: section-wise, not whole class)
   const[exSort,setExSort]=useState("added"); // "added" = roll / record order (default) · "az" = alphabetical
@@ -13233,6 +13244,11 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
         const termExam=(trExId&&examsDB.data[trExId])||exAuto;
         const cfg=termWeights(trCls,curSubj);
         const roster=rosterObjsOf(trCls);
+        // Section-wise and A-Z (Director, 2026-09-15): "All sections" groups pupils under a heading per section.
+        const trSecOf=s=>_rosterSec(s.section,trCls)||"";
+        const trSecs=[...new Set(roster.map(trSecOf).filter(Boolean))].sort();
+        const curSec=(trSec&&trSecs.indexOf(trSec)>=0)?trSec:"";
+        const shown=__sectionAZ(roster,trSecOf,curSec);
         const subjMaxOf=(ex,nm)=>{var s=((ex&&ex.subjects)||[]).find(x=>x.name===nm);return s?(Number(s.max)||100):100;};
         const utMax=subjMaxOf(utExam,curSubj), exMax=subjMaxOf(termExam,curSubj);
         const savedW=(termExam&&termExam.weighted)||{};
@@ -13259,7 +13275,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
         const selSt={border:"1px solid var(--c-d2)",borderRadius:6,padding:"8px 11px",fontSize:13,fontFamily:"var(--ss-font)",outline:"none",background:"var(--c-fff)",color:"var(--ap-ink)"};
         const cellInp={width:62,border:"1px solid var(--c-d2)",borderRadius:6,padding:"5px 6px",fontSize:13,textAlign:"center",fontFamily:"var(--ss-font)",outline:"none",background:"var(--c-fff)",color:"var(--ap-ink)"};
         // rows + class stats
-        const rows=roster.map(function(st){
+        const rows=shown.map(function(st){
           var adm=String(st.admNo||"");
           var utMark=utExam?_examMark(utExam,curSubj,st.name,adm):undefined;
           var exMark=termExam?_examMark(termExam,curSubj,st.name,adm):undefined;
@@ -13267,6 +13283,9 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
           var comp=termComposite(cfg,utMark,utMax,exMark,exMax,wv);
           return {st:st,adm:adm,utMark:utMark,exMark:exMark,wv:wv,comp:comp};
         });
+        const showHeads=!curSec&&trSecs.length>1;
+        const nCols=1+(cfg.ut>0?1:0)+cfg.writeins.length+3;
+        const secCount={};rows.forEach(r=>{const k=trSecOf(r.st);secCount[k]=(secCount[k]||0)+1;});
         const done=rows.filter(r=>r.comp&&r.comp.total!=null&&r.comp.missing.length===0);
         const clsAvg=done.length?Math.round(done.reduce((a,r)=>a+r.comp.total,0)/done.length):null;
         return (
@@ -13285,6 +13304,8 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
                 <select value={trTerm} onChange={e=>resetDraft(()=>setTrTerm(e.target.value))} style={selSt}><option>Term 1</option><option>Term 2</option></select></div>
               <div><div style={{fontSize:11.5,fontWeight:700,letterSpacing:.6,textTransform:"uppercase",color:"var(--c-64)",marginBottom:5}}>Subject</div>
                 <select value={curSubj} onChange={e=>resetDraft(()=>setTrSubj(e.target.value))} style={selSt}>{subjects.map(s=><option key={s} value={s}>{s}</option>)}</select></div>
+              {trSecs.length>1&&<div><div style={{fontSize:11.5,fontWeight:700,letterSpacing:.6,textTransform:"uppercase",color:"var(--c-64)",marginBottom:5}}>Section</div>
+                <select value={curSec} onChange={e=>setTrSec(e.target.value)} style={selSt}><option value="">All sections</option>{trSecs.map(s=><option key={s} value={s}>{"Section "+s}</option>)}</select></div>}
               <div><div style={{fontSize:11.5,fontWeight:700,letterSpacing:.6,textTransform:"uppercase",color:"var(--c-64)",marginBottom:5}}>{trTerm==="Term 1"?"Half-Yearly":"Annual"} exam (auto)</div>
                 <select value={trExId||(exAuto?exAuto.id:"")} onChange={e=>resetDraft(()=>setTrExId(e.target.value))} style={selSt}><option value="">— none found —</option>{exList.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
               {cfg.ut>0&&<div><div style={{fontSize:11.5,fontWeight:700,letterSpacing:.6,textTransform:"uppercase",color:"var(--c-64)",marginBottom:5}}>Unit Test (auto)</div>
@@ -13300,8 +13321,8 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
               {!termExam&&<span style={{color:"var(--tx-red)",fontWeight:600}}>· No {trTerm==="Term 1"?"Half-Yearly":"Annual"} exam found — create it in the Exams tab to pull written marks.</span>}
             </div>
             {clsAvg!=null&&<div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
-              <StatCard label="Complete results" val={done.length+" / "+roster.length} icon="check" color="var(--ap-accent)" sub="all components in"/>
-              <StatCard label="Class average" val={clsAvg+"/100"} icon="chart" color="#7c3aed" sub={curSubj}/>
+              <StatCard label="Complete results" val={done.length+" / "+rows.length} icon="check" color="var(--ap-accent)" sub="all components in"/>
+              <StatCard label={curSec?("Section "+curSec+" average"):"Class average"} val={clsAvg+"/100"} icon="chart" color="#7c3aed" sub={curSubj}/>
             </div>}
             {/* grid */}
             {roster.length===0?<Empty icon="cap" title={"No students in "+trCls} sub="Add students first."/>:(
@@ -13316,7 +13337,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
                     <th style={{...th,textAlign:"center"}}>Total<div style={{fontWeight:500,color:"var(--c-94)",fontSize:11}}>/ 100</div></th>
                     <th style={{...th,textAlign:"center",paddingRight:15}}>Grade</th>
                   </tr></thead>
-                  <tbody>{rows.map(function(r,ri){
+                  <tbody>{rows.reduce(function(acc,r,ri){if(showHeads&&(ri===0||trSecOf(rows[ri-1].st)!==trSecOf(r.st))){var hs=trSecOf(r.st);acc.push(<tr key={"sec#"+(hs||"none")}><td colSpan={nCols} style={{padding:"9px 15px",background:"var(--c-f7)",borderTop:"1px solid var(--ap-line)",borderBottom:"1px solid var(--ap-line)",fontSize:11.5,fontWeight:700,letterSpacing:.6,textTransform:"uppercase",color:"var(--c-64)"}}>{hs?("Section "+hs):"No section"} · {secCount[hs]} student{secCount[hs]===1?"":"s"}</td></tr>);}acc.push((function(){
                     var p=r.comp?r.comp.parts:{};
                     var tot=r.comp?r.comp.total:null;
                     return <tr key={(r.adm||r.st.name||"")+"#"+ri}>
@@ -13327,7 +13348,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
                       <td style={{...td,textAlign:"center",fontWeight:800,fontFamily:"var(--ss-font)",color:tot==null?"var(--c-94)":(tot>=33?"var(--ap-ink)":"var(--tx-red)")}}>{tot==null?"—":tot}{r.comp&&r.comp.missing.length>0&&tot!=null?<span title={"missing: "+r.comp.missing.join(", ")} style={{color:"var(--tx-org)",fontWeight:700}}>*</span>:null}</td>
                       <td style={{...td,textAlign:"center",paddingRight:15}}>{tot==null||(r.comp&&r.comp.missing.length>0)?<span style={{color:"var(--c-94)"}}>—</span>:<span style={{color:cbseGColor(cbseGrade(tot)),fontWeight:700}}>{cbseGrade(tot)}</span>}</td>
                     </tr>;
-                  })}</tbody>
+                  })());return acc;},[])}</tbody>
                 </table>
               </div>
               <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",borderTop:"1px solid var(--ap-line)",padding:"12px 16px",background:"var(--c-f7)"}}>
@@ -13339,7 +13360,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
             {termExam&&<div className="ap-panel" style={{padding:"13px 16px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
               <div style={{fontSize:12.5,color:"var(--ap-ink2)",flex:"1 1 240px",lineHeight:1.5}}><b style={{color:"var(--ap-ink)"}}>Preview the term report card</b> — see the weighted <b>/100</b> with the Unit Test / Internal / Exam breakdown for one student. This is a <b>preview</b>; the official printed card is unchanged until you approve the format.</div>
               <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-                <select value={trPrevStu} onChange={e=>setTrPrevStu(e.target.value)} style={selSt}><option value="">— pick a student —</option>{roster.map(s=><option key={(s.admNo||s.name)} value={s.name}>{s.name}</option>)}</select>
+                <select value={trPrevStu} onChange={e=>setTrPrevStu(e.target.value)} style={selSt}><option value="">— pick a student —</option>{shown.map(s=><option key={(s.admNo||s.name)} value={s.name}>{s.name}</option>)}</select>
                 <Btn v="ghost" disabled={!trPrevStu} onClick={()=>{if(trPrevStu)openPreview(termCardHTML(termExam,trPrevStu),"Term Result Preview — "+trPrevStu);}}>Open preview</Btn>
               </div>
             </div>}
