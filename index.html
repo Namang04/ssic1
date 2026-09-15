@@ -13080,7 +13080,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
   const saveExtra=async()=>{if(!exam||!cardStu)return false;if(exam.published){window.__toast&&window.__toast("Hide this exam from parents before changing a result, grade or remark.","err");return false;}const fresh=examsDB.data[selId]||exam;const adm=String(admOfExam(fresh.cls,cardStu)||"");const rowKey=adm||cardStu;const next={...(fresh.extra||{}),[rowKey]:extraDraft};try{await examsDB.set(selId,{...fresh,extra:next,updatedAt:new Date().toISOString(),reviewStatus:"needs-review",reviewedAt:"",reviewedBy:""});extraBaseRef.current=JSON.stringify(extraDraft||{});window.__reportCardDirty="";return true;}catch(e){window.__toast&&window.__toast("Could not save report-card details — "+((e&&e.message)||"try again"),"err");return false;}};
 
   if(examsDB.loading||studentsDB.loading)return<Spinner/>;
-  const TABS=reportsOnly?[{id:"reports",label:"Report Cards"}]:teacherExamScoped?[{id:"marks",label:"Enter My Subject Marks"},{id:"reports",label:"Report Cards"},{id:"progress",label:"Progress"}]:[{id:"exams",label:"Exams"},{id:"marks",label:"Enter Marks"},{id:"term",label:"Term Result"},{id:"reports",label:"Report Cards"},{id:"progress",label:"Progress"}];
+  const TABS=reportsOnly?[{id:"reports",label:"Report Cards"}]:teacherExamScoped?[{id:"marks",label:"Enter My Subject Marks"},{id:"term",label:"Internal Marks"},{id:"reports",label:"Report Cards"},{id:"progress",label:"Progress"}]:[{id:"exams",label:"Exams"},{id:"marks",label:"Enter Marks"},{id:"term",label:"Term Result"},{id:"reports",label:"Report Cards"},{id:"progress",label:"Progress"}];
   const changeExamTab=id=>{if(id===tab)return true;if((examMarksDirty||extraDraftDirty||termResultDirty||editSubjectsDirty||createExamDirty)&&!__confirmUnsavedWork())return false;if(examMarksDirty||extraDraftDirty)setExamDraftReset(n=>n+1);if(termResultDirty)setTrDraft({});if(editSubjectsDirty){setEditSubsId("");setEditSubs([]);setNewEditSub("");editSubsBaseRef.current="";}if(createExamDirty)setCreateExamDirty(false);setTab(id);return true;};
   const td={padding:"8px 10px",fontSize:12.5,borderBottom:"1px solid var(--c-f0)"};
   const th={padding:"8px 10px",fontSize:11,fontWeight:700,color:"var(--c-64)",textTransform:"uppercase",letterSpacing:.6,textAlign:"left",borderBottom:"1px solid var(--c-ec)"};
@@ -13233,17 +13233,20 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
 
       {/* TERM RESULT — weighted /100 per the school's CBSE scheme; Unit Test auto-pulled, internals written in */}
       {tab==="term"&&(()=>{
-        const subjects=__subjectsFor(trCls);
+        const subjects=teacherExamScoped?__subjectsFor(trCls).filter(s=>(getTeacherSubjects(user,trCls)||[]).indexOf(s)>=0):__subjectsFor(trCls); // teachers: their own subjects only
         const curSubj=(trSubj&&subjects.indexOf(trSubj)>=0)?trSubj:(subjects[0]||"");
         const termExams=exams.filter(e=>e&&e.cls===trCls&&e.term===trTerm);
         const utList=termExams.filter(e=>/unit\s*test/i.test(e.name||""));
         const exList=termExams.filter(e=>!/unit\s*test/i.test(e.name||""));
         const utAuto=utList[0]||null;
         const exAuto=exList.find(e=>/(half|annual|final|term)/i.test(e.name||""))||exList[0]||null;
-        const utExam=(trUtId&&examsDB.data[trUtId])||utAuto;
-        const termExam=(trExId&&examsDB.data[trExId])||exAuto;
+        const termExam=(!teacherExamScoped&&trExId&&examsDB.data[trExId])||exAuto;
+        // The Unit Test that counts is the one saved on the term exam by leadership; a teacher's save keeps it.
+        const utSaved=(termExam&&termExam.weightedUtId&&examsDB.data[termExam.weightedUtId])||null;
+        const utExam=(!teacherExamScoped&&trUtId&&examsDB.data[trUtId])||utSaved||utAuto;
         const cfg=termWeights(trCls,curSubj);
-        const roster=rosterObjsOf(trCls);
+        const _trVis=teacherExamScoped?visibleSecsFor(trCls):null; // teachers: their own section(s), as in Enter My Subject Marks
+        const roster=rosterObjsOf(trCls).filter(s=>{if(!_trVis)return true;const k=_rosterSec(s.section,trCls);return !k||_trVis.indexOf(k)>=0;});
         // Section-wise and A-Z (Director, 2026-09-15): "All sections" groups pupils under a heading per section.
         const trSecOf=s=>_rosterSec(s.section,trCls)||"";
         const trSecs=[...new Set(roster.map(trSecOf).filter(Boolean))].sort();
@@ -13256,7 +13259,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
         const setCell=(adm,key,val)=>setTrDraft(d=>{var nd=Object.assign({},d);nd[adm]=Object.assign({},nd[adm],{[key]:val});return nd;});
         const resetDraft=fn=>{if(Object.keys(trDraft).length>0&&!window.confirm("You have unsaved internal marks.\n\nDiscard them and switch?"))return;setTrDraft({});setTrMsg("");fn();};
         async function saveTermDraft(){
-          if(!termExam){setTrMsg("No term exam found for "+trCls+" · "+trTerm+". Create the Half-Yearly / Annual exam first (Exams tab).");return;}
+          if(!termExam){setTrMsg("No term exam found for "+trCls+" · "+trTerm+"."+(teacherExamScoped?" Ask school leadership to create the Half-Yearly / Annual exam.":" Create the Half-Yearly / Annual exam first (Exams tab)."));return;}
           if(termExam.published){setTrMsg("This term result is visible to parents. The Director or VP must hide it before internals can change.");return;}
           var limits={};cfg.writeins.forEach(function(x){limits[x.key]=Number(x.max)||0;});var invalid=[];
           Object.keys(trDraft).forEach(function(adm){Object.keys(trDraft[adm]||{}).forEach(function(k){var v=trDraft[adm][k];if(v!==""&&v!=null&&(isNaN(Number(v))||Number(v)<0||(limits[k]!=null&&Number(v)>limits[k])))invalid.push(adm+" · "+k+" (max "+limits[k]+")");});});
@@ -13286,6 +13289,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
         const showHeads=!curSec&&trSecs.length>1;
         const nCols=1+(cfg.ut>0?1:0)+cfg.writeins.length+3;
         const secCount={};rows.forEach(r=>{const k=trSecOf(r.st);secCount[k]=(secCount[k]||0)+1;});
+        const inputFor=(r,w)=>{var v=r.wv[w.key];return <input value={v==null?"":v} inputMode="decimal" disabled={!r.adm} title={r.adm?(w.label+" · maximum "+w.max):"Add this student's admission number before entering internal marks"} onChange={function(e){if(!r.adm)return;var x=e.target.value.replace(/[^0-9.]/g,"");setCell(r.adm,w.key,x);}} placeholder={r.adm?("0–"+w.max):"Adm no"} style={{...cellInp,opacity:r.adm?1:.55}}/>;};
         const done=rows.filter(r=>r.comp&&r.comp.total!=null&&r.comp.missing.length===0);
         const clsAvg=done.length?Math.round(done.reduce((a,r)=>a+r.comp.total,0)/done.length):null;
         return (
@@ -13307,9 +13311,9 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
               {trSecs.length>1&&<div><div style={{fontSize:11.5,fontWeight:700,letterSpacing:.6,textTransform:"uppercase",color:"var(--c-64)",marginBottom:5}}>Section</div>
                 <select value={curSec} onChange={e=>setTrSec(e.target.value)} style={selSt}><option value="">All sections</option>{trSecs.map(s=><option key={s} value={s}>{"Section "+s}</option>)}</select></div>}
               <div><div style={{fontSize:11.5,fontWeight:700,letterSpacing:.6,textTransform:"uppercase",color:"var(--c-64)",marginBottom:5}}>{trTerm==="Term 1"?"Half-Yearly":"Annual"} exam (auto)</div>
-                <select value={trExId||(exAuto?exAuto.id:"")} onChange={e=>resetDraft(()=>setTrExId(e.target.value))} style={selSt}><option value="">— none found —</option>{exList.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
+                <select value={termExam?termExam.id:""} disabled={teacherExamScoped} onChange={e=>resetDraft(()=>setTrExId(e.target.value))} style={selSt}><option value="">— none found —</option>{exList.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
               {cfg.ut>0&&<div><div style={{fontSize:11.5,fontWeight:700,letterSpacing:.6,textTransform:"uppercase",color:"var(--c-64)",marginBottom:5}}>Unit Test (auto)</div>
-                <select value={trUtId||(utAuto?utAuto.id:"")} onChange={e=>resetDraft(()=>setTrUtId(e.target.value))} style={selSt}><option value="">— none —</option>{utList.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>}
+                <select value={utExam?utExam.id:""} disabled={teacherExamScoped} onChange={e=>resetDraft(()=>setTrUtId(e.target.value))} style={selSt}><option value="">— none —</option>{utList.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>}
             </div>
             {/* weightage note */}
             <div style={{background:"var(--c-f7)",border:"1px solid var(--ap-line)",borderRadius:6,padding:"11px 14px",fontSize:12.5,color:"var(--ap-ink2)",display:"flex",flexWrap:"wrap",gap:"4px 12px",alignItems:"center"}}>
@@ -13318,16 +13322,30 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
               {cfg.writeins.map(w=><span key={w.key}>{w.label} <b>{w.max}</b></span>)}
               <span>{cfg.examLabel} → <b>{cfg.exam}</b></span>
               <span style={{color:"var(--c-94)"}}>= 100</span>
-              {!termExam&&<span style={{color:"var(--tx-red)",fontWeight:600}}>· No {trTerm==="Term 1"?"Half-Yearly":"Annual"} exam found — create it in the Exams tab to pull written marks.</span>}
+              {!termExam&&<span style={{color:"var(--tx-red)",fontWeight:600}}>· No {trTerm==="Term 1"?"Half-Yearly":"Annual"} exam found — {teacherExamScoped?"ask school leadership to create it; internal marks can be saved once it exists.":"create it in the Exams tab to pull written marks."}</span>}
             </div>
             {clsAvg!=null&&<div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
               <StatCard label="Complete results" val={done.length+" / "+rows.length} icon="check" color="var(--ap-accent)" sub="all components in"/>
               <StatCard label={curSec?("Section "+curSec+" average"):"Class average"} val={clsAvg+"/100"} icon="chart" color="#7c3aed" sub={curSubj}/>
             </div>}
             {/* grid */}
-            {roster.length===0?<Empty icon="cap" title={"No students in "+trCls} sub="Add students first."/>:(
+            {teacherExamScoped&&!subjects.length?<Empty icon="lock" title={"No assigned subject in "+trCls} sub="Your account has no subject for this class, so there are no internal marks to enter here. Ask the coordinator to check your assignment."/>:roster.length===0?<Empty icon="cap" title={"No students in "+trCls} sub="Add students first."/>:(
             <div className="ap-panel" style={{overflow:"hidden"}}>
-              <div style={{overflowX:"auto"}}>
+              {isMob?<div>{rows.reduce(function(acc,r,ri){if(showHeads&&(ri===0||trSecOf(rows[ri-1].st)!==trSecOf(r.st))){var hs=trSecOf(r.st);acc.push(<div key={"msec#"+(hs||"none")} style={{padding:"9px 14px",background:"var(--c-f7)",borderTop:"1px solid var(--ap-line)",borderBottom:"1px solid var(--ap-line)",fontSize:11.5,fontWeight:700,letterSpacing:.6,textTransform:"uppercase",color:"var(--c-64)"}}>{hs?("Section "+hs):"No section"} · {secCount[hs]} student{secCount[hs]===1?"":"s"}</div>);}
+                  var p=r.comp?r.comp.parts:{},tot=r.comp?r.comp.total:null,miss=!!(r.comp&&r.comp.missing.length>0);
+                  acc.push(<div key={"m#"+(r.adm||r.st.name||"")+"#"+ri} style={{padding:"12px 14px",borderBottom:"1px solid var(--c-f0)"}}>
+                    <div style={{display:"flex",alignItems:"baseline",gap:8}}>
+                      <div style={{flex:1,minWidth:0,fontWeight:700,fontSize:13.5,color:"var(--ap-ink)"}}>{r.st.name}</div>
+                      <div style={{fontSize:12.5,fontWeight:800,fontFamily:"var(--ss-font)",whiteSpace:"nowrap",color:tot==null?"var(--c-94)":(tot>=33?"var(--ap-ink)":"var(--tx-red)")}}>{tot==null?"—":tot}<span style={{fontWeight:500,color:"var(--c-94)"}}>/100</span>{miss&&tot!=null?<span style={{color:"var(--tx-org)"}}>*</span>:null}{tot!=null&&!miss?<span style={{marginLeft:6,color:cbseGColor(cbseGrade(tot)),fontWeight:700}}>{cbseGrade(tot)}</span>:null}</div>
+                    </div>
+                    <div style={{display:"flex",gap:12,flexWrap:"wrap",fontSize:11.5,color:"var(--c-64)",marginTop:3}}>
+                      {cfg.ut>0&&<span>Unit Test {p.ut==null?"—":p.ut} / {cfg.ut}</span>}
+                      <span>{cfg.examLabel} {p.exam==null?"—":p.exam} / {cfg.exam}</span>
+                    </div>
+                    <div style={{display:"flex",gap:14,flexWrap:"wrap",marginTop:8}}>
+                      {cfg.writeins.map(function(w){return <label key={w.key} style={{display:"flex",flexDirection:"column",gap:4,fontSize:11.5,fontWeight:700,color:"var(--c-64)"}}>{w.label} / {w.max}{inputFor(r,w)}</label>;})}
+                    </div>
+                  </div>);return acc;},[])}</div>:<div style={{overflowX:"auto"}}>
                 <table style={{width:"100%",borderCollapse:"collapse",minWidth:560,fontSize:13}}>
                   <thead><tr style={{background:"var(--c-f7)"}}>
                     <th style={{...th,paddingLeft:15}}>Student</th>
@@ -13343,14 +13361,14 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
                     return <tr key={(r.adm||r.st.name||"")+"#"+ri}>
                       <td style={{...td,paddingLeft:15,fontWeight:600,color:"var(--ap-ink)"}}>{r.st.name}</td>
                       {cfg.ut>0&&<td style={{...td,textAlign:"center",color:p.ut==null?"var(--c-94)":"var(--c-64)",fontFamily:"var(--ss-font)"}}>{p.ut==null?"—":p.ut}</td>}
-                      {cfg.writeins.map(function(w){var v=r.wv[w.key];return <td key={w.key} style={{...td,textAlign:"center"}}><input value={v==null?"":v} disabled={!r.adm} title={r.adm?(w.label+" · maximum "+w.max):"Add this student's admission number before entering internal marks"} onChange={function(e){if(!r.adm)return;var x=e.target.value.replace(/[^0-9.]/g,"");setCell(r.adm,w.key,x);}} placeholder={r.adm?("0–"+w.max):"Adm no"} style={{...cellInp,opacity:r.adm?1:.55}}/></td>;})}
+                      {cfg.writeins.map(function(w){return <td key={w.key} style={{...td,textAlign:"center"}}>{inputFor(r,w)}</td>;})}
                       <td style={{...td,textAlign:"center",color:p.exam==null?"var(--c-94)":"var(--c-64)",fontFamily:"var(--ss-font)"}}>{p.exam==null?"—":p.exam}</td>
                       <td style={{...td,textAlign:"center",fontWeight:800,fontFamily:"var(--ss-font)",color:tot==null?"var(--c-94)":(tot>=33?"var(--ap-ink)":"var(--tx-red)")}}>{tot==null?"—":tot}{r.comp&&r.comp.missing.length>0&&tot!=null?<span title={"missing: "+r.comp.missing.join(", ")} style={{color:"var(--tx-org)",fontWeight:700}}>*</span>:null}</td>
                       <td style={{...td,textAlign:"center",paddingRight:15}}>{tot==null||(r.comp&&r.comp.missing.length>0)?<span style={{color:"var(--c-94)"}}>—</span>:<span style={{color:cbseGColor(cbseGrade(tot)),fontWeight:700}}>{cbseGrade(tot)}</span>}</td>
                     </tr>;
                   })());return acc;},[])}</tbody>
                 </table>
-              </div>
+              </div>}
               <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",borderTop:"1px solid var(--ap-line)",padding:"12px 16px",background:"var(--c-f7)"}}>
                 <span style={{fontSize:11.5,color:"var(--c-94)"}}><b style={{color:"var(--tx-org)"}}>*</b> = some component still missing (Grade shows once all are in). Written marks come from the exams; only internals save here.</span>
                 {trMsg&&<span style={{fontSize:12.5,fontWeight:600,color:trMsg.indexOf("✓")===0?"var(--tx-grn2)":(trMsg.indexOf("")===0?"var(--tx-org2)":"var(--tx-red)")}}>{trMsg}</span>}
