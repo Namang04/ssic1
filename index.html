@@ -12576,6 +12576,13 @@ function termComposite(cfg, utMark, utMax, examMark, examMax, wv){
   var e=num(examMark); if(e!=null){ p.exam=Math.round(e/(examMax||100)*cfg.exam*10)/10; total+=p.exam; any=true; } else { p.exam=null; missing.push(cfg.examLabel); }
   return { total: any?Math.round(total*10)/10:null, parts:p, missing:missing, absent:absent };
 }
+// The school's own co-scholastic traits, exactly as its report card has always listed them (2026-10-05,
+// director). "discipline" keeps its old key, so grades already entered under the earlier CBSE four are kept.
+// CO_LEGACY are those earlier areas: they are no longer offered, but a value already saved still prints and
+// can still be cleared in the report-card editor, so nothing a teacher entered disappears.
+const CO_TRAITS=[["punctuality","Punctuality"],["confidence","Confidence"],["curiosity","Curiosity"],["discipline","Discipline"],["obedience","Obedience"],["concentration","Concentration"]];
+const CO_LEGACY=[["coWork","Work Education"],["coArt","Art Education"],["coPE","Health & Physical Education"]];
+const CO_GRADES=["","A","B","C","D","E"];
 const CARD_CSS=`*{box-sizing:border-box}body{font-family:'Times New Roman',Georgia,serif;color:#1a1a1a;margin:0}
 .card{padding:26px 30px;max-width:820px;margin:0 auto;position:relative}.pb{page-break-after:always}
 .hdr{text-align:center;border-bottom:2.5px solid #0d1b2a;padding-bottom:10px}.hdr h1{font-size:21px;font-weight:800;margin:0;color:#0d1b2a}.hdr .sub{font-size:11.5px;color:#555;margin-top:3px}
@@ -12901,7 +12908,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
       pctV=r.max>0?r.pct:null;gradeV=r.grade;sumTxt=`${r.obt}<span class="sm"> / ${r.max}</span>`;
     }
     const addl=r.subjects.filter(s=>s.graded);
-    const coPairs=[["Work Education",e.coWork],["Art Education",e.coArt],["Health & Physical Education",e.coPE],["Discipline",e.discipline]];
+    const coPairs=CO_TRAITS.map(t=>[t[1],e[t[0]]]).concat(CO_LEGACY.filter(t=>e[t[0]]).map(t=>[t[1],e[t[0]]]));
     const coRows=[];
     for(let i=0;i<coPairs.length;i+=2){const a=coPairs[i],b=coPairs[i+1];
       coRows.push(`<tr><td class="l sub">${esc(a[0])}</td><td>${esc(a[1])||'—'}</td>`+(b?`<td class="l sub">${esc(b[0])}</td><td>${esc(b[1])||'—'}</td>`:'<td></td><td></td>')+'</tr>');}
@@ -12983,7 +12990,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
         resResult=e.result||(tt.overallPct!=null?((!tt.anyFail&&tt.overallPct>=33)?"PROMOTED":"NEEDS IMPROVEMENT"):"—");
       }
     }
-    const coRows=[["Work Education",e.coWork],["Art Education",e.coArt],["Health & Phys. Education",e.coPE],["Discipline",e.discipline]].map(([k,v])=>`<tr><td class="l">${k}</td><td>${esc(v)||'—'}</td></tr>`).join("");
+    const coRows=CO_TRAITS.map(t=>[t[1],e[t[0]]]).concat(CO_LEGACY.filter(t=>e[t[0]]).map(t=>[t[1],e[t[0]]])).map(([k,v])=>`<tr><td class="l">${k}</td><td>${esc(v)||'—'}</td></tr>`).join("");
     const coTitle=tpl==="nep"?"Holistic Development":"Part 2 — Co-Scholastic";
     let resRows=`<tr><td class="l">Percentage</td><td>${resPct==null?'—':resPct+'%'}</td></tr>`;
     if(tpl!=="icse")resRows+=`<tr><td class="l">Overall Grade</td><td>${resGrade}</td></tr>`;
@@ -13710,7 +13717,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
                   {rcTog.coscholastic&&<div>
                     <Lbl c="Co-scholastic grades"/>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-                      {[["coWork","Work Edu."],["coArt","Art Edu."],["coPE","Health/PE"],["discipline","Discipline"]].map(([k,l])=>(<div key={k}><Lbl c={l}/><Sel value={extraDraft[k]||""} onChange={v=>setExtraDraft(d=>({...d,[k]:v}))} options={["","A","B","C","D"]}/></div>))}
+                      {CO_TRAITS.concat(CO_LEGACY.filter(t=>extraDraft[t[0]])).map(([k,l])=>(<div key={k}><Lbl c={l}/><Sel value={extraDraft[k]||""} onChange={v=>setExtraDraft(d=>({...d,[k]:v}))} options={CO_GRADES}/></div>))}
                     </div>
                   </div>}
                   <div><Lbl c="Result override"/><Sel value={extraDraft.result||""} onChange={v=>setExtraDraft(d=>({...d,result:v}))} options={["","PROMOTED","NEEDS IMPROVEMENT","DETAINED"]}/></div>
