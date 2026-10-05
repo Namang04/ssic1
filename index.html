@@ -12590,7 +12590,60 @@ h3{font-size:12.5px;color:#0d1b2a;margin:14px 0 4px;text-transform:uppercase;let
 .legend{margin-top:10px;font-size:10.5px;color:#666}
 .wt{color:#999;font-size:.85em;font-weight:400}
 .sign{margin-top:34px;display:flex;justify-content:space-between;font-size:12px;color:#333;text-align:center}
-@media print{.card{padding:12px}}`;
+@media print{.card{padding:12px}}
+/* Stepping Stone report card (the school's own printed format, modernised 2026-10-05) */
+@page{size:A4;margin:11mm 10mm}
+.scard{width:190mm;margin:0 auto;padding:0 0 4mm;font-family:"Inter","Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;color:#17202c;position:relative}
+.sc-top{display:grid;grid-template-columns:62px 1fr 60px;gap:12px;align-items:center;padding-bottom:9px}
+.sc-logo{width:62px;height:62px;background:center/contain no-repeat}
+.sc-id{text-align:center}.sc-id h1{margin:0;font-size:20.5px;font-weight:800;letter-spacing:-.4px;color:#0d1b2a;line-height:1.12}
+.sc-id .t1{margin-top:3px;font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#9a7b22}
+.sc-id .t2{margin-top:3px;font-size:10px;color:#5b6675}
+.sc-photo{width:60px;height:74px;border:1px solid #c9ced8;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:7.5px;color:#9aa3b0;text-align:center;overflow:hidden;background:#fff}
+.sc-photo img{width:100%;height:100%;object-fit:cover}
+.sc-rule{height:3px;border-radius:3px;background:linear-gradient(90deg,#0d1b2a 0 62%,#c9a84c 62% 100%)}
+.sc-band{margin-top:10px;background:#0d1b2a;border-radius:7px;padding:9px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;color:#fff}
+.sc-band .ttl{font-size:13px;font-weight:800;letter-spacing:.9px;text-transform:uppercase}
+.sc-band .ex{font-size:11px;color:#e8cf86;font-weight:700;letter-spacing:.5px;text-align:center}
+.sc-band .ses{font-size:10px;background:rgba(255,255,255,.12);border-radius:20px;padding:3px 10px;white-space:nowrap}
+.sc-info{margin-top:10px;border:1px solid #e3e7ef;background:#f8fafc;border-radius:7px;padding:9px 13px;display:grid;grid-template-columns:1fr 1fr;gap:5px 22px}
+.sc-info>div{display:flex;gap:7px;font-size:11.5px;min-width:0}
+.sc-info .k{color:#6b7482;font-size:9.5px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;width:80px;flex:none;padding-top:1px}
+.sc-info .v{font-weight:650;color:#17202c;overflow:hidden;text-overflow:ellipsis}
+.sc-h{margin:13px 0 5px;font-size:10px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:#0d1b2a;display:flex;align-items:center;gap:8px}
+.sc-h:after{content:"";flex:1;height:1px;background:#e3e7ef}
+table.sc{width:100%;border-collapse:collapse;font-size:11.5px;margin:0}
+table.sc th{background:#0d1b2a;color:#fff;font-size:9px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;padding:7px 5px;text-align:center;border:1px solid #0d1b2a}
+table.sc th .mx{display:block;font-weight:600;color:#aebcd0;font-size:8.5px;margin-top:1px}
+table.sc td{border:1px solid #e3e7ef;padding:5.5px 6px;text-align:center}
+table.sc td.l,table.sc th.l{text-align:left}
+table.sc tbody tr:nth-child(even) td{background:#fafbfd}
+table.sc td.sub{font-weight:650}
+table.sc td .mx{color:#98a2b3;font-size:9px}
+table.sc td.g{font-weight:800}
+table.sc tr.tot td{background:#eef1f7;font-weight:800;color:#0d1b2a;border-top:1.5px solid #0d1b2a}
+.sc-tiles{margin-top:9px;display:grid;gap:7px}
+.sc-tile{border:1px solid #e3e7ef;border-radius:7px;padding:7px 9px;background:#fff}
+.sc-tile .k{font-size:8.5px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:#6b7482}
+.sc-tile .v{font-size:15px;font-weight:800;color:#0d1b2a;margin-top:2px;letter-spacing:-.3px}
+.sc-tile .v .sm{font-size:10px;font-weight:600;color:#8a93a1}
+.sc-tile .s{font-size:9px;color:#8a93a1;margin-top:1px}
+.sc-tile.hi{background:#0d1b2a;border-color:#0d1b2a}
+.sc-tile.hi .k{color:#b9c6d8}.sc-tile.hi .v{color:#fff}.sc-tile.hi .s{color:#e8cf86}
+.sc-cols{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin-top:2px}
+.sc-scale{margin-top:8px;border:1px solid #e3e7ef;border-radius:7px;padding:7px 10px;display:flex;flex-wrap:wrap;gap:4px 7px;align-items:center}
+.sc-scale .lb{font-size:8.5px;font-weight:800;letter-spacing:.7px;text-transform:uppercase;color:#6b7482;margin-right:3px}
+.sc-chip{font-size:9.5px;border:1px solid #e3e7ef;background:#f8fafc;border-radius:20px;padding:2px 8px;white-space:nowrap}
+.sc-chip b{color:#0d1b2a}
+.sc-remark{margin-top:10px;border:1px solid #e3e7ef;border-radius:7px;padding:9px 12px;min-height:44px}
+.sc-remark .k{font-size:9px;font-weight:800;letter-spacing:.7px;text-transform:uppercase;color:#6b7482}
+.sc-remark .v{font-size:12px;margin-top:3px}
+.sc-note{margin-top:7px;font-size:9.5px;color:#8a5a00;background:#fff8ea;border:1px solid #e8d3a0;border-radius:6px;padding:6px 9px}
+.sc-sign{margin-top:26px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;text-align:center}
+.sc-sign div{font-size:10px;color:#5b6675}
+.sc-sign .ln{border-top:1px dotted #9aa3b0;margin-bottom:4px}
+.sc-foot{margin-top:12px;border-top:1px solid #e3e7ef;padding-top:6px;display:flex;justify-content:space-between;font-size:9px;color:#8a93a1}
+.inc{color:#b9770b}`;
 
 // Term Result list order (2026-09-15, Director): sections in order (A, B, C...; pupils with no section last) and
 // A-Z by name inside each section; onlySec keeps a single section. Returns a new array - the roster is unchanged.
@@ -12617,7 +12670,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
   const extraDraftDirty=!!cardStu&&JSON.stringify(extraDraft||{})!==extraBaseRef.current;
   useEffect(()=>{window.__examMarksDirty=examMarksDirty?"term-exam marks":"";const h=e=>{if(examMarksDirty){e.preventDefault();e.returnValue="";}};window.addEventListener("beforeunload",h);return()=>{window.__examMarksDirty="";window.removeEventListener("beforeunload",h);};},[examMarksDirty]);
   useEffect(()=>{window.__reportCardDirty=extraDraftDirty?cardStu:"";const h=e=>{if(extraDraftDirty){e.preventDefault();e.returnValue="";}};window.addEventListener("beforeunload",h);return()=>{window.__reportCardDirty="";window.removeEventListener("beforeunload",h);};},[extraDraftDirty,cardStu]);
-  const[rcTpl,setRcTpl]=useState("cbse"); // report-card format: cbse · nep · icse
+  const[rcTpl,setRcTpl]=useState("school"); // report-card format: school · cbse · nep · icse
   const[msSec,setMsSec]=useState(""); // marksheet scope: "" = whole class, else one section
   const[rcTog,setRcTog]=useState({rank:true,coscholastic:true,attendance:true,remarks:true}); // sections shown on the card
   // ── Term Result composer state ──
@@ -12785,8 +12838,112 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
     let rk=0,prev=null,n=0;marked.forEach(x=>{if(!(x.max>0)){x.rank=null;return;}n++;if(x.pct!==prev){rk=n;prev=x.pct;}x.rank=rk;});
     return marked.concat(all.filter(x=>!x.hasMarks).map(x=>({...x,rank:null})));
   };
+  // ── Stepping Stone report card (the school's own printed format, modernised 2026-10-05) ──
+  // Same blocks as the card the school has always issued - a column per component (Unit Test, Notebook,
+  // Enrichment, the written exam), the overall strip, co-scholastic, additional subjects, both grading scales,
+  // the remark and the signatures - in a cleaner layout. Pupil details come from the class directory record.
+  // termRowsData returns the per-subject components as DATA so each component can have its own column. The
+  // component set is read from the class's own scheme (termWeights), so 9-10 and 11-12 get their own columns.
+  const termRowsData=(ex,stu,adm)=>{
+    const scholastic=(ex.subjects||[]).filter(s=>s&&!s.graded);
+    const rows=[];let sum=0,n=0,anyIncomplete=false,anyFail=false;
+    const utMax={},wSeen={},wOrder=[],exMax={},exLab={};
+    scholastic.forEach(s=>{
+      const tc=termSubjComposite(ex,s.name,stu,adm);
+      const exMark=tc.exMark;
+      if((exMark===undefined||exMark==="")&&Object.keys(((ex.weighted&&ex.weighted[adm])||{})[s.name]||{}).length===0)return; // not taken
+      const c=tc.comp,p=c.parts||{},cfg=tc.cfg,cells={};
+      if(cfg.ut>0){utMax[cfg.ut]=(utMax[cfg.ut]||0)+1;cells.__ut={v:p.ut,max:cfg.ut};}
+      cfg.writeins.forEach(w=>{if(!wSeen[w.key]){wSeen[w.key]={label:w.label,maxes:{}};wOrder.push(w.key);}wSeen[w.key].maxes[w.max]=(wSeen[w.key].maxes[w.max]||0)+1;cells[w.key]={v:(p.writeins||{})[w.key],max:w.max};});
+      exMax[cfg.exam]=(exMax[cfg.exam]||0)+1;exLab[cfg.examLabel]=(exLab[cfg.examLabel]||0)+1;
+      const inc=!!(c.missing&&c.missing.length);
+      if(c.total!=null&&!inc){sum+=c.total;n++;if(c.total<33||c.absent)anyFail=true;}else anyIncomplete=true;
+      rows.push({name:s.name,cells:cells,exam:{v:p.exam,max:cfg.exam},total:c.total,inc:inc,grade:(c.total==null||inc)?null:cbseGrade(c.total)});
+    });
+    const top=o=>{let k=null,b=-1;Object.keys(o).forEach(x=>{if(o[x]>b){b=o[x];k=x;}});return k;};
+    const cols=[];
+    if(Object.keys(utMax).length)cols.push({key:"__ut",label:"Unit Test",max:Number(top(utMax))});
+    wOrder.forEach(k=>cols.push({key:k,label:wSeen[k].label,max:Number(top(wSeen[k].maxes))}));
+    const pct=n?Math.round(sum/n):null;
+    return{cols:cols,rows:rows,sum:sum,n:n,pct:pct,grade:pct==null?"—":cbseGrade(pct),anyIncomplete:anyIncomplete,anyFail:anyFail,
+      examLabel:top(exLab)||"Exam",examMax:Number(top(exMax))||80};
+  };
+  const schoolCardHTML=(ex,stu,rank,total,pm,opts)=>{
+    opts=opts||{};const tog=Object.assign({rank:true,coscholastic:true,attendance:true,remarks:true},opts.tog||{});
+    const adm=String(admOfExam(ex.cls,stu)||"");
+    const r=examResult(ex,stu),e=__rowValFor(ex.extra,adm,stu)||{},att=attFor(stu,ex.cls);
+    const sec=sectionsOf(ex.cls)[stu]||"-";
+    const _photo=(pm&&pm[adm])||"";
+    const _secList=rosterObjsOf(ex.cls).filter(x=>_rosterSec(x.section,ex.cls)===(sec==="-"?"":sec)).map(x=>x.name).sort((a,b)=>a.localeCompare(b));
+    const drec=((((dirDB&&dirDB.data)||{})[dirKeyOf(ex.cls)]||{}).students||[]).find(s=>s&&String(s.admNo||"")===adm)||{};
+    const roll=drec.roll||((_secList.indexOf(stu)+1)||(rosterOf(ex.cls).indexOf(stu)+1)); // the school's own roll when it is on the record
+    const phone=drec.phone||drec.mobile||drec.contact||drec.fatherMobile||drec.motherMobile||"";
+    const cfgB=(typeof _bcfg==="function")?(_bcfg()||{}):{};
+    const td=termRowsData(ex,stu,adm);
+    const termMode=td.rows.length>0;
+    let head,body,totRow,pctV,gradeV,sumTxt;
+    if(termMode){
+      head='<th class="l">Subject</th>'+td.cols.map(c=>`<th>${esc(c.label)}<span class="mx">${c.max}</span></th>`).join("")+`<th>${esc(td.examLabel)}<span class="mx">${td.examMax}</span></th><th>Total<span class="mx">100</span></th><th>Grade</th>`;
+      body=td.rows.map(row=>{
+        const cells=td.cols.map(c=>{const d=row.cells[c.key];if(!d)return '<td>—</td>';return `<td>${d.v==null?'—':d.v}${d.max!==c.max?`<span class="mx"> /${d.max}</span>`:''}</td>`;}).join("");
+        const exCell=`<td>${row.exam.v==null?'—':row.exam.v}${row.exam.max!==td.examMax?`<span class="mx"> /${row.exam.max}</span>`:''}</td>`;
+        return `<tr><td class="l sub">${esc(row.name)}</td>${cells}${exCell}<td><b>${row.total==null?'—':row.total}${row.inc?'<span class="inc">*</span>':''}</b></td><td class="g">${row.grade||'—'}</td></tr>`;
+      }).join("");
+      const sumOf=f=>{let s=0,any=false;td.rows.forEach(row=>{const v=f(row);if(v!=null&&v!==""){s+=Number(v)||0;any=true;}});return any?Math.round(s*10)/10:null;};
+      const colTot=td.cols.map(c=>{const v=sumOf(row=>row.cells[c.key]?row.cells[c.key].v:null);return `<td>${v==null?'—':v}</td>`;}).join("");
+      const exT=sumOf(row=>row.exam.v);
+      totRow=`<tr class="tot"><td class="l">Overall</td>${colTot}<td>${exT==null?'—':exT}</td><td>${td.sum} / ${td.n*100}</td><td>${td.grade}</td></tr>`;
+      pctV=td.pct;gradeV=td.grade;sumTxt=`${td.sum}<span class="sm"> / ${td.n*100}</span>`;
+    }else{
+      head='<th class="l">Subject</th><th>Maximum</th><th>Obtained</th><th>Percentage</th><th>Grade</th>';
+      body=r.subjects.filter(s=>!s.graded).map(s=>`<tr><td class="l sub">${esc(s.name)}</td><td>${s.max}</td><td>${s.marks==null?'AB':s.marks}</td><td>${s.pct==null?'—':s.pct+'%'}</td><td class="g">${esc(s.grade)}</td></tr>`).join("");
+      totRow=`<tr class="tot"><td class="l">Overall</td><td>${r.max}</td><td>${r.obt}</td><td>${r.hasMarks?r.pct+'%':'—'}</td><td>${r.grade}</td></tr>`;
+      pctV=r.max>0?r.pct:null;gradeV=r.grade;sumTxt=`${r.obt}<span class="sm"> / ${r.max}</span>`;
+    }
+    const addl=r.subjects.filter(s=>s.graded);
+    const coPairs=[["Work Education",e.coWork],["Art Education",e.coArt],["Health & Physical Education",e.coPE],["Discipline",e.discipline]];
+    const coRows=[];
+    for(let i=0;i<coPairs.length;i+=2){const a=coPairs[i],b=coPairs[i+1];
+      coRows.push(`<tr><td class="l sub">${esc(a[0])}</td><td>${esc(a[1])||'—'}</td>`+(b?`<td class="l sub">${esc(b[0])}</td><td>${esc(b[1])||'—'}</td>`:'<td></td><td></td>')+'</tr>');}
+    const tiles=[`<div class="sc-tile"><div class="k">Overall Marks</div><div class="v">${sumTxt}</div></div>`,
+      `<div class="sc-tile hi"><div class="k">Percentage</div><div class="v">${pctV==null?'—':pctV+'%'}</div><div class="s">Grade ${gradeV}</div></div>`];
+    if(tog.rank)tiles.push(`<div class="sc-tile"><div class="k">Rank in Class</div><div class="v">${rank||'—'}</div><div class="s">${total?('of '+total):'&nbsp;'}</div></div>`);
+    if(tog.attendance)tiles.push(`<div class="sc-tile"><div class="k">Attendance</div><div class="v">${att.pct==null?'—':att.pct+'%'}</div><div class="s">${att.t?(att.p+' of '+att.t+' days'):'not marked yet'}</div></div>`);
+    const infoRow=(k,v)=>`<div><span class="k">${k}</span><span class="v">${esc(v)||'—'}</span></div>`;
+    return `<div class="scard">
+      <div class="sc-top">
+        <div class="sc-logo" style="${window.__LOGO?`background-image:url('${window.__LOGO}')`:'border:1px solid #e3e7ef;border-radius:7px'}"></div>
+        <div class="sc-id"><h1>STEPPING STONE INTER COLLEGE</h1><div class="t1">CBSE Curriculum</div>
+          <div class="t2">${esc(BRANCH_LABEL)}, ${esc(BRANCH_ADDR)}${cfgB.phone?' · '+esc(cfgB.phone):''}</div></div>
+        ${_photo?`<div class="sc-photo"><img src="${_photo}" alt=""></div>`:'<div class="sc-photo">Affix<br>Photo</div>'}
+      </div>
+      <div class="sc-rule"></div>
+      <div class="sc-band"><span class="ttl">Report Card</span><span class="ex">${esc(ex.name)}</span><span class="ses">Session ${esc(ex.session||window.__SESSION||"2026-27")}</span></div>
+      <div class="sc-info">
+        ${infoRow("Admission",adm)}${infoRow("Roll No",roll)}
+        ${infoRow("Student",stu)}${infoRow("Class",String(ex.cls).replace(/^Class\s*/i,"")+(sec&&sec!=="-"?" · Section "+sec:""))}
+        ${infoRow("Father",drec.father)}${infoRow("Contact",phone)}
+        ${infoRow("Mother",drec.mother)}${infoRow("Date of Birth",drec.dob?fmtDate(drec.dob):"")}
+        ${drec.address?`<div style="grid-column:1/-1"><span class="k">Address</span><span class="v">${esc(drec.address)}</span></div>`:''}
+      </div>
+      <div class="sc-h">Scholastic Areas</div>
+      <table class="sc"><thead><tr>${head}</tr></thead><tbody>${body}${totRow}</tbody></table>
+      <div class="sc-tiles" style="grid-template-columns:repeat(${tiles.length},1fr)">${tiles.join("")}</div>
+      ${td.anyIncomplete?'<div class="sc-note">Subjects marked <b>*</b> still have a component to be entered, so they carry no grade yet and are left out of the overall.</div>':''}
+      <div class="sc-cols">
+        ${tog.coscholastic?`<div><div class="sc-h">Co-Scholastic</div><table class="sc"><tbody>${coRows.join("")}</tbody></table></div>`:'<div></div>'}
+        ${addl.length?`<div><div class="sc-h">Additional Subjects</div><table class="sc"><tbody>${addl.map(s=>`<tr><td class="l sub">${esc(s.name)}</td><td>${esc(s.grade)||'—'}</td></tr>`).join("")}</tbody></table></div>`:'<div></div>'}
+      </div>
+      <div class="sc-scale"><span class="lb">Scholastic</span><span class="sc-chip"><b>A1</b> 91–100</span><span class="sc-chip"><b>A2</b> 81–90</span><span class="sc-chip"><b>B1</b> 71–80</span><span class="sc-chip"><b>B2</b> 61–70</span><span class="sc-chip"><b>C1</b> 51–60</span><span class="sc-chip"><b>C2</b> 41–50</span><span class="sc-chip"><b>D</b> 33–40</span><span class="sc-chip"><b>E</b> below 33</span></div>
+      <div class="sc-scale"><span class="lb">Co-Scholastic</span><span class="sc-chip"><b>A</b> Outstanding</span><span class="sc-chip"><b>B</b> Very Good</span><span class="sc-chip"><b>C</b> Good</span><span class="sc-chip"><b>D</b> Satisfactory</span><span class="sc-chip"><b>E</b> Needs Improvement</span></div>
+      ${tog.remarks?`<div class="sc-remark"><div class="k">Class Teacher's Remark</div><div class="v">${e.remark?esc(e.remark):'&nbsp;'}</div></div>`:''}
+      <div class="sc-sign"><div><div class="ln"></div>Class Teacher</div><div><div class="ln"></div>Examination In-charge</div><div><div class="ln"></div>Principal</div></div>
+      <div class="sc-foot"><span>${cfgB.website?esc(cfgB.website):esc(BRANCH_LABEL)}</span><span>Issued ${fmtDate(today())} · Stepping Stone Inter College</span></div>
+    </div>`;
+  };
   const cardHTML=(ex,stu,rank,total,pm,opts)=>{
-    opts=opts||{};const tpl=opts.tpl||"cbse";const tog=Object.assign({rank:true,coscholastic:true,attendance:true,remarks:true},opts.tog||{});
+    opts=opts||{};const tpl=opts.tpl||"cbse";
+    if(tpl==="school")return schoolCardHTML(ex,stu,rank,total,pm,opts);const tog=Object.assign({rank:true,coscholastic:true,attendance:true,remarks:true},opts.tog||{});
     const r=examResult(ex,stu);const e=__rowValFor(ex.extra,admOfExam(ex.cls,stu),stu)||{};const att=attFor(stu,ex.cls);
     const sec=sectionsOf(ex.cls)[stu]||"-";
     const _adm=String(admOfExam(ex.cls,stu)||"");const _photo=(pm&&pm[_adm])||"";
@@ -13524,7 +13681,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
             const _mergedExam={...exam,extra:{...(exam.extra||{}),[_extraKey]:extraDraft}};
             const _liveCard=cardHTML(_mergedExam,cardStu,_rc.rank,_total,{},{tpl:rcTpl,tog:rcTog});
             const _srcDoc="<!DOCTYPE html><html><head><meta charset='utf-8'><style>"+CARD_CSS+" html,body{background:#fff}body{padding:10px}</style></head><body>"+_liveCard+"</body></html>";
-            const TPLS=[["cbse","CBSE Scholastic","Marks · 8-point grades · co-scholastic"],["nep","NEP Holistic","Competency levels from marks · holistic"],["icse","ICSE / Percentage","Percentage per subject paper"]];
+            const TPLS=[["school","Stepping Stone","The school’s own card · component columns · scales"],["cbse","CBSE Scholastic","Marks · 8-point grades · co-scholastic"],["nep","NEP Holistic","Competency levels from marks · holistic"],["icse","ICSE / Percentage","Percentage per subject paper"]];
             const TOGS=[["rank","Show class rank"],["coscholastic","Co-scholastic grades"],["attendance","Attendance summary"],["remarks","Teacher remarks"]];
             return <div style={{...INS_CARD,marginTop:16,padding:0,overflow:"hidden"}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"15px 18px",borderBottom:"1px solid var(--ap-line)",flexWrap:"wrap",gap:10}}>
@@ -14793,7 +14950,7 @@ function DirectoryProfile({stu, testsDB, examsDB, studentsDB, attendanceDB, wron
   const[secOpen,setSecOpen]=useState(false);const[secDraft,setSecDraft]=useState("");const[secNew,setSecNew]=useState("");const[secBusy,setSecBusy]=useState(false);const[secMsg,setSecMsg]=useState("");
   const _canPII=!!user&&(user.role==="admin"||user.role==="vp"||user.role==="office"); // Director, VP/Principal & Office see full student records — only fees are hidden from the VP
   // Every displayed head is editable here except: Admission no. (immutable key), Student ID (system id) and Age (derived from DOB).
-  const EDITF=[["Name","name"],["Father","father"],["Mother","mother"],["Contact","contact"],["Alt phone","phone"],["Emergency","emergency"],["Email","email"],["Address","address"],["Gender","gender"],["Date of birth","dob"],["Nationality","nationality"],["Religion","religion"],["Category","category"],["Blood group","blood"],...(_canPII?[["Aadhaar","aadhar"]]:[]),["Class","cls"],["Section","section"],["Subjects","subjects"],["Previous school","prevSchool"],["Previous class","prevClass"],["Board roll","boardRoll"],["Scholar no.","scholarNo"],["Admission date","admDate"],["Type (Old/New)","oldNew"],["House","house"],["Concession","concession"],["Status (Studying/Left)","status"],["APAAR ID","apaarId"],["PEN no.","penNo"]];
+  const EDITF=[["Name","name"],["Father","father"],["Mother","mother"],["Contact","contact"],["Alt phone","phone"],["Emergency","emergency"],["Email","email"],["Address","address"],["Gender","gender"],["Date of birth","dob"],["Nationality","nationality"],["Religion","religion"],["Category","category"],["Blood group","blood"],...(_canPII?[["Aadhaar","aadhar"]]:[]),["Class","cls"],["Section","section"],["Roll no.","roll"],["Subjects","subjects"],["Previous school","prevSchool"],["Previous class","prevClass"],["Board roll","boardRoll"],["Scholar no.","scholarNo"],["Admission date","admDate"],["Type (Old/New)","oldNew"],["House","house"],["Concession","concession"],["Status (Studying/Left)","status"],["APAAR ID","apaarId"],["PEN no.","penNo"]];
   const directoryEditDirty=editing&&(String(eform.admNo||"")!==String(stu.admNo||"")||EDITF.some(function(x){return String(eform[x[1]]||"")!==String(stu[x[1]]||"");}));
   const sectionMoveDirty=secOpen&&!!(secDraft||secNew.trim());
   const directoryDraftLabel=directoryEditDirty?(stu.name+" record corrections"):sectionMoveDirty?(stu.name+" section move"):"";
@@ -16868,6 +17025,9 @@ function BranchSetup({user}){
   const offList=(function(){var seen={},out=[];(typeof __DIR_ORDER!=="undefined"&&typeof __clsTokLabel==="function"?__DIR_ORDER.map(__clsTokLabel):[]).concat(SCHOOL.classes||[]).forEach(function(c){if(c&&!seen[c]){seen[c]=1;out.push(c);}});return out;})();
   const[cls,setCls]=useState(classList[0]||"Class 6");
   const[adding,setAdding]=useState("");const[msg,setMsg]=useState("");const[busy,setBusy]=useState(false);
+  // Printed on the report card: the phone sits under the school name, the website in the card footer.
+  const[schPhone,setSchPhone]=useState("");const[schSite,setSchSite]=useState("");
+  useEffect(()=>{setSchPhone(cfg.phone||"");setSchSite(cfg.website||"");},[cfg.phone,cfg.website]);
   const subjectDraftDirty=!!adding.trim();
   useEffect(()=>{window.__branchSubjectDirty=subjectDraftDirty?(cls+" custom subject"):"";const h=e=>{if(subjectDraftDirty){e.preventDefault();e.returnValue="";}};window.addEventListener("beforeunload",h);return()=>{window.__branchSubjectDirty="";window.removeEventListener("beforeunload",h);};},[subjectDraftDirty,cls]);
   const canEdit=user&&user.role==="admin"&&user.fees!==false; // Branch config is Director-only (VP excluded)
@@ -16889,7 +17049,7 @@ function BranchSetup({user}){
       </div>
       {!canEdit&&<div style={{background:"var(--bg-amb)",color:"var(--tx-org2)",borderRadius:8,padding:"10px 14px",fontSize:13}}>Only the Director can change these settings.</div>}
       <div className="ap-subnav" style={{width:"fit-content"}}>
-        {[["subjects","Subjects"],["exam","Exam structure"],["classes","Classes"]].map(t=>{var on=stab===t[0];return <button key={t[0]} onClick={()=>changeSetupTab(t[0])} className={"ap-pill"+(on?" on":"")}>{t[1]}</button>;})}
+        {[["subjects","Subjects"],["exam","Exam structure"],["classes","Classes"],["school","School details"]].map(t=>{var on=stab===t[0];return <button key={t[0]} onClick={()=>changeSetupTab(t[0])} className={"ap-pill"+(on?" on":"")}>{t[1]}</button>;})}
       </div>
 
       {stab==="classes"&&(
@@ -16949,6 +17109,25 @@ function BranchSetup({user}){
       )}
 
       {stab==="exam"&&<BranchExamSetup cfg={cfg} save={save} branch={branch} canEdit={canEdit} classList={classList}/>}
+      {stab==="school"&&(
+        <div className="ap-panel" style={{padding:18,maxWidth:560}}>
+          <div style={{fontSize:14,fontWeight:700,color:"var(--ap-ink)"}}>School details printed on the report card</div>
+          <div style={{fontSize:12.5,color:"var(--ap-muted)",marginTop:4,lineHeight:1.5}}>The phone numbers print under the school name on the card; the website prints in its footer. Leave either blank to keep it off the card.</div>
+          <div style={{display:"grid",gap:12,marginTop:14}}>
+            <label style={{fontSize:11.5,fontWeight:700,color:"var(--c-64)"}}>Phone numbers
+              <input value={schPhone} onChange={e=>{setSchPhone(e.target.value);setMsg("");}} disabled={!canEdit} placeholder="7379222249, 7379223399" className="ss-input" style={{display:"block",width:"100%",marginTop:5,padding:"10px 12px",borderRadius:6,fontSize:13}}/>
+            </label>
+            <label style={{fontSize:11.5,fontWeight:700,color:"var(--c-64)"}}>Website
+              <input value={schSite} onChange={e=>{setSchSite(e.target.value);setMsg("");}} disabled={!canEdit} placeholder="www.steppingstonegkp.com" className="ss-input" style={{display:"block",width:"100%",marginTop:5,padding:"10px 12px",borderRadius:6,fontSize:13}}/>
+            </label>
+          </div>
+          {canEdit&&<div style={{display:"flex",gap:10,alignItems:"center",marginTop:14,flexWrap:"wrap"}}>
+            <Btn onClick={async()=>{setBusy(true);setMsg("");try{await save({phone:schPhone.trim(),website:schSite.trim()});setMsg("\u2713 Saved \u2014 the report card prints these now.");}catch(e){setMsg("Could not save \u2014 "+((e&&e.message)||"try again"));}setBusy(false);}} disabled={busy||loading}>{busy?"Saving\u2026":"Save school details"}</Btn>
+            {msg&&<span style={{fontSize:12.5,fontWeight:600,color:msg.indexOf("\u2713")===0?"var(--tx-grn2)":"var(--tx-red)"}}>{msg}</span>}
+          </div>}
+          {!canEdit&&<div style={{fontSize:12,color:"var(--ap-muted)",marginTop:12}}>Only the Director can change these.</div>}
+        </div>
+      )}
     </div>
   );
 }
