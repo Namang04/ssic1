@@ -2654,7 +2654,31 @@ const today=()=>{const m=(Date.now()/60000)|0;if(m===__tdMin&&__tdCache)return _
 // new Date().toISOString() instead — which is UTC, and before 05:30 IST returns YESTERDAY. Teachers were
 // filing daily logs and leave against the wrong day.
 function todayIST(){return today();}
-const fmtDate=d=>{if(!d)return"-";const p=d.split("-");return p[2]+"/"+p[1]+"/"+p[0];};
+// Dates reach this app in four shapes: ISO (2009-08-29) from its own screens, day-first (29/08/2009) typed by
+// the office, MONTH-first (8/29/2009) in the records imported from the old ERP, and Excel serial numbers from
+// spreadsheets. fmtDate used to split on "-" alone, so a month-first date of birth printed on the report card
+// as "undefined/undefined/8/29/2009". __dateParts reads all four. When a value could be read either way
+// (3/4/2010) it is taken as MONTH-first, because the imported records are, and that matches how the pupil
+// profile has always shown them. A value it cannot read is returned untouched rather than as "undefined".
+var _MONTHS_S=["January","February","March","April","May","June","July","August","September","October","November","December"];
+function __dateParts(v){
+  if(v===undefined||v===null||v==="")return null;
+  if(v instanceof Date)return isNaN(v.getTime())?null:{d:v.getDate(),m:v.getMonth()+1,y:v.getFullYear()};
+  var t=String(v).trim();if(!t)return null;var m;
+  if(/^\d{2,5}(\.\d+)?$/.test(t)){var n=Number(t);if(n>=10&&n<=80000){var x=new Date(Date.UTC(1899,11,30)+Math.round(n)*86400000);return{d:x.getUTCDate(),m:x.getUTCMonth()+1,y:x.getUTCFullYear()};}}
+  if((m=t.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/)))return __dateOk(+m[3],+m[2],+m[1]);
+  if((m=t.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})/))){
+    var a=+m[1],b=+m[2],y=+m[3];if(y<100)y+=(y<50?2000:1900);
+    if(a>12&&b<=12)return __dateOk(a,b,y);   // 29/08/2009 - day first
+    if(b>12&&a<=12)return __dateOk(b,a,y);   // 8/29/2009  - month first
+    return __dateOk(b,a,y);                  // ambiguous - month first, as the imported records are
+  }
+  var dt=new Date(t);return isNaN(dt.getTime())?null:{d:dt.getDate(),m:dt.getMonth()+1,y:dt.getFullYear()};
+}
+function __dateOk(d,m,y){return(d>=1&&d<=31&&m>=1&&m<=12&&y>999)?{d:d,m:m,y:y}:null;}
+function __dmy(v){var p=__dateParts(v);if(!p)return v===undefined||v===null?"":String(v).trim();var z=function(x){return(x<10?"0":"")+x;};return z(p.d)+"/"+z(p.m)+"/"+p.y;}
+function __dLong(v){var p=__dateParts(v);if(!p)return v===undefined||v===null?"":String(v).trim();return p.d+" "+_MONTHS_S[p.m-1]+" "+p.y;}
+const fmtDate=d=>{if(!d)return"-";const s=String(d);if(/^\d{4}-\d{2}-\d{2}/.test(s)){const p=s.slice(0,10).split("-");return p[2]+"/"+p[1]+"/"+p[0];}return __dmy(s);};
 const fmtTime=iso=>{if(!iso)return"";const d=new Date(iso);return d.toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"});};
 
 // Reactive current branch — re-renders the consumer when the director switches campus (so staff lists, class
@@ -15167,7 +15191,7 @@ function DirectoryProfile({stu, testsDB, examsDB, studentsDB, attendanceDB, wron
   }
   // ── Transfer Certificate (printable, CBSE-style) — pulls from the directory record + fees/attendance ──
   const esc=(s)=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-  const fmtTCDate=(d)=>{if(!d)return"";const t=String(d).trim();let dt=null;if(/^\d{4}-\d{2}-\d{2}/.test(t)){const p=t.slice(0,10).split("-");dt=new Date(+p[0],+p[1]-1,+p[2]);}else if(/^\d{1,2}[\/-]\d{1,2}[\/-]\d{4}/.test(t)){const p=t.split(/[\/-]/);dt=new Date(+p[2],+p[1]-1,+p[0]);}return(dt&&!isNaN(dt.getTime()))?dt.toLocaleDateString("en-GB",{day:"2-digit",month:"long",year:"numeric"}):t;};
+  const fmtTCDate=(d)=>__dLong(d); // shared reader: ISO, day-first, month-first and Excel serials
   function printTC(){
     const tcNo=window.prompt("Transfer Certificate No. (leave blank to write by hand):","")||"";
     if(tcNo===null)return;
