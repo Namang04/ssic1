@@ -12876,11 +12876,12 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
   // termRowsData returns the per-subject components as DATA so each component can have its own column. The
   // component set is read from the class's own scheme (termWeights), so 9-10 and 11-12 get their own columns.
   const termRowsData=(ex,stu,adm)=>{
-    // Classes 11-12: the school's card carries ONE internal column, "Viva/Practical", whatever the component is
-    // called in the scheme (Practical for the sciences, PE and Computer Science; Internal / Project elsewhere),
-    // and calls the written column "Theory". A subject with its own maxima - Physical Education at 30 and 70 -
-    // keeps them, printed in its own cells.
-    const senior=/^Class (11|12)$/.test(String(ex.cls||"").trim());
+    // Classes 9-12 share one layout (director, 2026-10-05): ONE internal column, "Viva/Practical", whatever the
+    // component is called in the scheme (Practical for the sciences, PE and Computer Science; Internal
+    // Assessment in 9-10; Internal / Project elsewhere), and a written column called "Theory". A subject with
+    // its own maxima - Physical Education at 30 and 70, Computer at 50 and 50 - keeps them in its own cells.
+    // Classes 6-8 keep their own layout: Unit Test, Notebook, Enrichment and the exam.
+    const senior=/^Class (9|10|11|12)$/.test(String(ex.cls||"").trim());
     const scholastic=(ex.subjects||[]).filter(s=>s&&!s.graded);
     const rows=[];let sum=0,n=0,anyIncomplete=false,anyFail=false;
     const utMax={},wSeen={},wOrder=[],exMax={},exLab={};
