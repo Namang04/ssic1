@@ -12628,7 +12628,7 @@ h3{font-size:12.5px;color:#0d1b2a;margin:14px 0 4px;text-transform:uppercase;let
 .sc-top{display:grid;grid-template-columns:62px 1fr 60px;gap:12px;align-items:center;padding-bottom:9px}
 .sc-logo{width:62px;height:62px;background:center/contain no-repeat}
 .sc-id{text-align:center}.sc-id h1{margin:0;font-size:20.5px;font-weight:800;letter-spacing:-.4px;color:#0d1b2a;line-height:1.12}
-.sc-id .t1{margin-top:3px;font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#9a7b22}
+.sc-id .t1{margin-top:3px;font-size:9.5px;font-weight:700;letter-spacing:.2px;color:#9a7b22}
 .sc-id .t2{margin-top:3px;font-size:10px;color:#5b6675}
 .sc-photo{width:60px;height:74px;border:1px solid #c9ced8;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:7.5px;color:#9aa3b0;text-align:center;overflow:hidden;background:#fff}
 .sc-photo img{width:100%;height:100%;object-fit:cover}
@@ -12876,6 +12876,11 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
   // termRowsData returns the per-subject components as DATA so each component can have its own column. The
   // component set is read from the class's own scheme (termWeights), so 9-10 and 11-12 get their own columns.
   const termRowsData=(ex,stu,adm)=>{
+    // Classes 11-12: the school's card carries ONE internal column, "Viva/Practical", whatever the component is
+    // called in the scheme (Practical for the sciences, PE and Computer Science; Internal / Project elsewhere),
+    // and calls the written column "Theory". A subject with its own maxima - Physical Education at 30 and 70 -
+    // keeps them, printed in its own cells.
+    const senior=/^Class (11|12)$/.test(String(ex.cls||"").trim());
     const scholastic=(ex.subjects||[]).filter(s=>s&&!s.graded);
     const rows=[];let sum=0,n=0,anyIncomplete=false,anyFail=false;
     const utMax={},wSeen={},wOrder=[],exMax={},exLab={};
@@ -12885,7 +12890,11 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
       if((exMark===undefined||exMark==="")&&Object.keys(((ex.weighted&&ex.weighted[adm])||{})[s.name]||{}).length===0)return; // not taken
       const c=tc.comp,p=c.parts||{},cfg=tc.cfg,cells={};
       if(cfg.ut>0){utMax[cfg.ut]=(utMax[cfg.ut]||0)+1;cells.__ut={v:p.ut,max:cfg.ut};}
-      cfg.writeins.forEach(w=>{if(!wSeen[w.key]){wSeen[w.key]={label:w.label,maxes:{}};wOrder.push(w.key);}wSeen[w.key].maxes[w.max]=(wSeen[w.key].maxes[w.max]||0)+1;cells[w.key]={v:(p.writeins||{})[w.key],max:w.max};});
+      if(senior&&cfg.writeins.length){
+        let vv=null,vm=0;cfg.writeins.forEach(w=>{const x=(p.writeins||{})[w.key];if(x!=null&&x!=="")vv=(vv==null?0:vv)+(Number(x)||0);vm+=Number(w.max)||0;});
+        if(!wSeen.__viva){wSeen.__viva={label:"Viva/Practical",maxes:{}};wOrder.push("__viva");}
+        wSeen.__viva.maxes[vm]=(wSeen.__viva.maxes[vm]||0)+1;cells.__viva={v:vv==null?null:Math.round(vv*10)/10,max:vm};
+      }else cfg.writeins.forEach(w=>{if(!wSeen[w.key]){wSeen[w.key]={label:w.label,maxes:{}};wOrder.push(w.key);}wSeen[w.key].maxes[w.max]=(wSeen[w.key].maxes[w.max]||0)+1;cells[w.key]={v:(p.writeins||{})[w.key],max:w.max};});
       exMax[cfg.exam]=(exMax[cfg.exam]||0)+1;exLab[cfg.examLabel]=(exLab[cfg.examLabel]||0)+1;
       const inc=!!(c.missing&&c.missing.length);
       if(c.total!=null&&!inc){sum+=c.total;n++;if(c.total<33||c.absent)anyFail=true;}else anyIncomplete=true;
@@ -12897,7 +12906,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
     wOrder.forEach(k=>cols.push({key:k,label:wSeen[k].label,max:Number(top(wSeen[k].maxes))}));
     const pct=n?Math.round(sum/n):null;
     return{cols:cols,rows:rows,sum:sum,n:n,pct:pct,grade:pct==null?"—":cbseGrade(pct),anyIncomplete:anyIncomplete,anyFail:anyFail,
-      examLabel:top(exLab)||"Exam",examMax:Number(top(exMax))||80};
+      examLabel:senior?"Theory":(top(exLab)||"Exam"),examMax:Number(top(exMax))||80};
   };
   const schoolCardHTML=(ex,stu,rank,total,pm,opts)=>{
     opts=opts||{};const tog=Object.assign({rank:true,coscholastic:true,attendance:true,remarks:true},opts.tog||{});
@@ -12944,7 +12953,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
     return `<div class="scard">
       <div class="sc-top">
         <div class="sc-logo" style="${window.__LOGO?`background-image:url('${window.__LOGO}')`:'border:1px solid #e3e7ef;border-radius:7px'}"></div>
-        <div class="sc-id"><h1>STEPPING STONE INTER COLLEGE</h1><div class="t1">CBSE Curriculum</div>
+        <div class="sc-id"><h1>STEPPING STONE INTER COLLEGE</h1><div class="t1">Affiliated to the Central Board of Secondary Education, New Delhi${cfgB.affNo?' \u00b7 Affiliation No. '+esc(cfgB.affNo):''}</div>
           <div class="t2">${esc(BRANCH_LABEL)}, ${esc(BRANCH_ADDR)}${cfgB.phone?' · '+esc(cfgB.phone):''}</div></div>
         ${_photo?`<div class="sc-photo"><img src="${_photo}" alt=""></div>`:'<div class="sc-photo">Affix<br>Photo</div>'}
       </div>
@@ -17057,8 +17066,8 @@ function BranchSetup({user}){
   const[cls,setCls]=useState(classList[0]||"Class 6");
   const[adding,setAdding]=useState("");const[msg,setMsg]=useState("");const[busy,setBusy]=useState(false);
   // Printed on the report card: the phone sits under the school name, the website in the card footer.
-  const[schPhone,setSchPhone]=useState("");const[schSite,setSchSite]=useState("");
-  useEffect(()=>{setSchPhone(cfg.phone||"");setSchSite(cfg.website||"");},[cfg.phone,cfg.website]);
+  const[schPhone,setSchPhone]=useState("");const[schSite,setSchSite]=useState("");const[schAff,setSchAff]=useState("");
+  useEffect(()=>{setSchPhone(cfg.phone||"");setSchSite(cfg.website||"");setSchAff(cfg.affNo||"");},[cfg.phone,cfg.website,cfg.affNo]);
   const subjectDraftDirty=!!adding.trim();
   useEffect(()=>{window.__branchSubjectDirty=subjectDraftDirty?(cls+" custom subject"):"";const h=e=>{if(subjectDraftDirty){e.preventDefault();e.returnValue="";}};window.addEventListener("beforeunload",h);return()=>{window.__branchSubjectDirty="";window.removeEventListener("beforeunload",h);};},[subjectDraftDirty,cls]);
   const canEdit=user&&user.role==="admin"&&user.fees!==false; // Branch config is Director-only (VP excluded)
@@ -17143,17 +17152,20 @@ function BranchSetup({user}){
       {stab==="school"&&(
         <div className="ap-panel" style={{padding:18,maxWidth:560}}>
           <div style={{fontSize:14,fontWeight:700,color:"var(--ap-ink)"}}>School details printed on the report card</div>
-          <div style={{fontSize:12.5,color:"var(--ap-muted)",marginTop:4,lineHeight:1.5}}>The phone numbers print under the school name on the card; the website prints in its footer. Leave either blank to keep it off the card.</div>
+          <div style={{fontSize:12.5,color:"var(--ap-muted)",marginTop:4,lineHeight:1.5}}>The affiliation number and phone numbers print under the school name on the card; the website prints in its footer. Leave either blank to keep it off the card.</div>
           <div style={{display:"grid",gap:12,marginTop:14}}>
             <label style={{fontSize:11.5,fontWeight:700,color:"var(--c-64)"}}>Phone numbers
               <input value={schPhone} onChange={e=>{setSchPhone(e.target.value);setMsg("");}} disabled={!canEdit} placeholder="7379222249, 7379223399" className="ss-input" style={{display:"block",width:"100%",marginTop:5,padding:"10px 12px",borderRadius:6,fontSize:13}}/>
+            </label>
+            <label style={{fontSize:11.5,fontWeight:700,color:"var(--c-64)"}}>CBSE affiliation no.
+              <input value={schAff} onChange={e=>{setSchAff(e.target.value);setMsg("");}} disabled={!canEdit} placeholder="2132439" className="ss-input" style={{display:"block",width:"100%",marginTop:5,padding:"10px 12px",borderRadius:6,fontSize:13}}/>
             </label>
             <label style={{fontSize:11.5,fontWeight:700,color:"var(--c-64)"}}>Website
               <input value={schSite} onChange={e=>{setSchSite(e.target.value);setMsg("");}} disabled={!canEdit} placeholder="www.steppingstonegkp.com" className="ss-input" style={{display:"block",width:"100%",marginTop:5,padding:"10px 12px",borderRadius:6,fontSize:13}}/>
             </label>
           </div>
           {canEdit&&<div style={{display:"flex",gap:10,alignItems:"center",marginTop:14,flexWrap:"wrap"}}>
-            <Btn onClick={async()=>{setBusy(true);setMsg("");try{await save({phone:schPhone.trim(),website:schSite.trim()});setMsg("\u2713 Saved \u2014 the report card prints these now.");}catch(e){setMsg("Could not save \u2014 "+((e&&e.message)||"try again"));}setBusy(false);}} disabled={busy||loading}>{busy?"Saving\u2026":"Save school details"}</Btn>
+            <Btn onClick={async()=>{setBusy(true);setMsg("");try{await save({phone:schPhone.trim(),website:schSite.trim(),affNo:schAff.trim()});setMsg("\u2713 Saved \u2014 the report card prints these now.");}catch(e){setMsg("Could not save \u2014 "+((e&&e.message)||"try again"));}setBusy(false);}} disabled={busy||loading}>{busy?"Saving\u2026":"Save school details"}</Btn>
             {msg&&<span style={{fontSize:12.5,fontWeight:600,color:msg.indexOf("\u2713")===0?"var(--tx-grn2)":"var(--tx-red)"}}>{msg}</span>}
           </div>}
           {!canEdit&&<div style={{fontSize:12,color:"var(--ap-muted)",marginTop:12}}>Only the Director can change these.</div>}
