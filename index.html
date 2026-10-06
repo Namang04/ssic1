@@ -13060,9 +13060,11 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
   };
   // Pre-printed stationery needs its own page box: the school's header band and the footer strip are already on
   // the paper, so the card prints between them. The three margins are set per branch in Branch Setup.
+  const __lhOn=()=>{const c=(typeof _bcfg==="function")?(_bcfg()||{}):{};return c.letterhead===true;};
   const __lhCss=()=>{const c=(typeof _bcfg==="function")?(_bcfg()||{}):{};if(c.letterhead!==true)return "";
     const t=Number(c.lhTop)||38,b=Number(c.lhBottom)||24,s=Number(c.lhSide)||12;
-    return `@page{size:A4;margin:${t}mm ${s}mm ${b}mm}`;};
+    // The sheet carries the school header, so every card format drops its own - not just the school format.
+    return `@page{size:A4;margin:${t}mm ${s}mm ${b}mm}.card .hdr,.card .stuphoto{display:none}.card{padding:0}`;};
   const openPrint=inner=>{const w=window.open("","_blank");if(w){w.document.write(`<html><head><title>Report Card</title><meta charset="utf-8"><style>${CARD_CSS}${__lhCss()}</style></head><body>${inner}</body></html>`);w.document.close();setTimeout(()=>w.print(),350);}};
   // Open a window WITHOUT auto-printing — for reviewing the term-result card before it becomes the official one.
   const openPreview=(inner,title)=>{const w=window.open("","_blank");if(w){w.document.write(`<html><head><title>${title||"Preview"}</title><meta charset="utf-8"><style>${CARD_CSS}</style></head><body>${inner}</body></html>`);w.document.close();}};
@@ -13674,7 +13676,8 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
           </select>):null;})()}
           {exam&&marked.length>0&&<Btn onClick={()=>openMarksheet(exam,msSec,msInt)}><Icon name="print" size={16}/> Marksheet{msSec?" · Sec "+msSec:""} (PDF)</Btn>}
           {exam&&marked.length>0&&<label title="Print each subject as internal + theory with its total out of 100" style={{display:"flex",alignItems:"center",gap:6,fontSize:12.5,color:"var(--ap-ink2)",cursor:"pointer",whiteSpace:"nowrap"}}><input type="checkbox" checked={msInt} onChange={e=>setMsInt(e.target.checked)}/>with internal marks</label>}
-          {exam&&marked.length>0&&<Btn v="ghost" onClick={()=>printAll(exam,{tpl:rcTpl,tog:rcTog},cr)}><Icon name="print" size={16}/> Print all cards ({marked.length}{msSec?" · Sec "+msSec:""})</Btn>}{exam&&marked.length>0&&<Btn v="ghost" onClick={()=>exportResults(exam,cr)}>⬇ Export results CSV{msSec?" · Sec "+msSec:""}</Btn>}</div>
+          {exam&&marked.length>0&&<Btn v="ghost" onClick={()=>printAll(exam,{tpl:rcTpl,tog:rcTog},cr)}><Icon name="print" size={16}/> Print all cards ({marked.length}{msSec?" · Sec "+msSec:""})</Btn>}{exam&&__lhOn()&&<span title="Branch Setup → School details" style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:11.5,fontWeight:700,color:"var(--tx-grn2)",background:"var(--bg-grn)",borderRadius:20,padding:"4px 11px",whiteSpace:"nowrap"}}>On pre-printed letterhead · card header hidden</span>}
+          {exam&&marked.length>0&&<Btn v="ghost" onClick={()=>exportResults(exam,cr)}>⬇ Export results CSV{msSec?" · Sec "+msSec:""}</Btn>}</div>
         {!exam?<Empty icon="clip" title="No exam selected" sub="Pick an exam to see results and print report cards."/>:
         marked.length===0?<Empty icon="clip" title={msSec?"No marks in Section "+msSec:"No marks entered"} sub={msSec?"No marks entered for Section "+msSec+" yet — pick All sections above, or enter marks in the Enter Marks tab.":"Enter marks for "+exam.name+" to generate report cards."}/>:<>
           <div style={{display:"grid",gap:14,gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))",marginBottom:16}}>
