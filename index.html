@@ -12704,6 +12704,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
   useEffect(()=>{window.__reportCardDirty=extraDraftDirty?cardStu:"";const h=e=>{if(extraDraftDirty){e.preventDefault();e.returnValue="";}};window.addEventListener("beforeunload",h);return()=>{window.__reportCardDirty="";window.removeEventListener("beforeunload",h);};},[extraDraftDirty,cardStu]);
   const[rcTpl,setRcTpl]=useState("school"); // report-card format: school · cbse · nep · icse
   const[msSec,setMsSec]=useState(""); // marksheet scope: "" = whole class, else one section
+  const[msInt,setMsInt]=useState(false); // marksheet: print each subject's internal + theory split and its /100
   const[rcTog,setRcTog]=useState({rank:true,coscholastic:true,attendance:true,remarks:true}); // sections shown on the card
   // ── Term Result composer state ──
   const[trCls,setTrCls]=useState(examClasses[0]||__academicClasses()[0]);
@@ -13126,7 +13127,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
 
   // ── Class MARKSHEET — the office's tabular statement of marks for one exam (whole class on one sheet,
   //    ranked, with signature lines) — distinct from the per-student report cards. Print → Save as PDF.
-  const openMarksheet=(ex,msec)=>{
+  const openMarksheet=(ex,msec,withInt)=>{
     let cr=classResults(ex);
     const secMap=sectionsOf(ex.cls); // student name → normalized section (streams collapse to A/B/C/D)
     if(msec)cr=cr.filter(x=>(secMap[x.student]||"")===msec);
@@ -13138,22 +13139,42 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
     // carries empty Physics/Bio columns from the other stream.
     const subjNames=[...new Set(cr.flatMap(x=>x.subjects.map(s=>s.name)))];
     const maxBy={};(ex.subjects||[]).forEach(s=>{if(!s.graded)maxBy[s.name]=Number(s.max)||100;});
+    // "with internal marks": every subject shows its internal (viva/practical, or the 6-8 components) beside the
+    // theory mark and its weighted /100, and the total, percentage, grade and rank all follow that weighted view.
+    const TD={};if(withInt)cr.forEach(x=>{TD[x.student]=termRowsData(ex,x.student,String(admOfExam(ex.cls,x.student)||""));});
+    const wOf=x=>{const t=TD[x.student];return (withInt&&t&&t.n>0&&t.pct!=null)?t.pct:(x.max>0?x.pct:null);};
+    if(withInt){const _s=cr.slice().sort((a,b)=>((wOf(b)==null?-1:wOf(b))-(wOf(a)==null?-1:wOf(a))));let _k=0,_p=null,_m=0;
+      cr=_s.map(x=>{const v=wOf(x);if(v==null)return{...x,rank:null};_m++;if(v!==_p){_k=_m;_p=v;}return{...x,rank:_k};});}
     const doneNum=done.filter(x=>x.max>0); // numeric-marks cohort — grade-only cards excluded from pass/avg
-    const passCount=doneNum.filter(x=>!x.anyFail&&x.pct>=33).length;
-    const avg=doneNum.length?Math.round(doneNum.reduce((a,x)=>a+x.pct,0)/doneNum.length):0;
+    const passCount=doneNum.filter(x=>withInt?((wOf(x)||0)>=33&&!(TD[x.student]&&TD[x.student].anyFail)):(!x.anyFail&&x.pct>=33)).length;
+    const avg=doneNum.length?Math.round(doneNum.reduce((a,x)=>a+(withInt?(wOf(x)||0):x.pct),0)/doneNum.length):0;
     const rows=cr.map((x,i)=>{
       // graded (co-scholastic) subjects carry marks:null + a letter grade — print the grade, never "AB" (absent).
       const byName={};x.subjects.forEach(s=>{byName[s.name]=s.graded?{g:String(s.grade||"")}:(s.marks==null?"AB":s.marks);});
       const hasNum=x.hasMarks&&x.max>0;
       const pass=hasNum&&!x.anyFail&&x.pct>=33;
-      return `<tr${x.hasMarks?"":' class="dim"'}><td>${i+1}</td><td>${esc(admOfExam(ex.cls,x.student)||"")}</td><td class="l">${esc(x.student)}</td>${subjNames.map(n=>{const v=byName[n];return `<td>${v===undefined?"":(v==="AB"?'<span class="ab">AB</span>':(v&&v.g!==undefined?esc(v.g):v))}</td>`;}).join("")}<td class="b">${hasNum?x.obt+"/"+x.max:"—"}</td><td class="b">${hasNum?x.pct+"%":"—"}</td><td>${hasNum?x.grade:"—"}</td><td class="b">${x.rank||"—"}</td><td>${hasNum?(pass?"PASS":'<span class="ab">N.IMP</span>'):"—"}</td></tr>`;
+      const t=TD[x.student];
+      const plain=n=>{const v=byName[n];return v===undefined?"":(v==="AB"?'<span class="ab">AB</span>':(v&&v.g!==undefined?esc(v.g):v));};
+      const cell=n=>{
+        if(!withInt||!t)return plain(n);
+        const row=t.rows.filter(r=>r.name===n)[0];
+        if(!row)return plain(n); // graded subject, or one this pupil does not take
+        const ints=t.cols.map(c=>row.cells[c.key]).filter(Boolean).map(d=>d.v==null?"—":d.v).join(" + ");
+        return `<span class="sp">${ints||"—"} + ${row.exam.v==null?"—":row.exam.v}</span><br><b>${row.total==null?"—":row.total}</b>`;
+      };
+      const wp=withInt?wOf(x):null, wt=withInt&&t&&t.n>0;
+      const totCell=wt?(t.sum+"/"+(t.n*100)):(hasNum?x.obt+"/"+x.max:"—");
+      const pctCell=withInt?(wp==null?"—":wp+"%"):(hasNum?x.pct+"%":"—");
+      const grCell=withInt?(wp==null?"—":cbseGrade(wp)):(hasNum?x.grade:"—");
+      const resCell=withInt?(wp==null?"—":((wp>=33&&!(t&&t.anyFail))?"PASS":'<span class="ab">N.IMP</span>')):(hasNum?(pass?"PASS":'<span class="ab">N.IMP</span>'):"—");
+      return `<tr${x.hasMarks?"":' class="dim"'}><td>${i+1}</td><td>${esc(admOfExam(ex.cls,x.student)||"")}</td><td class="l">${esc(x.student)}</td>${subjNames.map(n=>`<td>${cell(n)}</td>`).join("")}<td class="b">${totCell}</td><td class="b">${pctCell}</td><td>${grCell}</td><td class="b">${x.rank||"—"}</td><td>${resCell}</td></tr>`;
     }).join("");
     const inner=`<div class="ms">
       <div class="hdr"><div class="hdrlogo"></div><h1>${esc(SCHOOL_NAME)}</h1><div class="sub">Session ${window.__SESSION||"2026-27"}</div></div>
-      <div class="rt">Marksheet — ${esc(ex.name)}${msec?" · Section "+esc(msec):""}</div>
+      <div class="rt">Marksheet — ${esc(ex.name)}${msec?" · Section "+esc(msec):""}${withInt?" · with internal marks":""}</div>
       <div class="msinfo"><span>Class: <b>${esc(ex.cls)}${msec?" — Sec "+esc(msec):""}</b></span><span>Exam date: <b>${esc(ex.date||"—")}</b></span><span>Students assessed: <b>${done.length}</b> of ${cr.length}</span><span>Pass: <b>${passCount}</b> (${done.length?Math.round(passCount/done.length*100):0}%)</span><span>Class average: <b>${avg}%</b></span><span>Printed: <b>${today()}</b></span></div>
-      <table><thead><tr><th>S.No</th><th>Adm No</th><th class="l">Student</th>${subjNames.map(n=>`<th>${esc(n)}${maxBy[n]?`<div class="wt">/${maxBy[n]}</div>`:""}</th>`).join("")}<th>Total</th><th>%</th><th>Grade</th><th>Rank</th><th>Result</th></tr></thead><tbody>${rows}</tbody></table>
-      <div class="legend">AB = absent (counted as 0) · blank = subject not taken · N.IMP = Needs Improvement (below 33% overall or in a subject) · rank is within ${msec?"this section":"the class"} · rows in grey have no marks entered.</div>
+      <table><thead><tr><th>S.No</th><th>Adm No</th><th class="l">Student</th>${subjNames.map(n=>`<th>${esc(n)}${withInt?'<div class="wt">internal + theory &middot; 100</div>':(maxBy[n]?`<div class="wt">/${maxBy[n]}</div>`:"")}</th>`).join("")}<th>Total</th><th>%</th><th>Grade</th><th>Rank</th><th>Result</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="legend">AB = absent (counted as 0) · blank = subject not taken · N.IMP = Needs Improvement (below 33% overall or in a subject) · rank is within ${msec?"this section":"the class"} · rows in grey have no marks entered.${withInt?" Each subject cell reads internal + theory with its weighted total out of 100; the total, percentage, grade and rank follow that.":""}</div>
       <div class="sign"><span>Class Teacher</span><span>Examination In-charge</span><span>Principal</span></div>
     </div>`;
     const MS_CSS=`@page{size:A4 landscape;margin:10mm}
@@ -13162,6 +13183,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
       .ms th,.ms td{padding:4px 5px}
       .ms td.b{font-weight:700}.ms tr.dim td{color:#999}
       .ms .ab{color:#b3261e;font-weight:700}
+      .ms .sp{font-size:9px;color:#6b7482;white-space:nowrap}
       .ms .msinfo{display:flex;gap:6px 22px;flex-wrap:wrap;font-size:11.5px;margin:8px 0 2px;padding:7px 10px;border:1px solid #cfcfcf;border-radius:6px}
       .ms .sign span{border-top:1px solid #333;padding:5px 26px 0;margin-top:44px}
       thead{display:table-header-group}tr{page-break-inside:avoid}`;
@@ -13636,7 +13658,8 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
             <option value="">All sections</option>
             {_secs.map(sc=><option key={sc} value={sc}>Section {sc}</option>)}
           </select>):null;})()}
-          {exam&&marked.length>0&&<Btn onClick={()=>openMarksheet(exam,msSec)}><Icon name="print" size={16}/> Marksheet{msSec?" · Sec "+msSec:""} (PDF)</Btn>}
+          {exam&&marked.length>0&&<Btn onClick={()=>openMarksheet(exam,msSec,msInt)}><Icon name="print" size={16}/> Marksheet{msSec?" · Sec "+msSec:""} (PDF)</Btn>}
+          {exam&&marked.length>0&&<label title="Print each subject as internal + theory with its total out of 100" style={{display:"flex",alignItems:"center",gap:6,fontSize:12.5,color:"var(--ap-ink2)",cursor:"pointer",whiteSpace:"nowrap"}}><input type="checkbox" checked={msInt} onChange={e=>setMsInt(e.target.checked)}/>with internal marks</label>}
           {exam&&marked.length>0&&<Btn v="ghost" onClick={()=>printAll(exam,{tpl:rcTpl,tog:rcTog},cr)}><Icon name="print" size={16}/> Print all cards ({marked.length}{msSec?" · Sec "+msSec:""})</Btn>}{exam&&marked.length>0&&<Btn v="ghost" onClick={()=>exportResults(exam,cr)}>⬇ Export results CSV{msSec?" · Sec "+msSec:""}</Btn>}</div>
         {!exam?<Empty icon="clip" title="No exam selected" sub="Pick an exam to see results and print report cards."/>:
         marked.length===0?<Empty icon="clip" title={msSec?"No marks in Section "+msSec:"No marks entered"} sub={msSec?"No marks entered for Section "+msSec+" yet — pick All sections above, or enter marks in the Enter Marks tab.":"Enter marks for "+exam.name+" to generate report cards."}/>:<>
