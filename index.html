@@ -12659,6 +12659,7 @@ table.sc tr.tot td{background:#eef1f7;font-weight:800;color:#0d1b2a;border-top:1
 .sc-tile .v{font-size:15px;font-weight:800;color:#0d1b2a;margin-top:2px;letter-spacing:-.3px}
 .sc-tile .v .sm{font-size:10px;font-weight:600;color:#8a93a1}
 .sc-tile .s{font-size:9px;color:#8a93a1;margin-top:1px}
+.sc-blank{height:21px;border-bottom:1px dotted #9aa3b0;margin:7px 2px 1px}
 .sc-tile.hi{background:#0d1b2a;border-color:#0d1b2a}
 .sc-tile.hi .k{color:#b9c6d8}.sc-tile.hi .v{color:#fff}.sc-tile.hi .s{color:#e8cf86}
 .sc-cols{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin-top:2px}
@@ -12912,7 +12913,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
   const schoolCardHTML=(ex,stu,rank,total,pm,opts)=>{
     opts=opts||{};const tog=Object.assign({rank:true,coscholastic:true,attendance:true,remarks:true},opts.tog||{});
     const adm=String(admOfExam(ex.cls,stu)||"");
-    const r=examResult(ex,stu),e=__rowValFor(ex.extra,adm,stu)||{},att=attFor(stu,ex.cls);
+    const r=examResult(ex,stu),e=__rowValFor(ex.extra,adm,stu)||{};
     const sec=sectionsOf(ex.cls)[stu]||"-";
     const _photo=(pm&&pm[adm])||"";
     const _secList=rosterObjsOf(ex.cls).filter(x=>_rosterSec(x.section,ex.cls)===(sec==="-"?"":sec)).map(x=>x.name).sort((a,b)=>a.localeCompare(b));
@@ -12948,10 +12949,12 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
     const coRows=[];
     for(let i=0;i<coPairs.length;i+=2){const a=coPairs[i],b=coPairs[i+1];
       coRows.push(`<tr><td class="l sub">${esc(a[0])}</td><td>${esc(a[1])||'—'}</td>`+(b?`<td class="l sub">${esc(b[0])}</td><td>${esc(b[1])||'—'}</td>`:'<td></td><td></td>')+'</tr>');}
-    const tiles=[`<div class="sc-tile"><div class="k">Overall Marks</div><div class="v">${sumTxt}</div></div>`,
-      `<div class="sc-tile hi"><div class="k">Percentage</div><div class="v">${pctV==null?'—':pctV+'%'}</div><div class="s">Grade ${gradeV}</div></div>`];
-    if(tog.rank)tiles.push(`<div class="sc-tile"><div class="k">Rank in Class</div><div class="v">${rank||'—'}</div><div class="s">${total?('of '+total):'&nbsp;'}</div></div>`);
-    if(tog.attendance)tiles.push(`<div class="sc-tile"><div class="k">Attendance</div><div class="v">${att.pct==null?'—':att.pct+'%'}</div><div class="s">${att.t?(att.p+' of '+att.t+' days'):'not marked yet'}</div></div>`);
+    // Rank and attendance are filled in by hand on the printed card, so both are left as a ruled space. The
+    // app's own attendance figure is deliberately not printed: the class teacher writes the days actually held.
+    const tiles=[[1,`<div class="sc-tile"><div class="k">Overall Marks</div><div class="v">${sumTxt}</div></div>`],
+      [1,`<div class="sc-tile hi"><div class="k">Percentage</div><div class="v">${pctV==null?'—':pctV+'%'}</div><div class="s">Grade ${gradeV}</div></div>`]];
+    if(tog.rank)tiles.push([1.1,'<div class="sc-tile"><div class="k">Rank in Class</div><div class="sc-blank"></div></div>']);
+    if(tog.attendance)tiles.push([1.5,'<div class="sc-tile"><div class="k">Attendance</div><div class="sc-blank"></div></div>']);
     const infoRow=(k,v)=>`<div><span class="k">${k}</span><span class="v">${esc(v)||'—'}</span></div>`;
     return `<div class="scard">
       <div class="sc-top">
@@ -12971,7 +12974,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
       </div>
       <div class="sc-h">Scholastic Areas</div>
       <table class="sc"><thead><tr>${head}</tr></thead><tbody>${body}${totRow}</tbody></table>
-      <div class="sc-tiles" style="grid-template-columns:repeat(${tiles.length},1fr)">${tiles.join("")}</div>
+      <div class="sc-tiles" style="grid-template-columns:${tiles.map(t=>t[0]+"fr").join(" ")}">${tiles.map(t=>t[1]).join("")}</div>
       ${td.anyIncomplete?'<div class="sc-note">Subjects marked <b>*</b> still have a component to be entered, so they carry no grade yet and are left out of the overall.</div>':''}
       <div class="sc-cols"${addl.length?'':' style="grid-template-columns:1fr"'}>
         ${tog.coscholastic?`<div><div class="sc-h">Co-Scholastic</div><table class="sc"><tbody>${coRows.join("")}</tbody></table></div>`:''}
