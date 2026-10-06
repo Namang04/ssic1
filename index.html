@@ -12675,7 +12675,14 @@ table.sc tr.tot td{background:#eef1f7;font-weight:800;color:#0d1b2a;border-top:1
 .sc-sign div{font-size:10px;color:#5b6675}
 .sc-sign .ln{border-top:1px dotted #9aa3b0;margin-bottom:4px}
 .sc-foot{margin-top:12px;border-top:1px solid #e3e7ef;padding-top:6px;display:flex;justify-content:space-between;font-size:9px;color:#8a93a1}
-.inc{color:#b9770b}`;
+.inc{color:#b9770b}
+/* Pre-printed stationery: the sheet already carries the school header and the footer band, so the card drops
+   its own header and the print margins clear both. Margins come from Branch Setup, since stationery varies. */
+.scard.lh{width:auto;padding:0}
+.scard.lh .sc-top,.scard.lh .sc-rule{display:none}
+.scard.lh .sc-info{position:relative;padding-right:86px}
+.scard.lh .sc-photo{position:absolute;top:8px;right:10px}
+.scard.lh .sc-band{margin-top:0}`;
 
 // Term Result list order (2026-09-15, Director): sections in order (A, B, C...; pupils with no section last) and
 // A-Z by name inside each section; onlySec keeps a single section. Returns a new array - the roster is unchanged.
@@ -12922,6 +12929,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
     const roll=drec.roll||((_secList.indexOf(stu)+1)||(rosterOf(ex.cls).indexOf(stu)+1)); // the school's own roll when it is on the record
     const phone=drec.phone||drec.mobile||drec.contact||drec.fatherMobile||drec.motherMobile||"";
     const cfgB=(typeof _bcfg==="function")?(_bcfg()||{}):{};
+    const lh=cfgB.letterhead===true; // pre-printed stationery: no header of our own, and the photo moves into the pupil panel
     const td=termRowsData(ex,stu,adm);
     const termMode=td.rows.length>0;
     let head,body,totRow,pctV,gradeV,sumTxt;
@@ -12957,7 +12965,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
     if(tog.rank)tiles.push([1.1,'<div class="sc-tile"><div class="k">Rank in Class</div><div class="sc-blank"></div></div>']);
     if(tog.attendance)tiles.push([1.5,'<div class="sc-tile"><div class="k">Attendance</div><div class="sc-blank"></div></div>']);
     const infoRow=(k,v)=>`<div><span class="k">${k}</span><span class="v">${esc(v)||'—'}</span></div>`;
-    return `<div class="scard">
+    return `<div class="scard${lh?' lh':''}">
       <div class="sc-top">
         <div class="sc-logo" style="${window.__LOGO?`background-image:url('${window.__LOGO}')`:'border:1px solid #e3e7ef;border-radius:7px'}"></div>
         <div class="sc-id"><h1>STEPPING STONE INTER COLLEGE</h1><div class="t1">Affiliated to the Central Board of Secondary Education, New Delhi${cfgB.affNo?' \u00b7 Affiliation No. '+esc(cfgB.affNo):''}</div>
@@ -12972,6 +12980,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
         ${infoRow("Father",drec.father)}${infoRow("Contact",phone)}
         ${infoRow("Mother",drec.mother)}${infoRow("Date of Birth",drec.dob?fmtDate(drec.dob):"")}
         ${drec.address?`<div style="grid-column:1/-1"><span class="k">Address</span><span class="v">${esc(drec.address)}</span></div>`:''}
+        ${lh?(_photo?`<div class="sc-photo"><img src="${_photo}" alt=""></div>`:'<div class="sc-photo">Affix<br>Photo</div>'):''}
       </div>
       <div class="sc-h">Scholastic Areas</div>
       <table class="sc"><thead><tr>${head}</tr></thead><tbody>${body}${totRow}</tbody></table>
@@ -13049,7 +13058,12 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
     <div class="legend">${legend}</div>
     <div class="sign"><span>____________<br/>Class Teacher</span><span>____________<br/>Principal</span></div></div>`;
   };
-  const openPrint=inner=>{const w=window.open("","_blank");if(w){w.document.write(`<html><head><title>Report Card</title><meta charset="utf-8"><style>${CARD_CSS}</style></head><body>${inner}</body></html>`);w.document.close();setTimeout(()=>w.print(),350);}};
+  // Pre-printed stationery needs its own page box: the school's header band and the footer strip are already on
+  // the paper, so the card prints between them. The three margins are set per branch in Branch Setup.
+  const __lhCss=()=>{const c=(typeof _bcfg==="function")?(_bcfg()||{}):{};if(c.letterhead!==true)return "";
+    const t=Number(c.lhTop)||38,b=Number(c.lhBottom)||24,s=Number(c.lhSide)||12;
+    return `@page{size:A4;margin:${t}mm ${s}mm ${b}mm}`;};
+  const openPrint=inner=>{const w=window.open("","_blank");if(w){w.document.write(`<html><head><title>Report Card</title><meta charset="utf-8"><style>${CARD_CSS}${__lhCss()}</style></head><body>${inner}</body></html>`);w.document.close();setTimeout(()=>w.print(),350);}};
   // Open a window WITHOUT auto-printing — for reviewing the term-result card before it becomes the official one.
   const openPreview=(inner,title)=>{const w=window.open("","_blank");if(w){w.document.write(`<html><head><title>${title||"Preview"}</title><meta charset="utf-8"><style>${CARD_CSS}</style></head><body>${inner}</body></html>`);w.document.close();}};
   // ── TERM RESULT report card (PREVIEW) ──
@@ -17079,7 +17093,9 @@ function BranchSetup({user}){
   const[adding,setAdding]=useState("");const[msg,setMsg]=useState("");const[busy,setBusy]=useState(false);
   // Printed on the report card: the phone sits under the school name, the website in the card footer.
   const[schPhone,setSchPhone]=useState("");const[schSite,setSchSite]=useState("");const[schAff,setSchAff]=useState("");
-  useEffect(()=>{setSchPhone(cfg.phone||"");setSchSite(cfg.website||"");setSchAff(cfg.affNo||"");},[cfg.phone,cfg.website,cfg.affNo]);
+  const[schLH,setSchLH]=useState(false);const[schLHm,setSchLHm]=useState({t:"38",b:"24",s:"12"});
+  useEffect(()=>{setSchPhone(cfg.phone||"");setSchSite(cfg.website||"");setSchAff(cfg.affNo||"");
+    setSchLH(cfg.letterhead===true);setSchLHm({t:String(cfg.lhTop||38),b:String(cfg.lhBottom||24),s:String(cfg.lhSide||12)});},[cfg.phone,cfg.website,cfg.affNo,cfg.letterhead,cfg.lhTop,cfg.lhBottom,cfg.lhSide]);
   const subjectDraftDirty=!!adding.trim();
   useEffect(()=>{window.__branchSubjectDirty=subjectDraftDirty?(cls+" custom subject"):"";const h=e=>{if(subjectDraftDirty){e.preventDefault();e.returnValue="";}};window.addEventListener("beforeunload",h);return()=>{window.__branchSubjectDirty="";window.removeEventListener("beforeunload",h);};},[subjectDraftDirty,cls]);
   const canEdit=user&&user.role==="admin"&&user.fees!==false; // Branch config is Director-only (VP excluded)
@@ -17176,8 +17192,20 @@ function BranchSetup({user}){
               <input value={schSite} onChange={e=>{setSchSite(e.target.value);setMsg("");}} disabled={!canEdit} placeholder="www.steppingstonegkp.com" className="ss-input" style={{display:"block",width:"100%",marginTop:5,padding:"10px 12px",borderRadius:6,fontSize:13}}/>
             </label>
           </div>
+          <div style={{marginTop:16,borderTop:"1px solid var(--ap-line)",paddingTop:14}}>
+            <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,fontWeight:700,color:"var(--ap-ink)",cursor:canEdit?"pointer":"default"}}>
+              <input type="checkbox" checked={schLH} disabled={!canEdit} onChange={e=>{setSchLH(e.target.checked);setMsg("");}}/>Report cards print on pre-printed letterhead
+            </label>
+            <div style={{fontSize:12.5,color:"var(--ap-muted)",marginTop:4,lineHeight:1.5}}>The sheet already carries the school header and the footer band, so the card drops its own header and prints between them. Adjust the margins after a test print if the card sits too high or low.</div>
+            {schLH&&<div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginTop:10,maxWidth:360}}>
+              {[["t","Top margin"],["b","Bottom margin"],["s","Side margin"]].map(([k,l])=>(
+                <label key={k} style={{fontSize:11.5,fontWeight:700,color:"var(--c-64)"}}>{l} (mm)
+                  <input value={schLHm[k]} inputMode="decimal" disabled={!canEdit} onChange={e=>{const v=e.target.value.replace(/[^0-9.]/g,"");setSchLHm(m=>Object.assign({},m,{[k]:v}));setMsg("");}} className="ss-input" style={{display:"block",width:"100%",marginTop:5,padding:"9px 11px",borderRadius:6,fontSize:13}}/>
+                </label>))}
+            </div>}
+          </div>
           {canEdit&&<div style={{display:"flex",gap:10,alignItems:"center",marginTop:14,flexWrap:"wrap"}}>
-            <Btn onClick={async()=>{setBusy(true);setMsg("");try{await save({phone:schPhone.trim(),website:schSite.trim(),affNo:schAff.trim()});setMsg("\u2713 Saved \u2014 the report card prints these now.");}catch(e){setMsg("Could not save \u2014 "+((e&&e.message)||"try again"));}setBusy(false);}} disabled={busy||loading}>{busy?"Saving\u2026":"Save school details"}</Btn>
+            <Btn onClick={async()=>{setBusy(true);setMsg("");try{await save({phone:schPhone.trim(),website:schSite.trim(),affNo:schAff.trim(),letterhead:schLH,lhTop:Number(schLHm.t)||38,lhBottom:Number(schLHm.b)||24,lhSide:Number(schLHm.s)||12});setMsg("\u2713 Saved \u2014 the report card prints these now.");}catch(e){setMsg("Could not save \u2014 "+((e&&e.message)||"try again"));}setBusy(false);}} disabled={busy||loading}>{busy?"Saving\u2026":"Save school details"}</Btn>
             {msg&&<span style={{fontSize:12.5,fontWeight:600,color:msg.indexOf("\u2713")===0?"var(--tx-grn2)":"var(--tx-red)"}}>{msg}</span>}
           </div>}
           {!canEdit&&<div style={{fontSize:12,color:"var(--ap-muted)",marginTop:12}}>Only the Director can change these.</div>}
