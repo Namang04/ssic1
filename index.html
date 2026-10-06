@@ -12577,7 +12577,7 @@ function termWeights(clsLabel, subject){
   }
   var __ovCls=__es[clsLabel]||__es["Class "+n]; if(__ovCls&&typeof __ovCls==="object"&&__ovCls.exam!=null)return __mk(__ovCls);
   // Classes 6–8: Unit Test→10 + Notebook 5 + Enrichment 5 + Exam 80 (UT IS weighted in juniors).
-  if(n>=6 && n<=8) return {ut:10, exam:80, examLabel:"Exam", writeins:[{key:"notebook",label:"Notebook",max:5},{key:"enrichment",label:"Enrichment",max:5}]};
+  if(n>=6 && n<=8) return {ut:10, exam:80, examLabel:"Exam", writeins:[{key:"notebook",label:"Notebook",max:5},{key:"enrichment",label:"Subject Enrichment",max:5}]};
   // Classes 9–10 (every other subject): NO Unit-Test weightage in seniors (director's rule) — Internal Assessment 20 (teacher-entered) + Exam 80.
   if(n>=9 && n<=10) return {ut:0, exam:80, examLabel:"Exam", writeins:[{key:"internal",label:"Internal Assessment",max:20}]};
   // Classes 11–12 (generic): Exam 80 + Internal/Project 20.
@@ -12645,7 +12645,7 @@ h3{font-size:12.5px;color:#0d1b2a;margin:14px 0 4px;text-transform:uppercase;let
 .sc-h:after{content:"";flex:1;height:1px;background:#e3e7ef}
 table.sc{width:100%;border-collapse:collapse;font-size:11.5px;margin:0}
 table.sc th{background:#0d1b2a;color:#fff;font-size:9px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;padding:7px 5px;text-align:center;border:1px solid #0d1b2a}
-table.sc th .mx{display:block;font-weight:600;color:#aebcd0;font-size:8.5px;margin-top:1px}
+table.sc th .mx{display:block;font-weight:600;color:#aebcd0;font-size:8.5px;margin-top:3px;padding-top:2px;border-top:1px solid rgba(255,255,255,.3)}
 table.sc td{border:1px solid #e3e7ef;padding:5.5px 6px;text-align:center}
 table.sc td.l,table.sc th.l{text-align:left}
 table.sc tbody tr:nth-child(even) td{background:#fafbfd}
@@ -12884,13 +12884,13 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
     const senior=/^Class (9|10|11|12)$/.test(String(ex.cls||"").trim());
     const scholastic=(ex.subjects||[]).filter(s=>s&&!s.graded);
     const rows=[];let sum=0,n=0,anyIncomplete=false,anyFail=false;
-    const utMax={},wSeen={},wOrder=[],exMax={},exLab={};
+    const utMax={},wSeen={},wOrder=[],exMax={},exLab={},utNm={};
     scholastic.forEach(s=>{
       const tc=termSubjComposite(ex,s.name,stu,adm);
       const exMark=tc.exMark;
       if((exMark===undefined||exMark==="")&&Object.keys(((ex.weighted&&ex.weighted[adm])||{})[s.name]||{}).length===0)return; // not taken
       const c=tc.comp,p=c.parts||{},cfg=tc.cfg,cells={};
-      if(cfg.ut>0){utMax[cfg.ut]=(utMax[cfg.ut]||0)+1;cells.__ut={v:p.ut,max:cfg.ut};}
+      if(cfg.ut>0){utMax[cfg.ut]=(utMax[cfg.ut]||0)+1;cells.__ut={v:p.ut,max:cfg.ut};if(tc.utName)utNm[tc.utName]=(utNm[tc.utName]||0)+1;}
       if(senior&&cfg.writeins.length){
         let vv=null,vm=0;cfg.writeins.forEach(w=>{const x=(p.writeins||{})[w.key];if(x!=null&&x!=="")vv=(vv==null?0:vv)+(Number(x)||0);vm+=Number(w.max)||0;});
         if(!wSeen.__viva){wSeen.__viva={label:"Viva/Practical",maxes:{}};wOrder.push("__viva");}
@@ -12903,11 +12903,11 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
     });
     const top=o=>{let k=null,b=-1;Object.keys(o).forEach(x=>{if(o[x]>b){b=o[x];k=x;}});return k;};
     const cols=[];
-    if(Object.keys(utMax).length)cols.push({key:"__ut",label:"Unit Test",max:Number(top(utMax))});
+    if(Object.keys(utMax).length)cols.push({key:"__ut",label:top(utNm)||"Unit Test",max:Number(top(utMax))});
     wOrder.forEach(k=>cols.push({key:k,label:wSeen[k].label,max:Number(top(wSeen[k].maxes))}));
     const pct=n?Math.round(sum/n):null;
     return{cols:cols,rows:rows,senior:senior,sum:sum,n:n,pct:pct,grade:pct==null?"—":cbseGrade(pct),anyIncomplete:anyIncomplete,anyFail:anyFail,
-      examLabel:senior?"Theory":(top(exLab)||"Exam"),examMax:Number(top(exMax))||80};
+      examLabel:senior?"Theory":(String(ex.name||"").trim()||top(exLab)||"Exam"),examMax:Number(top(exMax))||80};
   };
   const schoolCardHTML=(ex,stu,rank,total,pm,opts)=>{
     opts=opts||{};const tog=Object.assign({rank:true,coscholastic:true,attendance:true,remarks:true},opts.tog||{});
@@ -13043,7 +13043,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
     <div><h3>Result Summary</h3><table>${resRows}</table></div></div>
     ${tog.remarks?`<div class="remark"><b>Class Teacher's Remarks:</b> ${e.remark?esc(e.remark):'&nbsp;'}</div>`:""}
     <div class="legend">${legend}</div>
-    <div class="sign"><span>____________<br/>Class Teacher</span><span>____________<br/>Examination I/C</span><span>____________<br/>Principal</span></div></div>`;
+    <div class="sign"><span>____________<br/>Class Teacher</span><span>____________<br/>Principal</span></div></div>`;
   };
   const openPrint=inner=>{const w=window.open("","_blank");if(w){w.document.write(`<html><head><title>Report Card</title><meta charset="utf-8"><style>${CARD_CSS}</style></head><body>${inner}</body></html>`);w.document.close();setTimeout(()=>w.print(),350);}};
   // Open a window WITHOUT auto-printing — for reviewing the term-result card before it becomes the official one.
