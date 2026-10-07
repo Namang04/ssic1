@@ -1789,6 +1789,11 @@ const AUTH_EMAIL=u=>String(u||"").trim().toLowerCase().replace(/[^a-z0-9._-]/g,"
 // every class. Management/office and an explicit coordinator remain school-wide.
 function __teacherPairs(user){return user&&Array.isArray(user.teachingPairs)?user.teachingPairs.filter(Boolean):[];}
 function __teacherPairParts(v){var s=String(v||""),i=s.lastIndexOf("|");if(i<0)return null;var cs=s.slice(0,i),subj=s.slice(i+1),j=cs.lastIndexOf("-");return {cls:(j>0?cs.slice(0,j):cs).trim(),sec:(j>0?cs.slice(j+1):"").trim(),subj:subj.trim()};}
+var __SUBJ_MATCH_ALIAS={gk:"generalknowledge",generalknowledge:"generalknowledge",generalknowledgegk:"generalknowledge",
+  art:"drawing",arts:"drawing",artcraft:"drawing",artandcraft:"drawing",drawing:"drawing",painting:"drawing",fineart:"drawing",
+  moralscience:"moralscience",moraledu:"moralscience",valueeducation:"moralscience",
+  physicaleducation:"physicaleducation",pe:"physicaleducation",games:"physicaleducation",sports:"physicaleducation"};
+function __subjMatchKey(s){var k=__teacherSubjKey(s);return __SUBJ_MATCH_ALIAS[k]||k;}
 function __teacherSubjKey(s){return String(s||"").replace(/English (Language|Literature)/ig,"English").replace(/Social Studies/ig,"Social Science").replace(/Accounts/ig,"Accountancy").replace(/Information Technology/ig,"Computer Science").toLowerCase().replace(/[^a-z0-9]/g,"");}
 function __teacherPairAllows(user,cls,sec,subj){if(!user||user.role!=="teacher"||user.coordinator===true)return true;var pairs=__teacherPairs(user);if(!pairs.length){var c=(user.classes||[]).some(function(x){var p=String(x).split("-");return p[0].trim()===String(cls).trim()&&(!sec||normSection(cls,p.slice(1).join("-"))===normSection(cls,sec));});var s=(user.subjects||[]).some(function(x){return __teacherSubjKey(x)===__teacherSubjKey(subj)||__teacherSubjKey(__canonTestSubj(cls,x))===__teacherSubjKey(__canonTestSubj(cls,subj));});return c&&s;}return pairs.some(function(x){var p=__teacherPairParts(x);return p&&p.cls===String(cls).trim()&&(!sec||normSection(cls,p.sec)===normSection(cls,sec))&&(!subj||__teacherSubjKey(__canonTestSubj(cls,p.subj))===__teacherSubjKey(__canonTestSubj(cls,subj)));});}
 const getTeacherClasses=(user)=>{if(!user||user.role!=="teacher"||user.coordinator===true)return __academicClasses();const pairs=__teacherPairs(user);const cls=pairs.length?pairs.map(function(x){var p=__teacherPairParts(x);return p&&p.cls;}):(user.classes||[]).map(function(c){return c.split("-")[0].trim();});if(!cls.length)return [];return [...new Set(cls.filter(Boolean))].filter(function(c){return __academicClasses().indexOf(c)>=0;});};
@@ -12824,7 +12829,8 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
   useEffect(()=>{setNSubs((__subjectsFor(nClass)).map(s=>({name:s,max:100,on:true})));},[nClass]);
   const exam=selId?examsDB.data[selId]:null;
   const allowedExamSubjectNames=exam&&teacherExamScoped?getTeacherSubjects(user,exam.cls):[];
-  const markSubjects=exam?(teacherExamScoped?(exam.subjects||[]).filter(function(s){return allowedExamSubjectNames.indexOf(s.name)>=0;}):(exam.subjects||[])):[];
+  const __allowedKeys=allowedExamSubjectNames.map(__subjMatchKey);
+  const markSubjects=exam?(teacherExamScoped?(exam.subjects||[]).filter(function(s){return allowedExamSubjectNames.indexOf(s.name)>=0||__allowedKeys.indexOf(__subjMatchKey(s.name))>=0;}):(exam.subjects||[])):[];
   useEffect(()=>{
     if(exam){
       var md=JSON.parse(JSON.stringify(exam.marks||{}));
@@ -12918,6 +12924,9 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
     return{cols:cols,rows:rows,senior:senior,sum:sum,n:n,pct:pct,grade:pct==null?"—":cbseGrade(pct),anyIncomplete:anyIncomplete,anyFail:anyFail,
       examLabel:senior?"Theory":(String(ex.name||"").trim()||top(exLab)||"Exam"),examMax:Number(top(exMax))||80};
   };
+  // Printed documents round to whole marks (25.5 prints as 26). Only the printing is rounded; what a teacher
+  // entered and what the app stores and averages is untouched.
+  const __rm=v=>(v==null||v===""||isNaN(Number(v)))?v:Math.round(Number(v));
   const schoolCardHTML=(ex,stu,rank,total,pm,opts)=>{
     opts=opts||{};const tog=Object.assign({rank:true,coscholastic:true,attendance:true,remarks:true},opts.tog||{});
     const adm=String(admOfExam(ex.cls,stu)||"");
@@ -12937,21 +12946,21 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
       const mxh=m=>td.senior?"":`<span class="mx">${m}</span>`; // 9-12 carry the maximum in every cell instead
       head='<th class="l">Subject</th>'+td.cols.map(c=>`<th>${esc(c.label)}${mxh(c.max)}</th>`).join("")+`<th>${esc(td.examLabel)}${mxh(td.examMax)}</th><th>Total<span class="mx">100</span></th><th>Grade</th>`;
       body=td.rows.map(row=>{
-        const mk=(v,mx,dom)=>`<td>${v==null?'—':v}${td.senior?`<span class="mx"> / ${mx}</span>`:(mx!==dom?`<span class="mx"> /${mx}</span>`:'')}</td>`;
+        const mk=(v,mx,dom)=>`<td>${v==null?'—':__rm(v)}${td.senior?`<span class="mx"> / ${mx}</span>`:(mx!==dom?`<span class="mx"> /${mx}</span>`:'')}</td>`;
         const cells=td.cols.map(c=>{const d=row.cells[c.key];return d?mk(d.v,d.max,c.max):'<td>—</td>';}).join("");
         const exCell=mk(row.exam.v,row.exam.max,td.examMax);
-        return `<tr><td class="l sub">${esc(row.name)}</td>${cells}${exCell}<td><b>${row.total==null?'—':row.total}${row.inc?'<span class="inc">*</span>':''}</b></td><td class="g">${row.grade||'—'}</td></tr>`;
+        return `<tr><td class="l sub">${esc(row.name)}</td>${cells}${exCell}<td><b>${row.total==null?'—':__rm(row.total)}${row.inc?'<span class="inc">*</span>':''}</b></td><td class="g">${row.grade||'—'}</td></tr>`;
       }).join("");
-      const sumOf=f=>{let s=0,any=false;td.rows.forEach(row=>{const v=f(row);if(v!=null&&v!==""){s+=Number(v)||0;any=true;}});return any?Math.round(s*10)/10:null;};
+      const sumOf=f=>{let s=0,any=false;td.rows.forEach(row=>{const v=f(row);if(v!=null&&v!==""){s+=Number(v)||0;any=true;}});return any?Math.round(s):null;};
       const colTot=td.cols.map(c=>{const v=sumOf(row=>row.cells[c.key]?row.cells[c.key].v:null);return `<td>${v==null?'—':v}</td>`;}).join("");
       const exT=sumOf(row=>row.exam.v);
-      totRow=`<tr class="tot"><td class="l">Overall</td>${colTot}<td>${exT==null?'—':exT}</td><td>${td.sum} / ${td.n*100}</td><td>${td.grade}</td></tr>`;
-      pctV=td.pct;gradeV=td.grade;sumTxt=`${td.sum}<span class="sm"> / ${td.n*100}</span>`;
+      totRow=`<tr class="tot"><td class="l">Overall</td>${colTot}<td>${exT==null?'—':exT}</td><td>${__rm(td.sum)} / ${td.n*100}</td><td>${td.grade}</td></tr>`;
+      pctV=td.pct;gradeV=td.grade;sumTxt=`${__rm(td.sum)}<span class="sm"> / ${td.n*100}</span>`;
     }else{
       head='<th class="l">Subject</th><th>Maximum</th><th>Obtained</th><th>Percentage</th><th>Grade</th>';
-      body=r.subjects.filter(s=>!s.graded).map(s=>`<tr><td class="l sub">${esc(s.name)}</td><td>${s.max}</td><td>${s.marks==null?'AB':s.marks}</td><td>${s.pct==null?'—':s.pct+'%'}</td><td class="g">${esc(s.grade)}</td></tr>`).join("");
-      totRow=`<tr class="tot"><td class="l">Overall</td><td>${r.max}</td><td>${r.obt}</td><td>${r.hasMarks?r.pct+'%':'—'}</td><td>${r.grade}</td></tr>`;
-      pctV=r.max>0?r.pct:null;gradeV=r.grade;sumTxt=`${r.obt}<span class="sm"> / ${r.max}</span>`;
+      body=r.subjects.filter(s=>!s.graded).map(s=>`<tr><td class="l sub">${esc(s.name)}</td><td>${s.max}</td><td>${s.marks==null?'AB':__rm(s.marks)}</td><td>${s.pct==null?'—':s.pct+'%'}</td><td class="g">${esc(s.grade)}</td></tr>`).join("");
+      totRow=`<tr class="tot"><td class="l">Overall</td><td>${r.max}</td><td>${__rm(r.obt)}</td><td>${r.hasMarks?r.pct+'%':'—'}</td><td>${r.grade}</td></tr>`;
+      pctV=r.max>0?r.pct:null;gradeV=r.grade;sumTxt=`${__rm(r.obt)}<span class="sm"> / ${r.max}</span>`;
     }
     const addl=r.subjects.filter(s=>s.graded);
     const coPairs=CO_TRAITS.map(t=>[t[1],e[t[0]]]).concat(CO_LEGACY.filter(t=>e[t[0]]).map(t=>[t[1],e[t[0]]]));
@@ -13170,16 +13179,16 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
       const hasNum=x.hasMarks&&x.max>0;
       const pass=hasNum&&!x.anyFail&&x.pct>=33;
       const t=TD[x.student];
-      const plain=n=>{const v=byName[n];return v===undefined?"":(v==="AB"?'<span class="ab">AB</span>':(v&&v.g!==undefined?esc(v.g):v));};
+      const plain=n=>{const v=byName[n];return v===undefined?"":(v==="AB"?'<span class="ab">AB</span>':(v&&v.g!==undefined?esc(v.g):__rm(v)));};
       const cell=n=>{
         if(!withInt||!t)return plain(n);
         const row=t.rows.filter(r=>r.name===n)[0];
         if(!row)return plain(n); // graded subject, or one this pupil does not take
-        const ints=t.cols.map(c=>row.cells[c.key]).filter(Boolean).map(d=>d.v==null?"—":d.v).join(" + ");
-        return `<span class="sp">${ints||"—"} + ${row.exam.v==null?"—":row.exam.v}</span><br><b>${row.total==null?"—":row.total}</b>`;
+        const ints=t.cols.map(c=>row.cells[c.key]).filter(Boolean).map(d=>d.v==null?"—":__rm(d.v)).join(" + ");
+        return `<span class="sp">${ints||"—"} + ${row.exam.v==null?"—":__rm(row.exam.v)}</span><br><b>${row.total==null?"—":__rm(row.total)}</b>`;
       };
       const wp=withInt?wOf(x):null, wt=withInt&&t&&t.n>0;
-      const totCell=wt?(t.sum+"/"+(t.n*100)):(hasNum?x.obt+"/"+x.max:"—");
+      const totCell=wt?(__rm(t.sum)+"/"+(t.n*100)):(hasNum?__rm(x.obt)+"/"+x.max:"—");
       const pctCell=withInt?(wp==null?"—":wp+"%"):(hasNum?x.pct+"%":"—");
       const grCell=withInt?(wp==null?"—":cbseGrade(wp)):(hasNum?x.grade:"—");
       const resCell=withInt?(wp==null?"—":((wp>=33&&!(t&&t.anyFail))?"PASS":'<span class="ab">N.IMP</span>')):(hasNum?(pass?"PASS":'<span class="ab">N.IMP</span>'):"—");
@@ -13429,7 +13438,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
               <thead><tr><th style={{...th,position:"sticky",left:0,background:"var(--c-fff)",zIndex:1,minWidth:160}}>Student</th>{markSubjects.map(s=><th key={s.name} style={{...th,textAlign:"center",minWidth:78}}>{s.name}<div style={{fontSize:11,color:s.graded?"var(--tx-pur)":"var(--c-94)",fontWeight:500}}>{s.graded?"grade":"/"+s.max}</div></th>)}</tr></thead>
               <tbody>{roster.map((stu,ri)=>(<tr key={stu+"|"+ri}><td style={{...td,position:"sticky",left:0,background:"var(--c-fff)",fontWeight:600,color:"var(--ap-ink)",minWidth:160}}><span style={{color:"var(--c-94)",fontWeight:500,marginRight:6}}>{ri+1}</span>{stu}</td>
                 {markSubjects.map(s=>{const val=markDraft[s.name]?.[stu]??"";
-                  if(s.graded)return(<td key={s.name} style={{...td,textAlign:"center",padding:"4px 6px"}}><select value={val} disabled={exam.published} onChange={e=>setMark(s.name,stu,e.target.value)} className="ss-input" style={{width:64,padding:"6px 4px",borderRadius:6,fontSize:12.5,textAlign:"center",cursor:exam.published?"default":"pointer"}}><option value="">—</option>{["A","B","C","D","E","N/A"].map(g=><option key={g} value={g}>{g}</option>)}</select></td>);
+                  if(s.graded)return(<td key={s.name} style={{...td,textAlign:"center",padding:"4px 6px"}}><select value={val} disabled={exam.published} onChange={e=>setMark(s.name,stu,e.target.value)} className="ss-input" style={{width:64,padding:"6px 4px",borderRadius:6,fontSize:12.5,textAlign:"center",cursor:exam.published?"default":"pointer"}}><option value="">—</option>{["A","B","C","D","E","AB","N/A"].map(g=><option key={g} value={g}>{g}</option>)}</select></td>);
                   const isNA=/^n\/?a$/i.test(String(val).trim());const isAbs=!isNA&&/^a/i.test(String(val).trim());const over=val!==""&&!isAbs&&!isNA&&Number(val)>Number(s.max);return(
                   <td key={s.name} style={{...td,textAlign:"center",padding:"4px 6px"}}><div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3}}><input type="text" inputMode="numeric" value={val} disabled={exam.published} onChange={e=>{var t=e.target.value.trim();if(t==="")setMark(s.name,stu,"");else if(/^n\/?a$/i.test(t))setMark(s.name,stu,"N/A");else if(/^a/i.test(t))setMark(s.name,stu,"AB");else setMark(s.name,stu,t.replace(/[^0-9.]/g,""));}} title="Type marks, tap AB for absent, N/A if the student does not study this subject; blank means unfinished." className="ss-input" style={{width:62,padding:"6px 4px",borderRadius:6,fontSize:12.5,textAlign:"center",fontWeight:isAbs||isNA?700:undefined,border:over?"1.5px solid var(--tx-red)":isAbs?"1.5px solid var(--tx-org)":isNA?"1.5px solid var(--ap-line2)":undefined,color:over?"var(--tx-red)":isAbs?"var(--tx-org)":isNA?"var(--ap-muted)":undefined}}/><div style={{display:"flex",gap:3}}><button type="button" disabled={exam.published} onClick={()=>setMark(s.name,stu,isAbs?"":"AB")} title="Mark / clear Absent" style={{cursor:exam.published?"default":"pointer",fontSize:10.5,fontWeight:700,padding:"3px 6px",borderRadius:5,lineHeight:1.35,border:isAbs?"none":"1px solid var(--c-d2)",background:isAbs?"var(--tx-org)":"transparent",color:isAbs?"#fff":"var(--c-94)"}}>AB{isAbs?" ✓":""}</button><button type="button" disabled={exam.published} onClick={()=>setMark(s.name,stu,isNA?"":"N/A")} title="Student does not study this subject" style={{cursor:exam.published?"default":"pointer",fontSize:10.5,fontWeight:700,padding:"3px 6px",borderRadius:5,lineHeight:1.35,border:isNA?"none":"1px solid var(--c-d2)",background:isNA?"var(--ap-muted)":"transparent",color:isNA?"#fff":"var(--c-94)"}}>N/A{isNA?" ✓":""}</button></div></div></td>);})}
               </tr>))}</tbody>
