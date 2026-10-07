@@ -13708,7 +13708,10 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
         if(teacherExamScoped&&!ctSecs.length)return <Empty icon="lock" title="Filled by the class teacher" sub={"The co-scholastic areas for "+exam.cls+" are filled by the class teacher of each section, and your account is not set as one for this class. Ask the coordinator if that is wrong."}/>;
         const secs=ctSecs.length?ctSecs:[""];
         const cur=(coSec&&secs.indexOf(coSec)>=0)?coSec:secs[0];
-        const roster=__sectionAZ((rosterObjsOf(exam.cls)||[]).map(s=>Object.assign({},s,{section:_rosterSec(s.section,exam.cls)||""})),s=>s.section||"",cur||"");
+        const _all=(rosterObjsOf(exam.cls)||[]).map(s=>Object.assign({},s,{section:_rosterSec(s.section,exam.cls)||""}));
+        const _inSec=__sectionAZ(_all,s=>s.section||"",cur||"");
+        const _noSections=_all.length>0&&_all.every(s=>!s.section); // the roster this teacher can read has no sections on it
+        const roster=(_inSec.length||!_all.length)?_inSec:__sectionAZ(_all,s=>s.section||"","");
         const keyOf=s=>String(s.admNo||"")||s.name;
         const val=(k,s)=>{const kk=keyOf(s),d=coDraft[kk]||{};if(d[k]!==undefined)return d[k];const e=(exam.extra||{})[kk]||{};return e[k]||"";};
         const set=(k,s,v)=>{const kk=keyOf(s);setCoDraft(d=>Object.assign({},d,{[kk]:Object.assign({},d[kk],{[k]:v})}));};
@@ -13729,7 +13732,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
         return (<div style={{display:"flex",flexDirection:"column",gap:14}}>
           <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}><ExamPicker/>
             {secs.length>1&&<select value={cur} onChange={e=>{if(dirty&&!__confirmUnsavedWork())return;setCoDraft({});setCoSec(e.target.value);}} className="ss-input" style={{padding:"9px 12px",borderRadius:6,fontSize:13,fontWeight:600}}>{secs.map(s=><option key={s} value={s}>{s?("Section "+s):"All"}</option>)}</select>}
-            <span style={{fontSize:12.5,color:"var(--ap-muted)"}}>{roster.length} pupil{roster.length===1?"":"s"}{teacherExamScoped?" \u00b7 your class":""}</span>
+            <span style={{fontSize:12.5,color:"var(--ap-muted)"}}>{roster.length} pupil{roster.length===1?"":"s"}{teacherExamScoped?" \u00b7 your class":""}{(_noSections||(!_inSec.length&&_all.length))?" \u00b7 sections are not recorded on this class list, so the whole class is shown":""}</span>
           </div>
           {exam.published&&<div className="ap-panel" style={{padding:"13px 16px",display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",background:"var(--bg-amb)",border:"1px solid var(--bd-amb)"}}>
             <div style={{flex:"1 1 240px",minWidth:0}}>
@@ -13757,12 +13760,12 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
                   {CO_TRAITS.map(([k,l])=>(<td key={k} style={{...td,textAlign:"center",padding:"4px 5px"}}>{sel(k,s)}</td>))}
                   <td style={{...td,padding:"4px 8px"}}>{rmk(s)}</td></tr>))}</tbody>
               </table></div>)}
-            <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",borderTop:"1px solid var(--ap-line)",padding:"12px 16px",background:"var(--c-f7)"}}>
+            {roster.length>0&&<div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",borderTop:"1px solid var(--ap-line)",padding:"12px 16px",background:"var(--c-f7)"}}>
               <span style={{fontSize:11.5,color:"var(--c-94)",flex:"1 1 200px",minWidth:0}}>{exam.published
                 ?"This exam is visible to parents, so its grades are locked. Ask the Director or VP to hide it from parents, then save."
                 :(dirty?"Unsaved changes on this screen.":"These grades and the remark print on the report card. Leave an area blank and it prints as a dash.")}</span>
               <Btn onClick={save} disabled={!!coBusy||!dirty||!!exam.published} style={{flex:"none",whiteSpace:"nowrap"}}>{coBusy?"Saving\u2026":"Save co-scholastic"}</Btn>
-            </div>
+            </div>}
           </div>
         </div>);
       })()}
