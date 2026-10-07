@@ -13732,7 +13732,8 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
         const set=(k,s,v)=>{const kk=keyOf(s);setCoDraft(d=>Object.assign({},d,{[kk]:Object.assign({},d[kk],{[k]:v})}));};
         const dirty=Object.keys(coDraft).length>0;
         const save=async()=>{
-          if(!dirty||coBusy)return;
+          if(coBusy)return;
+          if(!dirty){window.__toast&&window.__toast("Nothing changed yet \u2014 set a grade or type a remark, then save.","info");return;}
           if(exam.published){window.__toast&&window.__toast("This exam is visible to parents. Leadership must hide it before the grades can change.","err");return;}
           setCoBusy(true);
           try{const fresh=examsDB.data[selId]||exam;const next=Object.assign({},fresh.extra||{});
@@ -13751,13 +13752,13 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
           </div>
           {exam.published&&<div className="ap-panel" style={{padding:"13px 16px",display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",background:"var(--bg-amb)",border:"1px solid var(--bd-amb)"}}>
             <div style={{flex:"1 1 240px",minWidth:0}}>
-              <div style={{fontSize:13,fontWeight:800,color:"var(--tx-org2)"}}>Visible to parents \u2014 these grades are locked</div>
+              <div style={{fontSize:13,fontWeight:800,color:"var(--tx-org2)"}}>{"Visible to parents — these grades are locked"}</div>
               <div style={{fontSize:12,color:"var(--ap-ink2)",marginTop:3,lineHeight:1.5}}>Every box on this screen is read-only while the exam is published, so Save stays unavailable. {canPublishEx?"Hide it from parents, let the class teachers fill their sections, then publish it again.":"Ask the Director or VP to hide it from parents while the class teachers fill this in."}</div>
             </div>
             {canPublishEx&&<Btn v="warn" onClick={()=>publishExam(false)} disabled={pubBusy} style={{flex:"none",whiteSpace:"nowrap"}}>{pubBusy?"Working\u2026":"Hide from parents"}</Btn>}
           </div>}
           <div className="ap-panel" style={{overflow:"hidden"}}>
-            <div className="ap-panelh"><div className="ttl">Co-Scholastic \u00b7 {exam.cls}{cur?" \u00b7 Section "+cur:""}</div><span style={{fontSize:11.5,color:"var(--ap-muted)"}}>A outstanding \u00b7 B very good \u00b7 C good \u00b7 D satisfactory \u00b7 E needs improvement</span></div>
+            <div className="ap-panelh"><div className="ttl">{"Co-Scholastic · "+exam.cls+(cur?" · Section "+cur:"")}</div><span style={{fontSize:11.5,color:"var(--ap-muted)"}}>{"A outstanding · B very good · C good · D satisfactory · E needs improvement"}</span></div>
             {roster.length===0?<Empty icon="cap" title="No pupils in this section" sub="Add pupils to the class first."/>:(isMob?
               <div>{roster.map((s,i)=>(<div key={keyOf(s)+"#"+i} style={{padding:"12px 14px",borderTop:i?"1px solid var(--c-f0)":"none"}}>
                 <div style={{fontWeight:700,fontSize:13.5,color:"var(--ap-ink)"}}>{s.name}</div>
@@ -13766,9 +13767,9 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
                 </div>
                 <div style={{marginTop:8}}>{rmk(s)}</div>
               </div>))}</div>
-              :<div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:860}}>
+              :<div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:1010}}>
                 <thead><tr><th style={{...th,paddingLeft:15,position:"sticky",left:0,background:"var(--c-fff)",minWidth:160}}>Student</th>
-                  {CO_TRAITS.map(([k,l])=>(<th key={k} style={{...th,textAlign:"center",whiteSpace:"normal",maxWidth:84}}>{l}</th>))}
+                  {CO_TRAITS.map(([k,l])=>(<th key={k} style={{...th,textAlign:"center",whiteSpace:"normal",width:96,minWidth:96,padding:"8px 6px",lineHeight:1.25}}>{l}</th>))}
                   <th style={{...th,minWidth:180}}>Remark</th></tr></thead>
                 <tbody>{roster.map((s,i)=>(<tr key={keyOf(s)+"#"+i}>
                   <td style={{...td,paddingLeft:15,fontWeight:600,color:"var(--ap-ink)",position:"sticky",left:0,background:"var(--c-fff)"}}><span style={{color:"var(--c-94)",fontWeight:500,marginRight:6}}>{i+1}</span>{s.name}</td>
@@ -13779,7 +13780,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
               <span style={{fontSize:11.5,color:"var(--c-94)",flex:"1 1 200px",minWidth:0}}>{exam.published
                 ?"This exam is visible to parents, so its grades are locked. Ask the Director or VP to hide it from parents, then save."
                 :(dirty?"Unsaved changes on this screen.":"These grades and the remark print on the report card. Leave an area blank and it prints as a dash.")}</span>
-              <Btn onClick={save} disabled={!!coBusy||!dirty||!!exam.published} style={{flex:"none",whiteSpace:"nowrap"}}>{coBusy?"Saving\u2026":"Save co-scholastic"}</Btn>
+              <Btn onClick={save} disabled={!!coBusy||!!exam.published} style={{flex:"none",whiteSpace:"nowrap"}}>{coBusy?"Saving\u2026":"Save co-scholastic"}</Btn>
             </div>}
           </div>
         </div>);
