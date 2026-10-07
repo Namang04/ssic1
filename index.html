@@ -17072,14 +17072,15 @@ function AccountsPanel({user,usersDB,studentsDB,dirDB,academicRosterDB,canManage
                 <td style={{...td,paddingLeft:18,fontWeight:600,color:"var(--ap-ink)"}}>{u.name}{isSelf&&<span style={{fontSize:11,color:"var(--c-94)",marginLeft:6}}>(you)</span>}</td>
                 <td style={{...td,color:"var(--c-64)",fontFamily:"var(--ss-font)",fontSize:12}}>{u.username}</td>
                 <td style={{...td}}>{(() => {
-                  const maySet=_isDirector&&!isDisabled&&!isSelf&&u.role!=="admin"&&u.role!=="parent";
+                  const maySet=_isDirector&&!isDisabled&&!isSelf&&u.role!=="parent";
                   const chip=<span style={{background:(rc[u.role]||rc.student)[0],color:(rc[u.role]||rc.student)[1],padding:"3px 9px",borderRadius:6,fontSize:11,fontWeight:700,textTransform:"capitalize"}}>{u.role}</span>;
                   const mismatch=acct&&acct.role&&acct.role!=="disabled"&&acct.role!==u.role;
                   return <>
-                    {maySet?<Sel value={u.role} onChange={v=>changeRole(u,v)} options={u.role==="student"?["student","teacher","office","vp"]:["teacher","office","vp"]}/>
+                    {maySet?<Sel value={u.role} onChange={v=>changeRole(u,v)} options={u.role==="student"?["student","teacher","office","vp"]:(u.role==="admin"?["admin","vp","teacher","office"]:["teacher","office","vp"])}/>
                       :((isSpecial||isDisabled)?chip:<Sel value={u.role} onChange={v=>changeRole(u,v)} options={["student","teacher","office"]}/>)}
                     {mismatch&&<div style={{marginTop:5,fontSize:10.5,fontWeight:700,color:"var(--tx-org2)",lineHeight:1.4}} title="Permissions are decided by the role on the login, not the staff profile. While these differ, this person is refused anything their profile role allows.">login says “{acct.role}”
-                      {_isDirector&&<button onClick={()=>changeRole(u,u.role)} disabled={working===u.username} style={{marginLeft:6,background:"none",border:"1px solid var(--bd-amb)",borderRadius:5,padding:"1px 7px",fontSize:10.5,fontWeight:700,color:"var(--tx-org2)",cursor:"pointer",fontFamily:"var(--ss-font)"}}>{working===u.username?"…":"match it"}</button>}
+                      {_isDirector&&u.role!=="admin"&&<button onClick={()=>changeRole(u,u.role)} disabled={working===u.username} style={{marginLeft:6,background:"none",border:"1px solid var(--bd-amb)",borderRadius:5,padding:"1px 7px",fontSize:10.5,fontWeight:700,color:"var(--tx-org2)",cursor:"pointer",fontFamily:"var(--ss-font)"}}>{working===u.username?"…":"match it"}</button>}
+                      {u.role==="admin"&&<div style={{fontWeight:600,color:"var(--ap-muted)",marginTop:2}}>Pick the role you mean from the list. Director is never set here.</div>}
                     </div>}
                   </>;
                 })()}</td>
