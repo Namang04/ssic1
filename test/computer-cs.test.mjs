@@ -13,7 +13,8 @@ globalThis._bcfg = () => CFG;
 globalThis.SCHOOL = { subjects: { "Class 11": ["Mathematics", "Physics", "Computer Science", "English"], "Class 12": ["Mathematics", "Physics", "Computer Science", "English"], "Class 10": ["English", "Mathematics", "Science", "Social Science", "Computer"] } };
 const vars = [/^var __SUBJ_SPLIT=.*$/m, /^var __SPLIT_CLASSES=.*$/m, /^var __MERGE_CLASSES=.*$/m, /^var __SPLIT_PARENT=.*$/m].map(r => line(r).replace(/^var /, 'globalThis.'));
 (0, eval)([...vars, line(/^const safeId=.*$/m).replace(/^const /, 'globalThis.'),
-  ...['normSection', '__teacherPairs', '__teacherPairParts', '__subjectsFor', '__testSubjectsFor', '__compCSEligible', '__compAsCS', '__canonTestSubj', '__chHash', '__ccKey', '__compCSPlan'].map(grab),
+  line(/^var __SUBJ_MATCH_ALIAS=[\s\S]*?\};$/m).replace(/^var /, 'globalThis.'),
+  ...['normSection', '__teacherPairs', '__teacherPairParts', '__teacherSubjKey', '__subjMatchKey', '__subjectsFor', '__testSubjectsFor', '__compCSEligible', '__compAsCS', '__canonTestSubj', '__chHash', '__ccKey', '__compCSPlan'].map(grab),
   grabConst('getTeacherSubjects')].join('\n'));
 let pass = 0, fail = 0; const ok = (n, c) => { c ? pass++ : (fail++, console.log('  FAIL:', n)); };
 const J = JSON.stringify;
@@ -71,4 +72,21 @@ const T2 = JSON.parse(J(topics)), S2 = JSON.parse(J(syllabus)), C2 = JSON.parse(
 p.writes.forEach(w => { ({ topics: T2, syllabus: S2, copyChecks: C2 })[w.coll][w.id] = w.doc; });
 ok('running it a second time writes nothing',               __compCSPlan(T2, S2, C2, ["Class 11", "Class 12"]).writes.length === 0);
 ok('no eligible class, nothing planned',                    __compCSPlan(topics, syllabus, cc, []).writes.length === 0);
+// A subject written as an abbreviation on the account still matches the class's spelling (the General
+// Knowledge teacher saw nothing because her classes list it as "G.K"), while genuinely separate subjects stay apart.
+CFG = {};
+globalThis.SCHOOL.subjects["Class 6"] = ["Mathematics", "English", "G.K", "Moral Science", "Drawing", "Games", "Physical Education"];
+const gkT = { role: "teacher", name: "Ms. Saima", subjects: ["General Knowledge"], classes: ["Class 6-B"], teachingPairs: ["Class 6-B|General Knowledge", "Class 6-B|English"] };
+ok('"General Knowledge" matches a class that lists "G.K"', getTeacherSubjects(gkT, "Class 6").indexOf("G.K") >= 0);
+ok('...and keeps the exactly matching subject too',        getTeacherSubjects(gkT, "Class 6").indexOf("English") >= 0);
+const drawT = { role: "teacher", name: "Drawing teacher", subjects: ["Drawing"], classes: ["Class 6-B"] };
+ok('Drawing does not pull in Games or Physical Education', J(getTeacherSubjects(drawT, "Class 6")) === '["Drawing"]');
+globalThis.SCHOOL.subjects["Class 7"] = ["English", "Art & Craft", "Games", "Physical Education"];
+ok('"Drawing" matches a class that lists "Art & Craft"',   J(getTeacherSubjects(drawT, "Class 7")) === '["Art & Craft"]');
+globalThis.SCHOOL.subjects["Class 8"] = ["English", "Art & Craft", "Drawing", "Games"];
+ok('a class listing both names gives one column',          J(getTeacherSubjects(drawT, "Class 8")) === '["Drawing"]');
+const gamesT = { role: "teacher", name: "Games teacher", subjects: ["Games"], classes: ["Class 6-B"] };
+ok('Games does not pull in Physical Education',            J(getTeacherSubjects(gamesT, "Class 6")) === '["Games"]');
+const peT = { role: "teacher", name: "PE teacher", subjects: ["PE"], classes: ["Class 6-B"] };
+ok('"PE" matches Physical Education',                      J(getTeacherSubjects(peT, "Class 6")) === '["Physical Education"]');
 console.log(`\n  ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);

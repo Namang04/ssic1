@@ -1789,10 +1789,9 @@ const AUTH_EMAIL=u=>String(u||"").trim().toLowerCase().replace(/[^a-z0-9._-]/g,"
 // every class. Management/office and an explicit coordinator remain school-wide.
 function __teacherPairs(user){return user&&Array.isArray(user.teachingPairs)?user.teachingPairs.filter(Boolean):[];}
 function __teacherPairParts(v){var s=String(v||""),i=s.lastIndexOf("|");if(i<0)return null;var cs=s.slice(0,i),subj=s.slice(i+1),j=cs.lastIndexOf("-");return {cls:(j>0?cs.slice(0,j):cs).trim(),sec:(j>0?cs.slice(j+1):"").trim(),subj:subj.trim()};}
-var __SUBJ_MATCH_ALIAS={gk:"generalknowledge",generalknowledge:"generalknowledge",generalknowledgegk:"generalknowledge",
-  art:"drawing",arts:"drawing",artcraft:"drawing",artandcraft:"drawing",drawing:"drawing",painting:"drawing",fineart:"drawing",
-  moralscience:"moralscience",moraledu:"moralscience",valueeducation:"moralscience",
-  physicaleducation:"physicaleducation",pe:"physicaleducation",games:"physicaleducation",sports:"physicaleducation"};
+var __SUBJ_MATCH_ALIAS={gk:"generalknowledge",generalknowledge:"generalknowledge",generalknowledgegk:"generalknowledge",gkgeneralknowledge:"generalknowledge",
+  pe:"physicaleducation",physicaleducation:"physicaleducation",
+  art:"drawing",arts:"drawing",artcraft:"drawing",artandcraft:"drawing",artsandcraft:"drawing",artscraft:"drawing",drawing:"drawing",fineart:"drawing",fineartsdrawing:"drawing"};
 function __subjMatchKey(s){var k=__teacherSubjKey(s);return __SUBJ_MATCH_ALIAS[k]||k;}
 function __teacherSubjKey(s){return String(s||"").replace(/English (Language|Literature)/ig,"English").replace(/Social Studies/ig,"Social Science").replace(/Accounts/ig,"Accountancy").replace(/Information Technology/ig,"Computer Science").toLowerCase().replace(/[^a-z0-9]/g,"");}
 function __teacherPairAllows(user,cls,sec,subj){if(!user||user.role!=="teacher"||user.coordinator===true)return true;var pairs=__teacherPairs(user);if(!pairs.length){var c=(user.classes||[]).some(function(x){var p=String(x).split("-");return p[0].trim()===String(cls).trim()&&(!sec||normSection(cls,p.slice(1).join("-"))===normSection(cls,sec));});var s=(user.subjects||[]).some(function(x){return __teacherSubjKey(x)===__teacherSubjKey(subj)||__teacherSubjKey(__canonTestSubj(cls,x))===__teacherSubjKey(__canonTestSubj(cls,subj));});return c&&s;}return pairs.some(function(x){var p=__teacherPairParts(x);return p&&p.cls===String(cls).trim()&&(!sec||normSection(cls,p.sec)===normSection(cls,sec))&&(!subj||__teacherSubjKey(__canonTestSubj(cls,p.subj))===__teacherSubjKey(__canonTestSubj(cls,subj)));});}
@@ -1917,7 +1916,14 @@ const getTeacherSubjects=(user,cls,sec)=>{
     parts=parts.map(function(p){return __canonTestSubj(cls,p);});
     parts.forEach(function(p){if(want.indexOf(p)<0)want.push(p);});
   });
-  const filtered=all.filter(function(s){return want.indexOf(s)>=0;});
+  const wantKeys=want.map(__subjMatchKey);
+  const matched=all.filter(function(s){return want.indexOf(s)>=0||wantKeys.indexOf(__subjMatchKey(s))>=0;});
+  // A class that lists both names of one subject (Art & Craft and Drawing) must not give the teacher two
+  // columns for it: keep one, preferring the spelling the account itself uses.
+  var _seen={},filtered=[];
+  matched.forEach(function(s){var k=__subjMatchKey(s);
+    if(_seen[k]===undefined){_seen[k]=filtered.length;filtered.push(s);}
+    else if(want.indexOf(s)>=0)filtered[_seen[k]]=s;});
   if(filtered.length>0)return filtered;
   return want;
 };
