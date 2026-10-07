@@ -16829,6 +16829,7 @@ function AccountsPanel({user,usersDB,studentsDB,dirDB,academicRosterDB,canManage
   const[draftEmail,setDraftEmail]=useState("");
   const contactOriginalRef=useRef({phone:"",email:""});
   const STAFF_ROLES=["teacher","office","vp","admin"];
+  const _isDirector=!!user&&user.role==="admin"&&user.fees!==false; // only the Director may change what role a login carries
   const addAccountDraftDirty=tab==="add"&&!!(uname.trim()||name.trim()||pw||phone.trim());
   const contactDraftDirty=!!editPhone&&(draftPhone!==contactOriginalRef.current.phone||draftEmail!==contactOriginalRef.current.email);
   const accountDraftDirty=addAccountDraftDirty||contactDraftDirty;
@@ -17070,8 +17071,18 @@ function AccountsPanel({user,usersDB,studentsDB,dirDB,academicRosterDB,canManage
               return(<tr key={u.username}>
                 <td style={{...td,paddingLeft:18,fontWeight:600,color:"var(--ap-ink)"}}>{u.name}{isSelf&&<span style={{fontSize:11,color:"var(--c-94)",marginLeft:6}}>(you)</span>}</td>
                 <td style={{...td,color:"var(--c-64)",fontFamily:"var(--ss-font)",fontSize:12}}>{u.username}</td>
-                <td style={{...td}}>{(isSpecial||isDisabled)?<span style={{background:(rc[u.role]||rc.student)[0],color:(rc[u.role]||rc.student)[1],padding:"3px 9px",borderRadius:6,fontSize:11,fontWeight:700,textTransform:"capitalize"}}>{u.role}</span>:
-                  <Sel value={u.role} onChange={v=>changeRole(u,v)} options={["student","teacher","office"]}/>}</td>
+                <td style={{...td}}>{(() => {
+                  const maySet=_isDirector&&!isDisabled&&!isSelf&&u.role!=="admin"&&u.role!=="parent";
+                  const chip=<span style={{background:(rc[u.role]||rc.student)[0],color:(rc[u.role]||rc.student)[1],padding:"3px 9px",borderRadius:6,fontSize:11,fontWeight:700,textTransform:"capitalize"}}>{u.role}</span>;
+                  const mismatch=acct&&acct.role&&acct.role!=="disabled"&&acct.role!==u.role;
+                  return <>
+                    {maySet?<Sel value={u.role} onChange={v=>changeRole(u,v)} options={u.role==="student"?["student","teacher","office","vp"]:["teacher","office","vp"]}/>
+                      :((isSpecial||isDisabled)?chip:<Sel value={u.role} onChange={v=>changeRole(u,v)} options={["student","teacher","office"]}/>)}
+                    {mismatch&&<div style={{marginTop:5,fontSize:10.5,fontWeight:700,color:"var(--tx-org2)",lineHeight:1.4}} title="Permissions are decided by the role on the login, not the staff profile. While these differ, this person is refused anything their profile role allows.">login says “{acct.role}”
+                      {_isDirector&&<button onClick={()=>changeRole(u,u.role)} disabled={working===u.username} style={{marginLeft:6,background:"none",border:"1px solid var(--bd-amb)",borderRadius:5,padding:"1px 7px",fontSize:10.5,fontWeight:700,color:"var(--tx-org2)",cursor:"pointer",fontFamily:"var(--ss-font)"}}>{working===u.username?"…":"match it"}</button>}
+                    </div>}
+                  </>;
+                })()}</td>
                 <td style={{...td}}>{!isStaff?<span style={{fontSize:11.5,color:"var(--c-94)"}}>— via record</span>:
                   editing?<div style={{display:"flex",flexDirection:"column",gap:6,minWidth:180}}>
                     <input value={draftPhone} onChange={e=>setDraftPhone(e.target.value)} placeholder="10-digit mobile" inputMode="numeric" className="ss-input" style={{padding:"6px 9px",borderRadius:6,fontSize:12,width:150}}/>
@@ -26126,7 +26137,7 @@ function AssignPanel(props) {
       assignmentBaseRef.current=assignmentSig({classes:selCls,subjects:selSubj,teachingPairs:selPairs,qbank:selQbank,qbankClasses:selQbCls,qbankSubjects:selQbSubj,coordinator:selCoord,classTeacherOf:selCTs});
       setMsg("Saved — classes, subjects, permissions and class-teacher sections are in sync.");
     }catch(e){
-      setMsg("Could not complete every assignment update [signed in as "+((user&&user.username)||"?")+", role "+((user&&user.role)||"?")+"] ("+((e&&e.__doc)||"unknown document")+") — "+((e&&e.message)||"try again")+". Because this saves several linked staff records, reload and verify before retrying.");
+      setMsg("Could not complete every assignment update [signed in as "+((user&&user.username)||"?")+", role "+((user&&user.role)||"?")+"] ("+((e&&e.__doc)||"unknown document")+") — "+((e&&e.message)||"try again")+". If you are the VP and this says permissions, two things to check: the Firestore rules published in Firebase may be older than this app (Data & Governance → Security → copy rules → publish), and the VP's login role must read \"vp\" in People & Access. Because this saves several linked staff records, reload and verify before retrying.");
     }finally{setSaving(false);}
   }
 
