@@ -41,6 +41,16 @@
   window.__fbQuery=query;window.__fbWhere=where;window.__fbGetDocs=getDocs; // scoped one-time reads (parent homework feed etc.) — cheaper than subscribing to a whole collection
   window.__fbGetDocServer=getDocFromServer;window.__fbServerTimestamp=serverTimestamp; // trusted server time (staff attendance can't be spoofed by changing the phone clock)
   window.__fbRunTransaction=(updateFn)=>runTransaction(db,updateFn); // atomic read-modify-write (e.g. monotonic receipt counter)
+  window.__fbTerminated=(e)=>/already been terminated|client has been terminated/i.test(String((e&&(e.message||e.code))||""));
+  window.__fbRecover=()=>{
+    try{
+      const fresh=getFirestore(app);          // after a shutdown this builds a new client on the same app
+      if(!fresh||fresh===window.__db)return false;
+      db=fresh;window.__db=fresh;
+      try{window.dispatchEvent(new Event("branchchange"));}catch(e){} // every live list re-subscribes
+      return true;
+    }catch(e){return false;}
+  };
   window.__fbAuth=auth;
   window.__authSignIn=(email,pwd)=>signInWithEmailAndPassword(auth,email,pwd);
   window.__authSignOut=()=>signOut(auth);
@@ -2754,11 +2764,23 @@ function useFirestore(collName,enabled=true){
     window.addEventListener("branchchange",onBranch);
     return()=>{window.removeEventListener("branchchange",onBranch);if(unsubRef.current)unsubRef.current();};
   },[collName,enabled]);
-  const set=useCallback(async(id,val)=>{if(!window.__db)return;await window.__fbSetDoc(window.__fbDoc(window.__db,collName,safeId(id)),val);},[collName]);
+  // Every write goes through here, so the recovery lives here too: one retry on a shut-down client, and a
+  // message a teacher can act on if it still will not go through.
+  const __retry=useCallback(async(run)=>{
+    try{return await run();}
+    catch(e){
+      if(window.__fbTerminated&&window.__fbTerminated(e)){
+        if(window.__fbRecover&&window.__fbRecover()){return await run();}
+        throw new Error("The app lost its connection to the database. Reload the page, then save again \u2014 nothing you typed is lost.");
+      }
+      throw e;
+    }
+  },[]);
+  const set=useCallback(async(id,val)=>{if(!window.__db)return;await __retry(()=>window.__fbSetDoc(window.__fbDoc(window.__db,collName,safeId(id)),val));},[collName,__retry]);
   // Field-level update (updateDoc) — touches ONLY the named fields (dot paths + FieldValues like arrayUnion work),
   // so two clients patching different fields of the same doc never clobber each other the way full-doc set() does.
-  const patch=useCallback(async(id,fields)=>{if(!window.__db)return;await window.__fbUpdateDoc(window.__fbDoc(window.__db,collName,safeId(id)),fields);},[collName]);
-  const del=useCallback(async(id)=>{if(!window.__db)return;await window.__fbDeleteDoc(window.__fbDoc(window.__db,collName,safeId(id)));},[collName]);
+  const patch=useCallback(async(id,fields)=>{if(!window.__db)return;await __retry(()=>window.__fbUpdateDoc(window.__fbDoc(window.__db,collName,safeId(id)),fields));},[collName,__retry]);
+  const del=useCallback(async(id)=>{if(!window.__db)return;await __retry(()=>window.__fbDeleteDoc(window.__fbDoc(window.__db,collName,safeId(id))));},[collName,__retry]);
   // Soft-delete support: docs flagged {deleted:true} are hidden from `data` (so EVERY reader excludes them automatically),
   // surfaced in `trash`, and brought back by `restore`. `allData` keeps the unfiltered map. (No collection used `deleted` before.)
   const visible=useMemo(()=>{const o={};for(const k in data){const v=data[k];if(!(v&&v.deleted===true))o[k]=v;}return o;},[data]);
