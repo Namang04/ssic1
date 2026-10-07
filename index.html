@@ -12869,6 +12869,9 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
   // Subject names drift between the class list, the exam and a teacher's account ("G.K" vs "General
   // Knowledge"), and a list can be renamed after marks are entered. Find the key actually stored: exactly
   // first, then by the shared subject key, so a mark keeps being found under either spelling.
+  const __dispSubj=(cls,name)=>{var list=(typeof __subjectsFor==="function")?(__subjectsFor(cls)||[]):[];
+    if(!name||list.indexOf(name)>=0)return name;var want=__subjMatchKey(name),hit=null;
+    list.forEach(function(s){if(hit===null&&__subjMatchKey(s)===want)hit=s;});return hit||name;};
   const __subjKeyIn=(obj,subjName)=>{if(!obj)return null;if(obj[subjName]!==undefined)return subjName;
     var want=__subjMatchKey(subjName),hit=null;Object.keys(obj).forEach(function(n){if(hit===null&&__subjMatchKey(n)===want)hit=n;});return hit;};
   const _examMark=(ex,subjName,stu,adm)=>{
@@ -12967,7 +12970,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
         const mk=(v,mx,dom)=>`<td>${v==null?'—':__rm(v)}${td.senior?`<span class="mx"> / ${mx}</span>`:(mx!==dom?`<span class="mx"> /${mx}</span>`:'')}</td>`;
         const cells=td.cols.map(c=>{const d=row.cells[c.key];return d?mk(d.v,d.max,c.max):'<td>—</td>';}).join("");
         const exCell=mk(row.exam.v,row.exam.max,td.examMax);
-        return `<tr><td class="l sub">${esc(row.name)}</td>${cells}${exCell}<td><b>${row.total==null?'—':__rm(row.total)}${row.inc?'<span class="inc">*</span>':''}</b></td><td class="g">${row.grade||'—'}</td></tr>`;
+        return `<tr><td class="l sub">${esc(__dispSubj(ex.cls,row.name))}</td>${cells}${exCell}<td><b>${row.total==null?'—':__rm(row.total)}${row.inc?'<span class="inc">*</span>':''}</b></td><td class="g">${row.grade||'—'}</td></tr>`;
       }).join("");
       const sumOf=f=>{let s=0,any=false;td.rows.forEach(row=>{const v=f(row);if(v!=null&&v!==""){s+=Number(v)||0;any=true;}});return any?Math.round(s):null;};
       const colTot=td.cols.map(c=>{const v=sumOf(row=>row.cells[c.key]?row.cells[c.key].v:null);return `<td>${v==null?'—':v}</td>`;}).join("");
@@ -12976,7 +12979,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
       pctV=td.pct;gradeV=td.grade;sumTxt=`${__rm(td.sum)}<span class="sm"> / ${td.n*100}</span>`;
     }else{
       head='<th class="l">Subject</th><th>Maximum</th><th>Obtained</th><th>Percentage</th><th>Grade</th>';
-      body=r.subjects.filter(s=>!s.graded).map(s=>`<tr><td class="l sub">${esc(s.name)}</td><td>${s.max}</td><td>${s.marks==null?'AB':__rm(s.marks)}</td><td>${s.pct==null?'—':s.pct+'%'}</td><td class="g">${esc(s.grade)}</td></tr>`).join("");
+      body=r.subjects.filter(s=>!s.graded).map(s=>`<tr><td class="l sub">${esc(__dispSubj(ex.cls,s.name))}</td><td>${s.max}</td><td>${s.marks==null?'AB':__rm(s.marks)}</td><td>${s.pct==null?'—':s.pct+'%'}</td><td class="g">${esc(s.grade)}</td></tr>`).join("");
       totRow=`<tr class="tot"><td class="l">Overall</td><td>${r.max}</td><td>${__rm(r.obt)}</td><td>${r.hasMarks?r.pct+'%':'—'}</td><td>${r.grade}</td></tr>`;
       pctV=r.max>0?r.pct:null;gradeV=r.grade;sumTxt=`${__rm(r.obt)}<span class="sm"> / ${r.max}</span>`;
     }
@@ -13015,7 +13018,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
       ${td.anyIncomplete?'<div class="sc-note">Subjects marked <b>*</b> still have a component to be entered, so they carry no grade yet and are left out of the overall.</div>':''}
       <div class="sc-cols"${addl.length?'':' style="grid-template-columns:1fr"'}>
         ${tog.coscholastic?`<div><div class="sc-h">Co-Scholastic</div><table class="sc"><tbody>${coRows.join("")}</tbody></table></div>`:''}
-        ${addl.length?`<div><div class="sc-h">Additional Subjects</div><table class="sc"><tbody>${addl.map(s=>`<tr><td class="l sub">${esc(s.name)}</td><td>${esc(s.grade)||'—'}</td></tr>`).join("")}</tbody></table></div>`:''}
+        ${addl.length?`<div><div class="sc-h">Additional Subjects</div><table class="sc"><tbody>${addl.map(s=>`<tr><td class="l sub">${esc(__dispSubj(ex.cls,s.name))}</td><td>${esc(s.grade)||'—'}</td></tr>`).join("")}</tbody></table></div>`:''}
       </div>
       <div class="sc-scale"><span class="lb">Scholastic</span><span class="sc-chip"><b>A1</b> 91–100</span><span class="sc-chip"><b>A2</b> 81–90</span><span class="sc-chip"><b>B1</b> 71–80</span><span class="sc-chip"><b>B2</b> 61–70</span><span class="sc-chip"><b>C1</b> 51–60</span><span class="sc-chip"><b>C2</b> 41–50</span><span class="sc-chip"><b>D</b> 33–40</span><span class="sc-chip"><b>E</b> below 33</span></div>
       <div class="sc-scale"><span class="lb">Co-Scholastic</span><span class="sc-chip"><b>A</b> Outstanding</span><span class="sc-chip"><b>B</b> Very Good</span><span class="sc-chip"><b>C</b> Good</span><span class="sc-chip"><b>D</b> Satisfactory</span><span class="sc-chip"><b>E</b> Needs Improvement</span></div>
@@ -13218,7 +13221,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
       <div class="hdr"><div class="hdrlogo"></div><h1>${esc(SCHOOL_NAME)}</h1><div class="sub">Session ${window.__SESSION||"2026-27"}</div></div>
       <div class="rt">Marksheet — ${esc(ex.name)}${msec?" · Section "+esc(msec):""}${withInt?" · with internal marks":""}</div>
       <div class="msinfo"><span>Class: <b>${esc(ex.cls)}${msec?" — Sec "+esc(msec):""}</b></span><span>Exam date: <b>${esc(ex.date||"—")}</b></span><span>Students assessed: <b>${done.length}</b> of ${cr.length}</span><span>Pass: <b>${passCount}</b> (${done.length?Math.round(passCount/done.length*100):0}%)</span><span>Class average: <b>${avg}%</b></span><span>Printed: <b>${today()}</b></span></div>
-      <table><thead><tr><th>S.No</th><th>Adm No</th><th class="l">Student</th>${subjNames.map(n=>`<th>${esc(n)}${withInt?'<div class="wt">internal + theory &middot; 100</div>':(maxBy[n]?`<div class="wt">/${maxBy[n]}</div>`:"")}</th>`).join("")}<th>Total</th><th>%</th><th>Grade</th><th>Rank</th><th>Result</th></tr></thead><tbody>${rows}</tbody></table>
+      <table><thead><tr><th>S.No</th><th>Adm No</th><th class="l">Student</th>${subjNames.map(n=>`<th>${esc(__dispSubj(ex.cls,n))}${withInt?'<div class="wt">internal + theory &middot; 100</div>':(maxBy[n]?`<div class="wt">/${maxBy[n]}</div>`:"")}</th>`).join("")}<th>Total</th><th>%</th><th>Grade</th><th>Rank</th><th>Result</th></tr></thead><tbody>${rows}</tbody></table>
       <div class="legend">AB = absent (counted as 0) · blank = subject not taken · N.IMP = Needs Improvement (below 33% overall or in a subject) · rank is within ${msec?"this section":"the class"} · rows in grey have no marks entered.${withInt?" Each subject cell reads internal + theory with its weighted total out of 100; the total, percentage, grade and rank follow that.":""}</div>
       <div class="sign"><span>Class Teacher</span><span>Examination In-charge</span><span>Principal</span></div>
     </div>`;
@@ -13455,7 +13458,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
           <div style={{padding:"12px 16px",borderBottom:"1px solid var(--c-ec)",fontSize:13,color:"var(--c-64)"}}>Enter {teacherExamScoped?<><b style={{color:"var(--ap-ink)"}}>{allowedExamSubjectNames.join(", ")||"your assigned subject"}</b> marks for </>:"marks for "}<b style={{color:"var(--ap-ink)"}}>{exam.name}</b> · {exam.cls}. Use <b>AB</b> for an absent paper, <b>N/A</b> only when the student does not study the subject; a blank always means unfinished.{exam.published&&<b style={{color:"var(--tx-red)"}}> This released exam is read-only until leadership hides it.</b>}</div>
           <div style={{overflowX:"auto"}}>
             <table style={{borderCollapse:"collapse",width:"100%",minWidth:Math.max(560,200+markSubjects.length*84)}}>
-              <thead><tr><th style={{...th,position:"sticky",left:0,background:"var(--c-fff)",zIndex:1,minWidth:160}}>Student</th>{markSubjects.map(s=><th key={s.name} style={{...th,textAlign:"center",minWidth:78}}>{s.name}<div style={{fontSize:11,color:s.graded?"var(--tx-pur)":"var(--c-94)",fontWeight:500}}>{s.graded?"grade":"/"+s.max}</div></th>)}</tr></thead>
+              <thead><tr><th style={{...th,position:"sticky",left:0,background:"var(--c-fff)",zIndex:1,minWidth:160}}>Student</th>{markSubjects.map(s=><th key={s.name} style={{...th,textAlign:"center",minWidth:78}}>{__dispSubj(exam.cls,s.name)}<div style={{fontSize:11,color:s.graded?"var(--tx-pur)":"var(--c-94)",fontWeight:500}}>{s.graded?"grade":"/"+s.max}</div></th>)}</tr></thead>
               <tbody>{roster.map((stu,ri)=>(<tr key={stu+"|"+ri}><td style={{...td,position:"sticky",left:0,background:"var(--c-fff)",fontWeight:600,color:"var(--ap-ink)",minWidth:160}}><span style={{color:"var(--c-94)",fontWeight:500,marginRight:6}}>{ri+1}</span>{stu}</td>
                 {markSubjects.map(s=>{const val=markDraft[s.name]?.[stu]??"";
                   if(s.graded)return(<td key={s.name} style={{...td,textAlign:"center",padding:"4px 6px"}}><select value={val} disabled={exam.published} onChange={e=>setMark(s.name,stu,e.target.value)} className="ss-input" style={{width:64,padding:"6px 4px",borderRadius:6,fontSize:12.5,textAlign:"center",cursor:exam.published?"default":"pointer"}}><option value="">—</option>{["A","B","C","D","E","AB","N/A"].map(g=><option key={g} value={g}>{g}</option>)}</select></td>);
