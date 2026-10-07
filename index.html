@@ -13467,7 +13467,8 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
 
       {/* TERM RESULT — weighted /100 per the school's CBSE scheme; Unit Test auto-pulled, internals written in */}
       {tab==="term"&&(()=>{
-        const subjects=teacherExamScoped?__subjectsFor(trCls).filter(s=>(getTeacherSubjects(user,trCls)||[]).indexOf(s)>=0):__subjectsFor(trCls); // teachers: their own subjects only
+        const _mySubj=getTeacherSubjects(user,trCls)||[],_myKeys=_mySubj.map(__subjMatchKey);
+        const subjects=teacherExamScoped?__subjectsFor(trCls).filter(s=>_mySubj.indexOf(s)>=0||_myKeys.indexOf(__subjMatchKey(s))>=0):__subjectsFor(trCls); // teachers: their own subjects, matched tolerantly (G.K = General Knowledge, Art = Drawing)
         const curSubj=(trSubj&&subjects.indexOf(trSubj)>=0)?trSubj:(subjects[0]||"");
         const termExams=exams.filter(e=>e&&e.cls===trCls&&e.term===trTerm);
         const utList=termExams.filter(e=>/unit\s*test/i.test(e.name||""));
@@ -13563,7 +13564,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
               <StatCard label={curSec?("Section "+curSec+" average"):"Class average"} val={clsAvg+"/100"} icon="chart" color="#7c3aed" sub={curSubj}/>
             </div>}
             {/* grid */}
-            {teacherExamScoped&&!subjects.length?<Empty icon="lock" title={"No assigned subject in "+trCls} sub="Your account has no subject for this class, so there are no internal marks to enter here. Ask the coordinator to check your assignment."/>:roster.length===0?<Empty icon="cap" title={"No students in "+trCls} sub="Add students first."/>:(
+            {teacherExamScoped&&!subjects.length?<Empty icon="lock" title={"No assigned subject in "+trCls} sub="Your account has no subject for this class, so there are no internal marks to enter here. Ask the coordinator to check that the class and the subject are both on your account."/>:roster.length===0?<Empty icon="cap" title={"No students in "+trCls} sub="Add students first."/>:(
             <div className="ap-panel" style={{overflow:"hidden"}}>
               {isMob?<div>{rows.reduce(function(acc,r,ri){if(showHeads&&(ri===0||trSecOf(rows[ri-1].st)!==trSecOf(r.st))){var hs=trSecOf(r.st);acc.push(<div key={"msec#"+(hs||"none")} style={{padding:"9px 14px",background:"var(--c-f7)",borderTop:"1px solid var(--ap-line)",borderBottom:"1px solid var(--ap-line)",fontSize:11.5,fontWeight:700,letterSpacing:.6,textTransform:"uppercase",color:"var(--c-64)"}}>{hs?("Section "+hs):"No section"} · {secCount[hs]} student{secCount[hs]===1?"":"s"}</div>);}
                   var p=r.comp?r.comp.parts:{},tot=r.comp?r.comp.total:null,miss=!!(r.comp&&r.comp.missing.length>0);
