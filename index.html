@@ -1983,7 +1983,8 @@ function __admInBrack(nm){
 // what the app always resolved for unique-named students. Ambiguous → undefined; honest blank.
 // Does this internals record hold anything? A key saved with an empty value is not a mark, and must not make
 // a subject look taken.
-function __anyFilled(o){var any=false;Object.keys(o||{}).forEach(function(k){var v=o[k];if(v!==undefined&&v!==null&&String(v).trim()!=="")any=true;});return any;}
+function __naMark(v){return v!==undefined&&v!==null&&/^n\/?a$/i.test(String(v).trim());}
+function __anyFilled(o){var any=false;Object.keys(o||{}).forEach(function(k){var v=o[k];if(v!==undefined&&v!==null&&String(v).trim()!==""&&!__naMark(v))any=true;});return any;}
 function __rowValFor(rows,adm,name){
   if(!rows)return undefined;
   if(name&&rows[name]!==undefined)return rows[name];
@@ -12961,7 +12962,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
     scholastic.forEach(s=>{
       const tc=termSubjComposite(ex,s.name,stu,adm);
       const exMark=tc.exMark;
-      if((exMark===undefined||exMark==="")&&!__anyFilled((function(){var w=(ex.weighted&&ex.weighted[adm])||{};return w[__subjKeyIn(w,s.name)||s.name]||{};})()))return; // not taken
+      if((exMark===undefined||exMark===""||__naMark(exMark))&&!__anyFilled((function(){var w=(ex.weighted&&ex.weighted[adm])||{};return w[__subjKeyIn(w,s.name)||s.name]||{};})()))return; // not taken
       const c=tc.comp,p=c.parts||{},cfg=tc.cfg,cells={};
       if(cfg.ut>0){utMax[cfg.ut]=(utMax[cfg.ut]||0)+1;cells.__ut={v:p.ut,max:cfg.ut};if(tc.utName)utNm[tc.utName]=(utNm[tc.utName]||0)+1;}
       if(senior&&cfg.writeins.length){
@@ -13161,7 +13162,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
     const rows=[]; let sumTot=0, nDone=0, anyIncomplete=false, anyFail=false;
     scholastic.forEach(s=>{
       const tc=termSubjComposite(ex,s.name,stu,adm);
-      const exMark=tc.exMark; if((exMark===undefined||exMark==="")&&!__anyFilled((function(){var w=(ex.weighted&&ex.weighted[adm])||{};return w[__subjKeyIn(w,s.name)||s.name]||{};})()))return; // student doesn't take this subject
+      const exMark=tc.exMark; if((exMark===undefined||exMark===""||__naMark(exMark))&&!__anyFilled((function(){var w=(ex.weighted&&ex.weighted[adm])||{};return w[__subjKeyIn(w,s.name)||s.name]||{};})()))return; // student doesn't take this subject
       const c=tc.comp, p=c.parts||{}, cfg=tc.cfg;
       const bits=[];
       if(cfg.ut>0)bits.push(`UT ${p.ut==null?'—':p.ut}<span class="wt">/${cfg.ut}</span>`);

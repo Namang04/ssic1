@@ -6,7 +6,7 @@ const src = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const grab = (name) => { const i = src.search(new RegExp('^function ' + name + '\\(', 'm')); if (i < 0) { console.error('  missing ' + name); process.exit(2); }
   let d = 0, j = src.indexOf('{', i); for (;; j++) { const c = src[j]; if (c === '{') d++; else if (c === '}') { if (--d === 0) break; } } return src.slice(i, j + 1); };
 const line = (re) => { const m = src.match(re); if (!m) { console.error('  missing ' + re); process.exit(2); } return m[0]; };
-(0, eval)([line(/^const nmKey=.*$/m).replace(/^const /, 'globalThis.'), grab('__admInBrack'), grab('__anyFilled'), grab('__rowValFor'),
+(0, eval)([line(/^const nmKey=.*$/m).replace(/^const /, 'globalThis.'), grab('__admInBrack'), grab('__naMark'), grab('__anyFilled'), grab('__rowValFor'),
   line(/^var _MONTHS_S=.*$/m).replace(/^var /, 'globalThis.'), grab('__dateParts'), grab('__dateOk'), grab('__dmy'), grab('__dLong'),
   line(/^const fmtDate=.*$/m).replace(/^const /, 'globalThis.')].join('\n'));
 let pass = 0, fail = 0; const ok = (n, c) => { c ? pass++ : (fail++, console.log('  FAIL:', n)); };
@@ -34,4 +34,6 @@ ok('an unknown pupil finds nothing',                 __rowValFor({ "1633": { x: 
 ok('blank internals do not count as marks',          __anyFilled({ notebook: "", enrichment: null }) === false);
 ok('one filled component counts',                    __anyFilled({ notebook: "", enrichment: 4 }) === true);
 ok('a zero counts as a mark',                        __anyFilled({ notebook: 0 }) === true);
+ok('"N/A" is not a mark',                            __anyFilled({ practical: "N/A" }) === false && __naMark("n/a") === true);
+ok('a subject marked N/A alongside a real one',      __anyFilled({ practical: "NA", project: 7 }) === true);
 console.log(`\n  ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
