@@ -12717,6 +12717,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
   const[rcTpl,setRcTpl]=useState("school"); // report-card format: school · cbse · nep · icse
   const[msSec,setMsSec]=useState(""); // marksheet scope: "" = whole class, else one section
   const[msInt,setMsInt]=useState(false); // marksheet: print each subject's internal + theory split and its /100
+  const[coDraft,setCoDraft]=useState({});const[coBusy,setCoBusy]=useState(false);const[coSec,setCoSec]=useState(""); // class teacher's co-scholastic grid
   const[rcTog,setRcTog]=useState({rank:true,coscholastic:true,attendance:true,remarks:true}); // sections shown on the card
   // ── Term Result composer state ──
   const[trCls,setTrCls]=useState(examClasses[0]||__academicClasses()[0]);
@@ -13313,8 +13314,8 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
   const saveExtra=async()=>{if(!exam||!cardStu)return false;if(exam.published){window.__toast&&window.__toast("Hide this exam from parents before changing a result, grade or remark.","err");return false;}const fresh=examsDB.data[selId]||exam;const adm=String(admOfExam(fresh.cls,cardStu)||"");const rowKey=adm||cardStu;const next={...(fresh.extra||{}),[rowKey]:extraDraft};try{await examsDB.set(selId,{...fresh,extra:next,updatedAt:new Date().toISOString(),reviewStatus:"needs-review",reviewedAt:"",reviewedBy:""});extraBaseRef.current=JSON.stringify(extraDraft||{});window.__reportCardDirty="";return true;}catch(e){window.__toast&&window.__toast("Could not save report-card details — "+((e&&e.message)||"try again"),"err");return false;}};
 
   if(examsDB.loading||studentsDB.loading)return<Spinner/>;
-  const TABS=reportsOnly?[{id:"reports",label:"Report Cards"}]:teacherExamScoped?[{id:"marks",label:"Enter My Subject Marks"},{id:"term",label:"Internal Marks"},{id:"reports",label:"Report Cards"},{id:"progress",label:"Progress"}]:[{id:"exams",label:"Exams"},{id:"marks",label:"Enter Marks"},{id:"term",label:"Term Result"},{id:"reports",label:"Report Cards"},{id:"progress",label:"Progress"}];
-  const changeExamTab=id=>{if(id===tab)return true;if((examMarksDirty||extraDraftDirty||termResultDirty||editSubjectsDirty||createExamDirty)&&!__confirmUnsavedWork())return false;if(examMarksDirty||extraDraftDirty)setExamDraftReset(n=>n+1);if(termResultDirty)setTrDraft({});if(editSubjectsDirty){setEditSubsId("");setEditSubs([]);setNewEditSub("");editSubsBaseRef.current="";}if(createExamDirty)setCreateExamDirty(false);setTab(id);return true;};
+  const TABS=reportsOnly?[{id:"reports",label:"Report Cards"}]:teacherExamScoped?[{id:"marks",label:"Enter My Subject Marks"},{id:"term",label:"Internal Marks"},{id:"cosch",label:"Co-Scholastic"},{id:"reports",label:"Report Cards"},{id:"progress",label:"Progress"}]:[{id:"exams",label:"Exams"},{id:"marks",label:"Enter Marks"},{id:"term",label:"Term Result"},{id:"cosch",label:"Co-Scholastic"},{id:"reports",label:"Report Cards"},{id:"progress",label:"Progress"}];
+  const changeExamTab=id=>{if(id===tab)return true;if((examMarksDirty||extraDraftDirty||termResultDirty||editSubjectsDirty||createExamDirty||Object.keys(coDraft).length>0)&&!__confirmUnsavedWork())return false;if(Object.keys(coDraft).length>0)setCoDraft({});if(examMarksDirty||extraDraftDirty)setExamDraftReset(n=>n+1);if(termResultDirty)setTrDraft({});if(editSubjectsDirty){setEditSubsId("");setEditSubs([]);setNewEditSub("");editSubsBaseRef.current="";}if(createExamDirty)setCreateExamDirty(false);setTab(id);return true;};
   const td={padding:"8px 10px",fontSize:12.5,borderBottom:"1px solid var(--c-f0)"};
   const th={padding:"8px 10px",fontSize:11,fontWeight:700,color:"var(--c-64)",textTransform:"uppercase",letterSpacing:.6,textAlign:"left",borderBottom:"1px solid var(--c-ec)"};
   const ExamPicker=()=>(<select value={selId} onChange={e=>{if((examMarksDirty||extraDraftDirty)&&!__confirmUnsavedWork()){e.target.value=selId;return;}setSelId(e.target.value);}} className="ss-input" style={{padding:"9px 12px",borderRadius:6,fontSize:13,fontWeight:600,minWidth:240}}>
@@ -13677,6 +13678,62 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
       })()}
 
       {/* REPORTS */}
+      {/* CO-SCHOLASTIC — the class teacher fills the six areas for their own section, one screen for the whole class */}
+      {tab==="cosch"&&(()=>{
+        if(!exam)return <Empty icon="clip" title="No exam selected" sub="Pick an exam above, then fill the co-scholastic areas for your section."/>;
+        const ctSecs=teacherExamScoped?__teacherCTSectsFor(user,exam.cls):visibleSecsFor(exam.cls);
+        if(teacherExamScoped&&!ctSecs.length)return <Empty icon="lock" title="Filled by the class teacher" sub={"The co-scholastic areas for "+exam.cls+" are filled by the class teacher of each section, and your account is not set as one for this class. Ask the coordinator if that is wrong."}/>;
+        const secs=ctSecs.length?ctSecs:[""];
+        const cur=(coSec&&secs.indexOf(coSec)>=0)?coSec:secs[0];
+        const roster=__sectionAZ((rosterObjsOf(exam.cls)||[]).map(s=>Object.assign({},s,{section:_rosterSec(s.section,exam.cls)||""})),s=>s.section||"",cur||"");
+        const keyOf=s=>String(s.admNo||"")||s.name;
+        const val=(k,s)=>{const kk=keyOf(s),d=coDraft[kk]||{};if(d[k]!==undefined)return d[k];const e=(exam.extra||{})[kk]||{};return e[k]||"";};
+        const set=(k,s,v)=>{const kk=keyOf(s);setCoDraft(d=>Object.assign({},d,{[kk]:Object.assign({},d[kk],{[k]:v})}));};
+        const dirty=Object.keys(coDraft).length>0;
+        const save=async()=>{
+          if(!dirty||coBusy)return;
+          if(exam.published){window.__toast&&window.__toast("This exam is visible to parents. Leadership must hide it before the grades can change.","err");return;}
+          setCoBusy(true);
+          try{const fresh=examsDB.data[selId]||exam;const next=Object.assign({},fresh.extra||{});
+            Object.keys(coDraft).forEach(kk=>{next[kk]=Object.assign({},next[kk]||{},coDraft[kk]);});
+            await examsDB.set(selId,Object.assign({},fresh,{extra:next,updatedAt:new Date().toISOString(),reviewStatus:"needs-review",reviewedAt:"",reviewedBy:""}));
+            setCoDraft({});window.__toast&&window.__toast("Co-scholastic grades saved","ok");
+          }catch(e){window.__toast&&window.__toast("Could not save \u2014 "+((e&&e.message)||"try again"),"err");}
+          setCoBusy(false);
+        };
+        const sel=(k,s)=>(<select value={val(k,s)} disabled={exam.published} onChange={e=>set(k,s,e.target.value)} className="ss-input" style={{width:62,padding:"5px 4px",borderRadius:6,fontSize:12.5,textAlign:"center",cursor:exam.published?"default":"pointer"}}>{CO_GRADES.map(g=><option key={g||"-"} value={g}>{g||"\u2014"}</option>)}</select>);
+        const rmk=s=>(<input value={val("remark",s)} disabled={exam.published} onChange={e=>set("remark",s,e.target.value)} placeholder="Class teacher's remark" className="ss-input" style={{width:"100%",minWidth:150,padding:"5px 8px",borderRadius:6,fontSize:12.5}}/>);
+        return (<div style={{display:"flex",flexDirection:"column",gap:14}}>
+          <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}><ExamPicker/>
+            {secs.length>1&&<select value={cur} onChange={e=>{if(dirty&&!__confirmUnsavedWork())return;setCoDraft({});setCoSec(e.target.value);}} className="ss-input" style={{padding:"9px 12px",borderRadius:6,fontSize:13,fontWeight:600}}>{secs.map(s=><option key={s} value={s}>{s?("Section "+s):"All"}</option>)}</select>}
+            <span style={{fontSize:12.5,color:"var(--ap-muted)"}}>{roster.length} pupil{roster.length===1?"":"s"}{teacherExamScoped?" \u00b7 your class":""}</span>
+          </div>
+          <div className="ap-panel" style={{overflow:"hidden"}}>
+            <div className="ap-panelh"><div className="ttl">Co-Scholastic \u00b7 {exam.cls}{cur?" \u00b7 Section "+cur:""}</div><span style={{fontSize:11.5,color:"var(--ap-muted)"}}>A outstanding \u00b7 B very good \u00b7 C good \u00b7 D satisfactory \u00b7 E needs improvement</span></div>
+            {roster.length===0?<Empty icon="cap" title="No pupils in this section" sub="Add pupils to the class first."/>:(isMob?
+              <div>{roster.map((s,i)=>(<div key={keyOf(s)+"#"+i} style={{padding:"12px 14px",borderTop:i?"1px solid var(--c-f0)":"none"}}>
+                <div style={{fontWeight:700,fontSize:13.5,color:"var(--ap-ink)"}}>{s.name}</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:8}}>
+                  {CO_TRAITS.map(([k,l])=>(<label key={k} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,fontSize:11.5,fontWeight:600,color:"var(--c-64)"}}>{l}{sel(k,s)}</label>))}
+                </div>
+                <div style={{marginTop:8}}>{rmk(s)}</div>
+              </div>))}</div>
+              :<div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:860}}>
+                <thead><tr><th style={{...th,paddingLeft:15,position:"sticky",left:0,background:"var(--c-fff)",minWidth:160}}>Student</th>
+                  {CO_TRAITS.map(([k,l])=>(<th key={k} style={{...th,textAlign:"center",whiteSpace:"normal",maxWidth:84}}>{l}</th>))}
+                  <th style={{...th,minWidth:180}}>Remark</th></tr></thead>
+                <tbody>{roster.map((s,i)=>(<tr key={keyOf(s)+"#"+i}>
+                  <td style={{...td,paddingLeft:15,fontWeight:600,color:"var(--ap-ink)",position:"sticky",left:0,background:"var(--c-fff)"}}><span style={{color:"var(--c-94)",fontWeight:500,marginRight:6}}>{i+1}</span>{s.name}</td>
+                  {CO_TRAITS.map(([k,l])=>(<td key={k} style={{...td,textAlign:"center",padding:"4px 5px"}}>{sel(k,s)}</td>))}
+                  <td style={{...td,padding:"4px 8px"}}>{rmk(s)}</td></tr>))}</tbody>
+              </table></div>)}
+            <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",borderTop:"1px solid var(--ap-line)",padding:"12px 16px",background:"var(--c-f7)"}}>
+              <span style={{fontSize:11.5,color:"var(--c-94)"}}>These grades and the remark print on the report card. Leave an area blank and it prints as a dash.</span>
+              <Btn onClick={save} disabled={coBusy||!dirty||exam.published} style={{marginLeft:"auto"}}>{coBusy?"Saving\u2026":(exam.published?"Locked \u2014 visible to parents":"Save co-scholastic")}</Btn>
+            </div>
+          </div>
+        </div>);
+      })()}
       {tab==="reports"&&<div>
         <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14,flexWrap:"wrap"}}><ExamPicker/>
           {exam&&(()=>{const _secs=visibleSecsFor(exam.cls);return _secs.length>1?(<select value={msSec} onChange={e=>setMsSec(e.target.value)} className="ss-input" title="View & print the whole class or one section" style={{padding:"9px 12px",borderRadius:6,fontSize:13,fontWeight:600}}>
