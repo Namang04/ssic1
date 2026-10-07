@@ -1946,7 +1946,9 @@ function __staffAssignmentLabel(u){
 }
 const getTeacherSections=(user,cls)=>{const ALL=["A","B","C","D"];if(!user||user.role!=="teacher"||user.coordinator===true)return ALL;const want=String(cls).split("-")[0].trim();const secs=(user.classes||[]).filter(function(c){return c.split("-")[0].trim()===want;}).map(function(c){var p=c.split("-");return p.length>1?p.slice(1).join("-").trim():"";}).filter(Boolean);return secs.length?[...new Set(secs)]:[];};
 function __teacherSecsFor(user,cls,subj){if(!user||user.role!=="teacher"||user.coordinator===true)return [];var want=String(cls||"").split("-")[0].trim(),pairs=__teacherPairs(user);if(pairs.length)return [...new Set(pairs.map(__teacherPairParts).filter(function(p){return p&&p.cls===want&&(!subj||__teacherSubjKey(__canonTestSubj(want,p.subj))===__teacherSubjKey(__canonTestSubj(want,subj)));}).map(function(p){return normSection(want,p.sec);}).filter(Boolean))];return [...new Set((user.classes||[]).filter(function(c){return String(c).split("-")[0].trim()===want;}).map(function(c){var p=String(c).split("-");return p.length>1?normSection(want,p.slice(1).join("-")):"";}).filter(Boolean))];}
-function __teacherCTSectsFor(user,cls){if(!user||user.role!=="teacher"||user.coordinator===true)return [];var want=String(cls||"").split("-")[0].trim();return [...new Set((user.classTeacherOf||[]).filter(function(c){return String(c).split("-")[0].trim()===want;}).map(function(c){var p=String(c).split("-");return p.length>1?normSection(want,p.slice(1).join("-")):"";}).filter(Boolean))];}
+function __ctSectsFromList(list,cls){var want=String(cls||"").split("-")[0].trim();
+  return [...new Set((list||[]).filter(function(c){return String(c).split("-")[0].trim()===want;}).map(function(c){var p=String(c).split("-");return p.length>1?normSection(want,p.slice(1).join("-")):"";}).filter(Boolean))];}
+function __teacherCTSectsFor(user,cls){if(!user||user.role!=="teacher"||user.coordinator===true)return [];return __ctSectsFromList(user.classTeacherOf||[],cls);}
 // Subject teachers see their own subject in assigned sections. A class teacher additionally sees all subjects
 // for their own section. Tests they personally recorded stay visible after an assignment change for continuity.
 function __teacherCanReadTest(user,t){if(!user||user.role!=="teacher"||user.coordinator===true)return true;if(!t)return false;if(String(t.by||"")===String(user.name||""))return true;var sec=t.section?normSection(t.cls,t.section):"",mine=__teacherPairAllows(user,t.cls,sec,t.subj),ct=__teacherCTSectsFor(user,t.cls);if(mine)return true;return !!sec&&ct.indexOf(sec)>=0;}
@@ -1969,10 +1971,14 @@ function __admInBrack(nm){
 // Candidate rows may themselves be bracketed (old "NAME (oldAdmNo)" spellings with a since-corrected
 // number still belong to the only student of that name) — the n===1 count is the safety, matching
 // what the app always resolved for unique-named students. Ambiguous → undefined; honest blank.
+// Does this internals record hold anything? A key saved with an empty value is not a mark, and must not make
+// a subject look taken.
+function __anyFilled(o){var any=false;Object.keys(o||{}).forEach(function(k){var v=o[k];if(v!==undefined&&v!==null&&String(v).trim()!=="")any=true;});return any;}
 function __rowValFor(rows,adm,name){
   if(!rows)return undefined;
   if(name&&rows[name]!==undefined)return rows[name];
   var a=String(adm||"");
+  if(a&&rows[a]!==undefined)return rows[a];   // keyed by the admission number itself (report-card extras are)
   if(a){for(var kb in rows){if(__admInBrack(kb)===a)return rows[kb];}}
   if(name&&!/\(/.test(name)){
     var k=nmKey(name),hit,n=0;
@@ -12709,6 +12715,15 @@ function __sectionAZ(list,secOf,onlySec){
 }
 function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,examClasses=__academicClasses(),reportsOnly=false}){
   const teacherExamScoped=user.role==="teacher"&&user.coordinator!==true;
+  // Which sections this teacher is class teacher of. The signed-in profile can lag behind the shared
+  // class-teacher map (the map is what the Assign panel writes for everyone), so read both and use the union:
+  // a class teacher was being told the class was not theirs while the map said it was.
+  const _ctSharedDoc=useSharedDoc("users",__sharedDocId("__classTeachers"),!!user);
+  const _myProfDoc=useSharedDoc("users",safeId(user.username||""),!!user&&!!user.username);
+  const _ctSectsFor=(c)=>{if(!teacherExamScoped)return [];
+    const mapList=__ctSectionsFor(((_ctSharedDoc&&_ctSharedDoc.map)||{}),user.username,user.name)||[];
+    const ownList=(_myProfDoc&&_myProfDoc.classTeacherOf)||user.classTeacherOf||[];
+    return [...new Set(__ctSectsFromList(ownList,c).concat(__ctSectsFromList(mapList,c)))];};
   const[tab,setTab]=useState(reportsOnly?"reports":teacherExamScoped?"marks":"exams");
   const[selId,setSelId]=useState("");
   const[markDraft,setMarkDraft]=useState({});const markDirty=useRef({}); // cells THIS teacher edited — so a save merges only those over the live doc, never clobbering another teacher's subject
@@ -12924,7 +12939,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
     scholastic.forEach(s=>{
       const tc=termSubjComposite(ex,s.name,stu,adm);
       const exMark=tc.exMark;
-      if((exMark===undefined||exMark==="")&&Object.keys((function(){var w=(ex.weighted&&ex.weighted[adm])||{};return w[__subjKeyIn(w,s.name)||s.name]||{};})()).length===0)return; // not taken
+      if((exMark===undefined||exMark==="")&&!__anyFilled((function(){var w=(ex.weighted&&ex.weighted[adm])||{};return w[__subjKeyIn(w,s.name)||s.name]||{};})()))return; // not taken
       const c=tc.comp,p=c.parts||{},cfg=tc.cfg,cells={};
       if(cfg.ut>0){utMax[cfg.ut]=(utMax[cfg.ut]||0)+1;cells.__ut={v:p.ut,max:cfg.ut};if(tc.utName)utNm[tc.utName]=(utNm[tc.utName]||0)+1;}
       if(senior&&cfg.writeins.length){
@@ -13124,7 +13139,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
     const rows=[]; let sumTot=0, nDone=0, anyIncomplete=false, anyFail=false;
     scholastic.forEach(s=>{
       const tc=termSubjComposite(ex,s.name,stu,adm);
-      const exMark=tc.exMark; if((exMark===undefined||exMark==="")&&Object.keys((function(){var w=(ex.weighted&&ex.weighted[adm])||{};return w[__subjKeyIn(w,s.name)||s.name]||{};})()).length===0)return; // student doesn't take this subject
+      const exMark=tc.exMark; if((exMark===undefined||exMark==="")&&!__anyFilled((function(){var w=(ex.weighted&&ex.weighted[adm])||{};return w[__subjKeyIn(w,s.name)||s.name]||{};})()))return; // student doesn't take this subject
       const c=tc.comp, p=c.parts||{}, cfg=tc.cfg;
       const bits=[];
       if(cfg.ut>0)bits.push(`UT ${p.ut==null?'—':p.ut}<span class="wt">/${cfg.ut}</span>`);
@@ -13704,7 +13719,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
       {/* CO-SCHOLASTIC — the class teacher fills the six areas for their own section, one screen for the whole class */}
       {tab==="cosch"&&(()=>{
         if(!exam)return <Empty icon="clip" title="No exam selected" sub="Pick an exam above, then fill the co-scholastic areas for your section."/>;
-        const ctSecs=teacherExamScoped?__teacherCTSectsFor(user,exam.cls):visibleSecsFor(exam.cls);
+        const ctSecs=teacherExamScoped?_ctSectsFor(exam.cls):visibleSecsFor(exam.cls);
         if(teacherExamScoped&&!ctSecs.length)return <Empty icon="lock" title="Filled by the class teacher" sub={"The co-scholastic areas for "+exam.cls+" are filled by the class teacher of each section, and your account is not set as one for this class. Ask the coordinator if that is wrong."}/>;
         const secs=ctSecs.length?ctSecs:[""];
         const cur=(coSec&&secs.indexOf(coSec)>=0)?coSec:secs[0];
