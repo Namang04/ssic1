@@ -1054,7 +1054,85 @@ function __compressImg(file,maxDim,quality){return new Promise(function(resolve,
       try{resolve(cv.toDataURL("image/jpeg",quality||0.62));}catch(e){reject(e);}};
     img.onerror=reject;img.src=fr.result;};
   fr.onerror=reject;fr.readAsDataURL(file);});}
+// Re-frame a photo: rotate it upright and crop to the head, writing a portrait JPEG the report card can use as
+// it stands. Teachers photograph pupils at every angle and distance, and "object-fit:cover" then centres on a
+// chest or a shoulder. The same arithmetic drives the on-screen preview and this canvas, so what the office
+// lines up is exactly what is saved: rotate about the centre, scale to cover, then shift by (ox,oy).
+function __frameImg(src,f,vw,vh,ow,oh,q){return new Promise(function(res,rej){
+  var im=new Image();
+  im.onload=function(){
+    var r=(((f.rot||0)%360)+360)%360, w=im.naturalWidth||im.width, h=im.naturalHeight||im.height;
+    var ew=(r===90||r===270)?h:w, eh=(r===90||r===270)?w:h;
+    var sc=Math.max(vw/ew,vh/eh)*(f.zoom||1), k=ow/vw;
+    var cv=document.createElement("canvas");cv.width=ow;cv.height=oh;
+    var cx=cv.getContext("2d");cx.fillStyle="#fff";cx.fillRect(0,0,ow,oh);
+    cx.translate(ow/2+(f.ox||0)*k, oh/2+(f.oy||0)*k);
+    cx.rotate(r*Math.PI/180);
+    cx.scale(sc*k,sc*k);
+    cx.drawImage(im,-w/2,-h/2,w,h);
+    try{res(cv.toDataURL("image/jpeg",q||0.78));}catch(e){rej(e);}
+  };
+  im.onerror=rej;im.src=src;});}
+// How far the picture may be dragged before a white edge shows.
+function __frameClamp(nat,rot,zoom,vw,vh){
+  if(!nat)return{x:0,y:0};
+  var r=(((rot||0)%360)+360)%360;
+  var ew=(r===90||r===270)?nat.h:nat.w, eh=(r===90||r===270)?nat.w:nat.h;
+  var sc=Math.max(vw/ew,vh/eh)*(zoom||1);
+  return{x:Math.max(0,(ew*sc-vw)/2), y:Math.max(0,(eh*sc-vh)/2)};}
 const {useState,useMemo,useEffect,useCallback,useRef}=React;
+
+// Photo framer — drag the face into the box, rotate a sideways picture upright, zoom in on a distant one.
+// Saves a 3:4 portrait, which is the shape every photo box in the app and on the printed card uses.
+function PhotoFramer({src,name,onSave,onClose}){
+  const VW=192,VH=256;
+  const[rot,setRot]=useState(0),[zoom,setZoom]=useState(1),[off,setOff]=useState({x:0,y:0});
+  const[nat,setNat]=useState(null),[busy,setBusy]=useState("");
+  const drag=useRef(null);
+  useEffect(function(){let live=true;const im=new Image();
+    im.onload=function(){if(live)setNat({w:im.naturalWidth||im.width,h:im.naturalHeight||im.height});};
+    im.src=src;return function(){live=false;};},[src]);
+  const lim=__frameClamp(nat,rot,zoom,VW,VH);
+  const clamp=(o)=>({x:Math.max(-lim.x,Math.min(lim.x,o.x)),y:Math.max(-lim.y,Math.min(lim.y,o.y))});
+  const sc=nat?(function(){const r=((rot%360)+360)%360;const ew=(r===90||r===270)?nat.h:nat.w,eh=(r===90||r===270)?nat.w:nat.h;
+    return Math.max(VW/ew,VH/eh)*zoom;})():1;
+  const pt=(e)=>{const t=(e.touches&&e.touches[0])||e;return{x:t.clientX,y:t.clientY};};
+  const start=(e)=>{const q=pt(e);drag.current={x:q.x,y:q.y,ox:off.x,oy:off.y};};
+  const move=(e)=>{if(!drag.current)return;const q=pt(e);
+    setOff(clamp({x:drag.current.ox+(q.x-drag.current.x),y:drag.current.oy+(q.y-drag.current.y)}));
+    if(e.cancelable)e.preventDefault();};
+  const end=()=>{drag.current=null;};
+  const turn=(d)=>{setRot(r=>r+d);setOff({x:0,y:0});};
+  const save=async()=>{setBusy("Saving\u2026");
+    try{const out=await __frameImg(src,{rot:rot,zoom:zoom,ox:off.x,oy:off.y},VW,VH,240,320,0.78);await onSave(out);}
+    catch(err){setBusy(""+((err&&err.message)||"Could not save"));return;}
+    setBusy("");};
+  const btn={border:"1px solid var(--c-d2)",background:"var(--c-fff)",borderRadius:7,padding:"7px 12px",fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)",color:"var(--ap-ink2)"};
+  return (
+    <div onMouseUp={end} onMouseLeave={end} onTouchEnd={end} style={{position:"fixed",inset:0,zIndex:9000,background:"rgba(10,18,30,.55)",display:"grid",placeItems:"center",padding:16}}>
+      <div className="ap-panel" style={{padding:18,width:"min(420px,96vw)",background:"var(--c-fff)"}}>
+        <div style={{fontSize:14.5,fontWeight:800,color:"var(--ap-ink)"}}>Frame {name||"photo"}</div>
+        <div style={{fontSize:12,color:"var(--ap-muted)",margin:"3px 0 13px"}}>Drag the face into the box. Rotate a sideways picture upright, and zoom in on a distant one.</div>
+        <div style={{display:"grid",placeItems:"center"}}>
+          <div onMouseDown={start} onMouseMove={move} onTouchStart={start} onTouchMove={move}
+            style={{width:VW,height:VH,overflow:"hidden",position:"relative",borderRadius:7,border:"1px solid var(--ap-line)",background:"var(--c-f0)",cursor:"grab",touchAction:"none"}}>
+            {nat&&<img src={src} alt="" draggable={false} style={{position:"absolute",left:"50%",top:"50%",width:nat.w,height:nat.h,maxWidth:"none",marginLeft:-nat.w/2,marginTop:-nat.h/2,transformOrigin:"center center",transform:"translate("+off.x+"px,"+off.y+"px) rotate("+rot+"deg) scale("+sc+")",userSelect:"none"}}/>}
+          </div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:10,margin:"13px 0 4px"}}>
+          <button onClick={()=>turn(-90)} style={btn} title="Rotate left">↺</button>
+          <button onClick={()=>turn(90)} style={btn} title="Rotate right">↻</button>
+          <input type="range" min="1" max="3" step="0.02" value={zoom} onChange={e=>{const z=Number(e.target.value);setZoom(z);setOff(o=>clamp(o));}} style={{flex:1}} title="Zoom"/>
+          <button onClick={()=>{setRot(0);setZoom(1);setOff({x:0,y:0});}} style={btn}>Reset</button>
+        </div>
+        <div style={{display:"flex",gap:9,justifyContent:"flex-end",marginTop:12,alignItems:"center"}}>
+          {busy&&<span style={{marginRight:"auto",fontSize:12,fontWeight:600,color:"var(--ap-muted)"}}>{busy}</span>}
+          <button onClick={onClose} style={btn}>Cancel</button>
+          <button onClick={save} disabled={!nat||!!busy} style={{...btn,background:"var(--btn-pri-bg)",color:"#fff",border:"none",opacity:(!nat||busy)?.6:1}}>Save photo</button>
+        </div>
+      </div>
+    </div>);
+}
 
 // Question-bank data lives in inert script blocks of type text/qb-data, so the browser
 // does NOT parse ~3.3MB of JS on initial load. It is compiled once, lazily, the first time
@@ -1707,7 +1785,7 @@ function useOnePhoto(adm){
 function PhotoAvatar(props){
   var img=props.img,name=props.name||"",size=props.size||36,radius=props.radius||10,grad=props.grad||["#0071e3","#4aa6ff"],fs=props.fontSize||(size*0.34);
   var ini=String(name).split(" ").filter(Boolean).map(function(w){return w[0];}).slice(0,2).join("").toUpperCase();
-  return <div style={{width:size,height:size,borderRadius:radius,flexShrink:0,overflow:"hidden",display:"grid",placeItems:"center",color:"#fff",fontSize:fs,fontWeight:800,fontFamily:"var(--ss-font)",background:img?"var(--c-f0)":("linear-gradient(140deg,"+grad[0]+","+grad[1]+")")}}>{img?<img src={img} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:ini}</div>;
+  return <div style={{width:size,height:size,borderRadius:radius,flexShrink:0,overflow:"hidden",display:"grid",placeItems:"center",color:"#fff",fontSize:fs,fontWeight:800,fontFamily:"var(--ss-font)",background:img?"var(--c-f0)":("linear-gradient(140deg,"+grad[0]+","+grad[1]+")")}}>{img?<img src={img} alt="" style={{width:"100%",height:"100%",objectFit:"cover",objectPosition:"50% 30%"}}/>:ini}</div>;
 }
 
 // ── Term-exam performance for one student (used in the 360 profiles) ──────────
@@ -11489,12 +11567,19 @@ function StudentProfile({user,testsDB,examsDB,studentsDB,attendanceDB,wrongDB,fe
   // Student photo (studentPhotos/{admNo}) — teachers can upload here too; shows on profile, admit card & report card.
   const canEditPhoto=!!user&&(user.role==="admin"||user.role==="office"||user.role==="vp"||user.role==="teacher");
   const[photo,setPhoto]=useOnePhoto(padm);const[photoBusy,setPhotoBusy]=useState("");
+  // Pick, then FRAME: the picture opens in the framer so the face is squared up before it is stored. Photos
+  // were being saved exactly as taken — sideways, or the pupil a long way off — and every card cropped to a
+  // shoulder. __compressImg only shrinks it to a workable size first; the crop is taken from that.
+  const[framePick,setFramePick]=useState(null);
   const onPickPhoto=async(e)=>{const f=e.target.files&&e.target.files[0];e.target.value="";if(!f||!padm)return;
     if(!window.__db||!window.__fbSetDoc){setPhotoBusy("Not connected");return;}
-    setPhotoBusy("Optimising…");
-    try{const img=await __compressImg(f,256,0.62);setPhotoBusy("Saving…");
+    setPhotoBusy("Opening…");
+    try{const big=await __compressImg(f,900,0.9);setPhotoBusy("");setFramePick(big);}
+    catch(err){setPhotoBusy(""+((err&&err.message)||"Could not read that picture"));}};
+  const saveFramed=async(img)=>{
+    try{setPhotoBusy("Saving…");
       await window.__fbSetDoc(window.__fbDoc(window.__db,"studentPhotos",padm),{admNo:padm,name:student,img:img,updatedAt:new Date().toISOString(),by:(user&&user.username)||""});
-      __photoSet(padm,img);setPhoto(img);setPhotoBusy("✓ Saved");setTimeout(()=>setPhotoBusy(""),1600);
+      __photoSet(padm,img);setPhoto(img);setFramePick(null);setPhotoBusy("✓ Saved");setTimeout(()=>setPhotoBusy(""),1600);
     }catch(err){setPhotoBusy(""+((err&&err.message)||"Could not save"));}};
 
   const subjects=useMemo(()=>{var all=__testSubjectsWithLegacy(cls);if(user.role!=="teacher"||user.coordinator===true)return all;var own=getTeacherSubjects(user,cls),seen={};own.forEach(s=>seen[s]=1);Object.values(testsDB.data||{}).forEach(t=>{if(t&&t.cls===cls&&__teacherCanReadTest(user,t))seen[t.subj]=1;});return all.filter(s=>seen[s]);},[cls,user,testsDB.data]);
@@ -11638,9 +11723,10 @@ th{background:#0d1b2a;color:#fff;font-weight:600}td.l{text-align:left;font-weigh
       {!student?<Empty icon="id" title="Select a student" sub="Pick a class and student to see their full profile."/>:<>
       {/* Identity */}
       <div className="ap-panel" style={{padding:18,display:"flex",alignItems:"center",gap:15,flexWrap:"wrap"}}>
+        {framePick&&<PhotoFramer src={framePick} name={student} onClose={function(){setFramePick(null);setPhotoBusy("");}} onSave={saveFramed}/>}
         <label style={{position:"relative",flexShrink:0,cursor:(canEditPhoto&&padm)?"pointer":"default"}} title={canEditPhoto?(padm?(photo?"Change photo":"Add photo"):"No admission number on record for this student — ask the office to run Data Center → Sync academic roster"):""}>
           {canEditPhoto&&padm&&<input type="file" accept="image/*" onChange={onPickPhoto} style={{display:"none"}}/>}
-          <div className="ap-avt" style={{width:54,height:54,fontSize:18,overflow:"hidden",background:photo?"var(--c-f0)":"linear-gradient(140deg,#0071e3,#4aa6ff)"}}>{photo?<img src={photo} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:initials(student)}</div>
+          <div className="ap-avt" style={{width:54,height:54,fontSize:18,overflow:"hidden",background:photo?"var(--c-f0)":"linear-gradient(140deg,#0071e3,#4aa6ff)"}}>{photo?<img src={photo} alt="" style={{width:"100%",height:"100%",objectFit:"cover",objectPosition:"50% 30%"}}/>:initials(student)}</div>
           {canEditPhoto&&padm&&<span style={{position:"absolute",right:-3,bottom:-3,width:21,height:21,borderRadius:"50%",background:"var(--ap-accent)",border:"2px solid var(--ap-panel,#fff)",display:"grid",placeItems:"center",fontSize:11}}><Icon name="upload" size={18}/></span>}
         </label>
         <div style={{flex:1,minWidth:0}}>
@@ -11959,7 +12045,7 @@ function ParentView({user,testsDB,examsDB,studentsDB,academicRosterDB,attendance
               half-written, onError hides it and the initial shows through — never a broken-image icon. */}
           <div style={{width:56,height:56,borderRadius:8,flex:"none",overflow:"hidden",background:"rgba(255,255,255,.07)",border:"1px solid rgba(217,183,90,.45)",display:"flex",alignItems:"center",justifyContent:"center",position:"relative"}}>
             <span style={{fontSize:20,fontWeight:800,color:"#d9b75a"}}>{String(student||"?").trim().charAt(0).toUpperCase()}</span>
-            {childPhoto?<img src={childPhoto} alt="" onError={e=>{e.target.style.display="none";}} style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}/>:null}
+            {childPhoto?<img src={childPhoto} alt="" onError={e=>{e.target.style.display="none";}} style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover",objectPosition:"50% 30%"}}/>:null}
           </div>
           <div style={{minWidth:0,flex:1}}>
             <div style={{fontSize:11,fontWeight:700,letterSpacing:".13em",textTransform:"uppercase",color:"#d9b75a"}}>{cls}{_mySec?" · Section "+_mySec:""}</div>
@@ -12680,7 +12766,7 @@ const CARD_CSS=`*{box-sizing:border-box}body{font-family:'Times New Roman',Georg
 .card{padding:26px 30px;max-width:820px;margin:0 auto;position:relative}.pb{page-break-after:always}
 .hdr{text-align:center;border-bottom:2.5px solid #0d1b2a;padding-bottom:10px}.hdr h1{font-size:21px;font-weight:800;margin:0;color:#0d1b2a}.hdr .sub{font-size:11.5px;color:#555;margin-top:3px}
 .hdrlogo{width:56px;height:56px;margin:0 auto 6px;background:url("${window.__LOGO}") center/contain no-repeat}
-.stuphoto{position:absolute;top:22px;right:30px;width:66px;height:80px;border:1px solid #0d1b2a;border-radius:4px;overflow:hidden;display:flex;align-items:center;justify-content:center;text-align:center;font-size:8px;color:#999;background:#fff}.stuphoto img{width:100%;height:100%;object-fit:cover}
+.stuphoto{position:absolute;top:22px;right:30px;width:66px;height:80px;border:1px solid #0d1b2a;border-radius:4px;overflow:hidden;display:flex;align-items:center;justify-content:center;text-align:center;font-size:8px;color:#999;background:#fff}.stuphoto img{width:100%;height:100%;object-fit:cover;object-position:50% 30%}
 .rt{text-align:center;font-size:14px;font-weight:700;color:#0d1b2a;margin:12px 0;text-transform:uppercase;letter-spacing:.5px}
 .info{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px 18px;font-size:12.5px;margin:10px 0;padding:9px 12px;border:1px solid #cfcfcf;border-radius:6px}.info b{color:#0d1b2a}
 table{width:100%;border-collapse:collapse;font-size:12.5px;margin:6px 0}th,td{border:1px solid #cfcfcf;padding:6px 8px;text-align:center}th{background:#eef1f8;color:#0d1b2a}td.l,th.l{text-align:left}
@@ -12700,7 +12786,8 @@ h3{font-size:12.5px;color:#0d1b2a;margin:14px 0 4px;text-transform:uppercase;let
 .sc-id .t1{margin-top:3px;font-size:9.5px;font-weight:700;letter-spacing:.2px;color:#9a7b22}
 .sc-id .t2{margin-top:3px;font-size:10px;color:#5b6675}
 .sc-photo{width:60px;height:74px;border:1px solid #c9ced8;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:7.5px;color:#9aa3b0;text-align:center;overflow:hidden;background:#fff}
-.sc-photo img{width:100%;height:100%;object-fit:cover}
+/* a head sits in the upper half of a photo, so an unframed picture crops better from the top than the middle */
+.sc-photo img{width:100%;height:100%;object-fit:cover;object-position:50% 30%}
 .sc-rule{height:3px;border-radius:3px;background:linear-gradient(90deg,#0d1b2a 0 62%,#c9a84c 62% 100%)}
 .sc-band{margin-top:10px;background:#0d1b2a;border-radius:7px;padding:9px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;color:#fff}
 .sc-band .ttl{font-size:13px;font-weight:800;letter-spacing:.9px;text-transform:uppercase}
@@ -15266,12 +15353,19 @@ function DirectoryProfile({stu, testsDB, examsDB, studentsDB, attendanceDB, wron
   const aName=rosterName||stu.name;
   // Student photo — its own Firestore doc (studentPhotos/{admNo}), loaded on demand so the class roster stays light.
   const[photo,setPhoto]=useOnePhoto(adm);const[photoBusy,setPhotoBusy]=useState("");
+  // Pick, then FRAME: the picture opens in the framer so the face is squared up before it is stored. Photos
+  // were being saved exactly as taken — sideways, or the pupil a long way off — and every card cropped to a
+  // shoulder. __compressImg only shrinks it to a workable size first; the crop is taken from that.
+  const[framePick,setFramePick]=useState(null);
   const onPickPhoto=async(e)=>{const f=e.target.files&&e.target.files[0];e.target.value="";if(!f||!adm)return;
     if(!window.__db||!window.__fbSetDoc){setPhotoBusy("Not connected");return;}
-    setPhotoBusy("Optimising…");
-    try{const img=await __compressImg(f,256,0.62);setPhotoBusy("Saving…");
+    setPhotoBusy("Opening…");
+    try{const big=await __compressImg(f,900,0.9);setPhotoBusy("");setFramePick(big);}
+    catch(err){setPhotoBusy(""+((err&&err.message)||"Could not read that picture"));}};
+  const saveFramed=async(img)=>{
+    try{setPhotoBusy("Saving…");
       await window.__fbSetDoc(window.__fbDoc(window.__db,"studentPhotos",adm),{admNo:adm,name:stu.name,img:img,updatedAt:new Date().toISOString(),by:(user&&user.username)||""});
-      __photoSet(adm,img);setPhoto(img);setPhotoBusy("✓ Saved");setTimeout(()=>setPhotoBusy(""),1600);
+      __photoSet(adm,img);setPhoto(img);setFramePick(null);setPhotoBusy("✓ Saved");setTimeout(()=>setPhotoBusy(""),1600);
     }catch(err){setPhotoBusy(""+((err&&err.message)||"Could not save"));}};
   const onRemovePhoto=async()=>{if(!adm||!window.__fbDeleteDoc)return;if(!await window.__confirm({title:"Remove "+stu.name+"'s photo?",body:"It disappears from the profile, admit cards and report cards.",danger:true,confirmText:"Remove photo"}))return;
     try{await window.__fbDeleteDoc(window.__fbDoc(window.__db,"studentPhotos",adm));__photoSet(adm,null);setPhoto(null);setPhotoBusy("");}catch(e){setPhotoBusy("Could not remove");}};
@@ -15619,9 +15713,10 @@ function DirectoryProfile({stu, testsDB, examsDB, studentsDB, attendanceDB, wron
         <div style={{display:"flex",gap:16,alignItems:"flex-start",flexWrap:"wrap"}}>
           <div style={{flex:"1 1 290px",maxWidth:322,minWidth:258,background:"var(--c-fff)",border:"1px solid var(--ap-line)",borderRadius:8,overflow:"hidden",boxShadow:"0 10px 30px rgba(15,27,45,.08)"}}>
             <div style={{height:64,background:"linear-gradient(120deg,#0d1726,#1a3050)"}}/>
+            {framePick&&<PhotoFramer src={framePick} name={stu.name} onClose={function(){setFramePick(null);setPhotoBusy("");}} onSave={saveFramed}/>}
             <label style={{display:"block",width:90,height:90,margin:"-46px auto 0",position:"relative",cursor:(canEditDir&&adm)?"pointer":"default"}} title={(canEditDir&&adm)?(photo?"Change photo":"Add photo"):""}>
               {canEditDir&&adm&&<input type="file" accept="image/*" onChange={onPickPhoto} style={{display:"none"}}/>}
-              <div style={{width:90,height:90,borderRadius:8,overflow:"hidden",display:"grid",placeItems:"center",background:photo?"#fff":"linear-gradient(140deg,var(--ap-accent),#1a3050)",color:"#fff",fontSize:30,fontWeight:800,border:"4px solid var(--c-fff)",boxShadow:"0 6px 18px rgba(15,27,45,.2)"}}>{photo?<img src={photo} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:initials(stu.name)}</div>
+              <div style={{width:90,height:90,borderRadius:8,overflow:"hidden",display:"grid",placeItems:"center",background:photo?"#fff":"linear-gradient(140deg,var(--ap-accent),#1a3050)",color:"#fff",fontSize:30,fontWeight:800,border:"4px solid var(--c-fff)",boxShadow:"0 6px 18px rgba(15,27,45,.2)"}}>{photo?<img src={photo} alt="" style={{width:"100%",height:"100%",objectFit:"cover",objectPosition:"50% 30%"}}/>:initials(stu.name)}</div>
               {canEditDir&&adm&&<span style={{position:"absolute",right:0,bottom:2,width:26,height:26,borderRadius:"50%",background:"var(--brand-2)",border:"2px solid var(--c-fff)",display:"grid",placeItems:"center",color:"#fff"}}><Icon name="edit" size={12}/></span>}
             </label>
             <div style={{textAlign:"center",padding:"10px 16px 2px"}}>
@@ -15873,6 +15968,24 @@ function StudentDirectory({user, dirDB, testsDB, examsDB, studentsDB, attendance
   const[sel,setSel]=useState(null);
   const[imp,setImp]=useState("");
   const[statusFilter,setStatusFilter]=useState(function(){try{var j=window.__dirListJump;if(j){window.__dirListJump=null;if(j.filt)return j.filt;}}catch(_){}return "active";}); // active | left | all | new (cockpit deep-link)
+  // Photo wall: every pupil cropped exactly as the report card crops them, so a sideways or distant photo is
+  // obvious at a glance and can be re-framed on the spot. Teachers upload from wherever they are standing.
+  const[photoWall,setPhotoWall]=useState(false);
+  const[framing,setFraming]=useState(null); // {adm,name,src}
+  const[photoMsg,setPhotoMsg]=useState("");
+  const canFixPhotos=!!user&&(user.role==="admin"||user.role==="office"||user.role==="vp");
+  const savePhoto=async(adm,name,img)=>{
+    if(!window.__db||!window.__fbSetDoc){setPhotoMsg("Not connected");return;}
+    await window.__fbSetDoc(window.__fbDoc(window.__db,"studentPhotos",String(adm)),{admNo:String(adm),name:name||"",img:img,updatedAt:new Date().toISOString(),by:(user&&user.username)||""});
+    __photoSet(String(adm),img);setFraming(null);setPhotoMsg("✓ Saved — "+(name||"photo"));setTimeout(()=>setPhotoMsg(""),2200);
+  };
+  // A newly picked file is framed at a workable size first, so the crop is taken from the original photo and
+  // not from the 256px thumbnail the app used to store straight away.
+  const pickPhotoFor=async(adm,name,file)=>{
+    if(!file)return;setPhotoMsg("Opening…");
+    try{const big=await __compressImg(file,900,0.9);setPhotoMsg("");setFraming({adm:String(adm),name:name,src:big});}
+    catch(e){setPhotoMsg("Could not read that picture");}
+  };
   const[syncMsg,setSyncMsg]=useState("");
   const all=useMemo(()=>{var out=[];Object.keys(dirDB.data||{}).forEach(function(k){var d=dirDB.data[k];if(d&&Array.isArray(d.students))d.students.forEach(function(s){out.push((s&&(s.clsNum||s.cls))?s:Object.assign({},s,{clsNum:String(d.clsNum||d.cls||k.slice(4))}));});});return out;},[dirDB.data]);
   // At-risk micro-badges on each card: low attendance (<75%) and outstanding fees — so the at-risk students
@@ -16061,10 +16174,39 @@ function StudentDirectory({user, dirDB, testsDB, examsDB, studentsDB, attendance
             <div className="ap-subnav" style={{display:"flex",gap:5}}>
               {[["active","Active"],["new","New 26–27"],["left","Left"+(leftCount?" · "+leftCount:"")],["all","All"]].map(function(o){return <button key={o[0]} className={"ap-pill"+(statusFilter===o[0]?" on":"")} onClick={function(){setStatusFilter(o[0]);}} style={{fontSize:12.5}}>{o[1]}</button>;})}
             </div>
+            <div className="ap-subnav" style={{display:"flex",gap:5}} title="See every pupil cropped the way the report card crops them">
+              {[[false,"Roster"],[true,"Photos"]].map(function(o){return <button key={String(o[0])} className={"ap-pill"+(photoWall===o[0]?" on":"")} onClick={function(){setPhotoWall(o[0]);}} style={{fontSize:12.5}}>{o[1]}</button>;})}
+            </div>
           </div>
           {imp&&<div style={{marginBottom:12,fontSize:13,fontWeight:600,color:imp.charAt(0)==="✓"?"#16a34a":"var(--c-64)"}}>{imp}</div>}
+          {/* Photo wall — each tile is the exact crop the report card prints, so a sideways or far-off picture
+              shows up at once. "Fix" re-frames the stored photo; "Replace" starts from a fresh file. */}
+          {photoWall&&<div className="ap-panel" style={{padding:16,marginBottom:14}}>
+            <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap",marginBottom:13}}>
+              <div style={{fontSize:14,fontWeight:700,color:"var(--ap-ink)"}}>Photos <span style={{fontWeight:500,color:"var(--c-ae)"}}>· {clsFilter==="all"?"all classes":__uiClassLabel(clsFilter)}{secFilter!=="all"?" · Section "+secFilter:""} · {filtered.filter(function(x){return dirPhotos[String(x.admNo||"")];}).length} of {filtered.length} have one</span></div>
+              {photoMsg&&<span style={{fontSize:12.5,fontWeight:700,color:"var(--tx-grn2)"}}>{photoMsg}</span>}
+              <span style={{marginLeft:"auto",fontSize:11.5,color:"var(--ap-muted)"}}>Shown exactly as the report card crops them.</span>
+            </div>
+            <div style={{display:"grid",gap:13,gridTemplateColumns:"repeat(auto-fill,minmax(104px,1fr))"}}>
+              {filtered.slice(0,500).map(function(st,i){var a=String(st.admNo||"");var ph=dirPhotos[a];var g=GRADS[i%GRADS.length];
+                return (<div key={a||st.name||i} style={{minWidth:0}}>
+                  <div style={{width:"100%",aspectRatio:"3 / 4",borderRadius:7,overflow:"hidden",border:"1px solid var(--ap-line)",display:"grid",placeItems:"center",background:ph?"var(--c-f0)":("linear-gradient(140deg,"+g[0]+","+g[1]+")"),color:"#fff",fontWeight:800,fontSize:20}}>
+                    {ph?<img src={ph} alt="" style={{width:"100%",height:"100%",objectFit:"cover",objectPosition:"50% 30%"}}/>:initials(st.name)}
+                  </div>
+                  <div title={st.name} style={{fontSize:11.5,fontWeight:700,color:"var(--ap-ink)",marginTop:6,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{st.name}</div>
+                  <div style={{fontSize:10.5,color:"var(--c-94)",fontFamily:"var(--ss-font)"}}>{a||"no adm no."}</div>
+                  {canFixPhotos&&a&&<div style={{display:"flex",gap:5,marginTop:5}}>
+                    {ph&&<button onClick={function(){setFraming({adm:a,name:st.name,src:ph});}} style={{flex:1,border:"1px solid var(--c-d2)",background:"var(--c-fff)",borderRadius:6,padding:"4px 0",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)",color:"var(--ap-ink2)"}}>Fix</button>}
+                    <label style={{flex:1,textAlign:"center",border:"1px solid var(--c-d2)",background:"var(--c-fff)",borderRadius:6,padding:"4px 0",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)",color:"var(--ap-ink2)"}}>{ph?"Replace":"Add"}
+                      <input type="file" accept="image/*" style={{display:"none"}} onChange={function(e){var f=e.target.files&&e.target.files[0];e.target.value="";pickPhotoFor(a,st.name,f);}}/></label>
+                  </div>}
+                </div>);})}
+            </div>
+            {filtered.length>500&&<div style={{fontSize:11.5,color:"var(--ap-muted)",marginTop:11}}>Showing the first 500 — narrow it down with the class or section filter.</div>}
+          </div>}
+          {framing&&<PhotoFramer src={framing.src} name={framing.name} onClose={function(){setFraming(null);}} onSave={function(img){return savePhoto(framing.adm,framing.name,img);}}/>}
           {/* roster table */}
-          <div style={{background:"var(--c-fff)",border:"1px solid var(--ap-line)",borderRadius:8,overflow:"hidden"}}>
+          {!photoWall&&<div style={{background:"var(--c-fff)",border:"1px solid var(--ap-line)",borderRadius:8,overflow:"hidden"}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"13px 18px 11px",gap:10,flexWrap:"wrap"}}>
               <div style={{fontSize:14,fontWeight:700,color:"var(--ap-ink)"}}>Class roster <span style={{fontWeight:500,color:"var(--c-ae)"}}>· {clsFilter==="all"?"all classes":__uiClassLabel(clsFilter)}{secFilter!=="all"?" · Section "+secFilter:""} · {filtered.length} shown</span></div>
             </div>
@@ -16079,7 +16221,7 @@ function StudentDirectory({user, dirDB, testsDB, examsDB, studentsDB, attendance
                     <tr key={(s.admNo||s.studentId||s.name)+"_"+i} onClick={function(){setSel(s);}} style={{borderTop:"1px solid var(--c-f0)",cursor:"pointer",opacity:left?.6:1}} onMouseEnter={function(e){e.currentTarget.style.background="var(--c-f7)";}} onMouseLeave={function(e){e.currentTarget.style.background="transparent";}}>
                       <td style={{padding:"10px 18px",textAlign:"center",fontFamily:"var(--ss-font)",fontSize:12,fontWeight:700,color:"var(--c-94)"}}>{rollByKey[String(s.admNo||s.studentId||s.name)]||"—"}</td>
                       <td style={{padding:"10px 18px"}}><div style={{display:"flex",alignItems:"center",gap:11,minWidth:0}}>
-                        <div style={{width:36,height:36,borderRadius:6,flexShrink:0,display:"grid",placeItems:"center",overflow:"hidden",color:"#fff",fontSize:12.5,fontWeight:800,background:dirPhotos[String(s.admNo||"")]?"var(--c-f0)":"linear-gradient(140deg,"+g[0]+","+g[1]+")"}}>{dirPhotos[String(s.admNo||"")]?<img src={dirPhotos[String(s.admNo||"")]} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:initials(s.name)}</div>
+                        <div style={{width:36,height:36,borderRadius:6,flexShrink:0,display:"grid",placeItems:"center",overflow:"hidden",color:"#fff",fontSize:12.5,fontWeight:800,background:dirPhotos[String(s.admNo||"")]?"var(--c-f0)":"linear-gradient(140deg,"+g[0]+","+g[1]+")"}}>{dirPhotos[String(s.admNo||"")]?<img src={dirPhotos[String(s.admNo||"")]} alt="" style={{width:"100%",height:"100%",objectFit:"cover",objectPosition:"50% 30%"}}/>:initials(s.name)}</div>
                         <div style={{minWidth:0}}><div style={{fontSize:13,fontWeight:700,color:"var(--ap-ink)",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.name}{left?<span style={{fontWeight:600,color:"var(--c-ae)"}}> · left</span>:null}</div><div style={{fontSize:11,color:"var(--c-ae)"}}>{String(s.gender||"").trim().toUpperCase()[0]==="F"||String(s.gender||"").trim().toUpperCase()[0]==="G"?"Girl":(String(s.gender||"").trim()?"Boy":"")}{(function(){var h=String(s.house||"").trim();return(!h||/^(unknown|unkown|n\/?a|na|nil|none|-+)$/i.test(h))?"":(s.gender?" · ":"")+h+" House";})()}</div></div>
                       </div></td>
                       <td style={{padding:"10px 18px",fontFamily:"var(--ss-font)",fontSize:12,fontWeight:600,color:"var(--ap-ink2)"}}>{s.admNo||"—"}</td>
@@ -16095,8 +16237,8 @@ function StudentDirectory({user, dirDB, testsDB, examsDB, studentsDB, attendance
               <div>Showing <b style={{color:"var(--ap-ink2)"}}>{Math.min(filtered.length,500)}</b>{filtered.length>500?" of "+filtered.length:""} students</div>
               {canFees&&<div>{filtered.filter(function(s){var r=riskByAdm[String(s.admNo||"")]||{};return !isLeftS(s)&&r.dues>0;}).length} with fee dues</div>}
             </div>
-          </div>
-          {filtered.length>500&&<div style={{marginTop:10,fontSize:12,color:"var(--c-94)"}}>Showing first 500 — refine the search or filters to narrow down.</div>}
+          </div>}
+          {!photoWall&&filtered.length>500&&<div style={{marginTop:10,fontSize:12,color:"var(--c-94)"}}>Showing first 500 — refine the search or filters to narrow down.</div>}
         </>
       )}
       {sel&&<DirectoryProfile stu={sel} testsDB={testsDB} examsDB={examsDB} studentsDB={studentsDB} attendanceDB={attendanceDB} wrongDB={wrongDB} feesDB={feesDB} canFees={canFees} dirDB={dirDB} user={user} studentLinksDB={studentLinksDB} academicRosterDB={academicRosterDB} onClose={function(){setSel(null);}}/>}
