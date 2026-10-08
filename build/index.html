@@ -3153,6 +3153,7 @@ function __examPerfFor(examsData, clsLabel, adm, name) {
       var mx = Number(s.max) || 100;
       var absent = got && /^a/i.test(String(v).trim());
       if (absent) {
+        max += mx;
         has = true;
         subs.push({
           name: s.name,
@@ -45298,7 +45299,7 @@ function termWeights(clsLabel, subject) {
 }
 function termComposite(cfg, utMark, utMax, examMark, examMax, wv) {
   var got = 0,
-    outOf = 0,
+    full = 0,
     any = false,
     missing = [],
     absentOn = [];
@@ -45310,6 +45311,7 @@ function termComposite(cfg, utMark, utMax, examMark, examMax, wv) {
   };
   var p = {};
   if (cfg.ut > 0) {
+    full += cfg.ut;
     if (isAb(utMark)) {
       p.ut = "AB";
       absentOn.push("Unit Test");
@@ -45318,7 +45320,6 @@ function termComposite(cfg, utMark, utMax, examMark, examMax, wv) {
       if (u != null) {
         p.ut = Math.round(u / (utMax || 20) * cfg.ut * 10) / 10;
         got += p.ut;
-        outOf += cfg.ut;
         any = true;
       } else {
         p.ut = null;
@@ -45329,6 +45330,7 @@ function termComposite(cfg, utMark, utMax, examMark, examMax, wv) {
   p.writeins = {};
   cfg.writeins.forEach(function (w) {
     var raw = wv && wv[w.key];
+    full += Number(w.max) || 0;
     if (isAb(raw)) {
       p.writeins[w.key] = "AB";
       absentOn.push(w.label);
@@ -45339,13 +45341,13 @@ function termComposite(cfg, utMark, utMax, examMark, examMax, wv) {
       var vv = Math.min(v, w.max);
       p.writeins[w.key] = vv;
       got += vv;
-      outOf += w.max;
       any = true;
     } else {
       p.writeins[w.key] = null;
       missing.push(w.label);
     }
   });
+  full += cfg.exam;
   if (isAb(examMark)) {
     p.exam = "AB";
     absentOn.push(cfg.examLabel);
@@ -45354,7 +45356,6 @@ function termComposite(cfg, utMark, utMax, examMark, examMax, wv) {
     if (e != null) {
       p.exam = Math.round(e / (examMax || 100) * cfg.exam * 10) / 10;
       got += p.exam;
-      outOf += cfg.exam;
       any = true;
     } else {
       p.exam = null;
@@ -45362,9 +45363,9 @@ function termComposite(cfg, utMark, utMax, examMark, examMax, wv) {
     }
   }
   return {
-    total: any ? Math.round(got / (outOf || 1) * 1000) / 10 : null,
+    total: any ? Math.round(got * 10) / 10 : null,
     raw: any ? Math.round(got * 10) / 10 : null,
-    outOf: outOf,
+    outOf: full,
     parts: p,
     missing: missing,
     absentOn: absentOn,
@@ -45945,6 +45946,7 @@ function Exams({
       const mx = Number(s.max) || 100;
       const absent = has && /^a/i.test(String(v).trim());
       if (absent) {
+        max += mx;
         hasMarks = true;
         subjects.push({
           name: s.name,
@@ -46242,7 +46244,7 @@ function Exams({
       <table class="sc"><thead><tr>${head}</tr></thead><tbody>${body}${totRow}</tbody></table>
       <div class="sc-tiles" style="grid-template-columns:${tiles.map(t => t[0] + "fr").join(" ")}">${tiles.map(t => t[1]).join("")}</div>
       ${td.anyIncomplete ? '<div class="sc-note">Subjects marked <b>*</b> still have a component to be entered, so they carry no grade yet and are left out of the overall.</div>' : ''}
-      ${td.anyAbsent ? '<div class="sc-note">AB = absent for that paper. An absence is never counted as zero: subjects marked <b>†</b> are assessed on the components the pupil sat, scaled to 100.</div>' : ''}
+      ${td.anyAbsent ? '<div class="sc-note"><b>AB</b> = absent for that paper. No marks are awarded for it and none are carried over: the subject still totals out of 100, so subjects marked <b>†</b> show only the marks the pupil actually earned.</div>' : ''}
       <div class="sc-cols"${addl.length ? '' : ' style="grid-template-columns:1fr"'}>
         ${tog.coscholastic ? `<div><div class="sc-h">Co-Scholastic</div><table class="sc"><tbody>${coRows.join("")}</tbody></table></div>` : ''}
         ${addl.length ? `<div><div class="sc-h">Additional Subjects</div><table class="sc"><tbody>${addl.map(s => `<tr><td class="l sub">${esc(__dispSubj(ex.cls, s.name))}</td><td>${esc(s.grade) || '—'}</td></tr>`).join("")}</tbody></table></div>` : ''}
@@ -46623,7 +46625,7 @@ function Exams({
       <div class="rt">Marksheet — ${esc(ex.name)}${msec ? " · Section " + esc(msec) : ""}${withInt ? " · with internal marks" : ""}</div>
       <div class="msinfo"><span>Class: <b>${esc(ex.cls)}${msec ? " — Sec " + esc(msec) : ""}</b></span><span>Exam date: <b>${esc(ex.date || "—")}</b></span><span>Students assessed: <b>${done.length}</b> of ${cr.length}</span><span>Pass: <b>${passCount}</b> (${done.length ? Math.round(passCount / done.length * 100) : 0}%)</span><span>Class average: <b>${avg}%</b></span><span>Printed: <b>${today()}</b></span></div>
       <table><thead><tr><th>S.No</th><th>Adm No</th><th class="l">Student</th>${subjNames.map(n => `<th>${esc(__dispSubj(ex.cls, n))}${withInt ? '<div class="wt">internal + theory &middot; 100</div>' : maxBy[n] ? `<div class="wt">/${maxBy[n]}</div>` : ""}</th>`).join("")}<th>Total</th><th>%</th><th>Grade</th><th>Rank</th><th>Result</th></tr></thead><tbody>${rows}</tbody></table>
-      <div class="legend">AB = absent for that paper — never counted as zero: the paper is left out of the marks and the maximum, so the percentage is over the papers sat († marks a subject assessed that way) · blank = subject not taken · N.IMP = Needs Improvement (below 33% overall or in a subject) · rank is within ${msec ? "this section" : "the class"} · rows in grey have no marks entered.${withInt ? " Each subject cell reads internal + theory with its weighted total out of 100; the total, percentage, grade and rank follow that." : ""}</div>
+      <div class="legend">AB = absent for that paper — no marks are awarded for it and no zero is written in; the maximum is unchanged, so the total and percentage show only what the pupil earned · blank = subject not taken · N.IMP = Needs Improvement (below 33% overall or in a subject) · rank is within ${msec ? "this section" : "the class"} · rows in grey have no marks entered.${withInt ? " Each subject cell reads internal + theory with its weighted total out of 100; the total, percentage, grade and rank follow that." : ""}</div>
       <div class="sign"><span>Class Teacher</span><span>Examination In-charge</span><span>Principal</span></div>
     </div>`;
     const MS_CSS = `@page{size:A4 landscape;margin:10mm}
@@ -48717,7 +48719,7 @@ function Exams({
           color: "var(--tx-org)"
         }
       }, "*") : null, r.comp && r.comp.absent && tot != null && !miss ? React.createElement("span", {
-        title: "absent: " + r.comp.absentOn.join(", ") + " — scaled out, not scored 0",
+        title: "absent: " + r.comp.absentOn.join(", ") + " — no marks for it, and no zero; the total is still out of 100",
         style: {
           color: "var(--tx-red)"
         }
@@ -48897,7 +48899,7 @@ function Exams({
             fontWeight: 700
           }
         }, "*") : null, r.comp && r.comp.absent && tot != null && !(r.comp.missing.length > 0) ? React.createElement("span", {
-          title: "absent: " + r.comp.absentOn.join(", ") + " — scaled out of the total, not scored 0",
+          title: "absent: " + r.comp.absentOn.join(", ") + " — no marks for it, and no zero; the total is still out of 100",
           style: {
             color: "var(--tx-red)",
             fontWeight: 700
@@ -48943,7 +48945,7 @@ function Exams({
       style: {
         color: "var(--tx-red)"
       }
-    }, "\u2020"), " = the pupil was absent for a component, so it is left out of the total and the subject is scaled to 100 \u2014 type ", React.createElement("b", null, "AB"), " for an absentee, never 0. Written marks come from the exams; only internals save here."), trMsg && React.createElement("span", {
+    }, "\u2020"), " = the pupil was absent for a component: it earns no marks and is not written in as a zero, and the subject still totals out of 100 \u2014 type ", React.createElement("b", null, "AB"), " for an absentee, never 0 and never blank. Written marks come from the exams; only internals save here."), trMsg && React.createElement("span", {
       style: {
         fontSize: 12.5,
         fontWeight: 600,

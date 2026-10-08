@@ -1,4 +1,5 @@
-// Absent is absent — not a zero — and NOTHING is scaled (director, 2026-10-08, in those words).
+// Absent is absent — not a zero — and NOTHING is scaled (director, 2026-10-08, in those words), plus the
+// board rule he named next: ABSENT IN THEORY AND THE PRACTICAL IS NOT COUNTED.
 // Two faults were reported from the half-yearly: a pupil who missed Unit Test 1 had NO percentage on the card
 // at all, and a pupil marked absent was written in as a zero. So an "AB" component now earns no marks and no
 // zero, the cell prints AB, and THE SUBJECT STILL TOTALS OUT OF 100 — what is left is left, no maximum is cut
@@ -39,17 +40,27 @@ ok('and the maximum is untouched',              absNb.outOf === 100 && absNb.tot
 const zero = termComposite(J, 0, 20, 0, 80, { notebook: 0, enrichment: 0 });
 ok('0 entered means 0 scored',                  zero.total === 0 && zero.outOf === 100 && zero.absent === false);
 
-// ── seniors: practical/theory, same rule ──
+// ── the board rule: absent in THEORY and the practical is not counted ──
 const sAb = termComposite(S, undefined, 20, "AB", 100, { practical: 27 });
 ok('senior absent from theory: AB in the cell',  sAb.parts.exam === 'AB');
-ok('no 90/100 from a practical alone',           sAb.total === 27 && sAb.outOf === 100);
+ok('the subject carries NO RESULT',              sAb.noResult === true && sAb.total === null);
+ok('the practical is not counted',               sAb.raw === 27 && sAb.total === null);
 ok('the absence is named for the footnote',      sAb.absentOn.join() === 'Theory');
 const sBlank = termComposite(S, undefined, 20, "", 100, { practical: 27 });
-ok('a blank theory paper is still incomplete',   sBlank.missing.join() === 'Theory');
+ok('a blank theory paper is still incomplete',   sBlank.missing.join() === 'Theory' && !sBlank.noResult);
+const sOk = termComposite(S, undefined, 20, 63, 100, { practical: 27 });
+ok('theory sat: the practical counts as normal', sOk.total === 71.1 && sOk.noResult === false);
+const sPr = termComposite(S, undefined, 20, 63, 100, { practical: "AB" });
+ok('absent in the PRACTICAL does not void it',   sPr.noResult === false && sPr.total === 44.1 && sPr.outOf === 100);
+
+// ── the same rule in the junior scheme: the written paper is the theory paper ──
+const jAb = termComposite(J, 16, 20, "AB", 80, { notebook: 5, enrichment: 5 });
+ok('absent in the exam voids the junior subject', jAb.noResult === true && jAb.total === null);
+ok('the unit test and internals are not counted', jAb.raw === 18);
 
 // ── absent in everything ──
 const none = termComposite(J, "AB", 20, "AB", 100, { notebook: "AB", enrichment: "AB" });
-ok('absent for every component: no total',       none.total === null && none.absent === true);
+ok('absent for every component: no result',      none.total === null && none.noResult === true);
 ok('and the maximum is still the full 100',      none.outOf === 100);
 
 // ── the written exam keeps its own scaling to its weight (that is the scheme, not a rescue) ──
