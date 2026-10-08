@@ -33,21 +33,37 @@ ok('canvas swaps sides at 90/270',  /\(r===90\|\|r===270\)\?h:w/.test(frameImg))
 ok('preview swaps sides at 90/270', /\(r===90\|\|r===270\)\?nat\.h:nat\.w/.test(framer));
 // Dragging stops at the edge of the picture, so no white gap can be saved.
 ok('the drag is clamped',           /__frameClamp/.test(framer) && /clamp\(/.test(framer));
-ok('a white backdrop is painted first, so a transparent PNG does not save black', /fillStyle="#fff";cx\.fillRect\(0,0,ow,oh\)/.test(frameImg));
+ok('a backdrop is painted before the photo, so a transparent PNG does not save black', /cx\.fillStyle=[^;]+;cx\.fillRect\(0,0,ow,oh\)[\s\S]*cx\.drawImage/.test(frameImg));
 
-// ── automatic framing ──
-const auto = grab('__autoFrame'), ready = grab('__faceReady');
+// ── automatic framing, passport style ──
+const auto = grab('__autoFrame'), box = grab('__autoFrameFromBox'), ready = grab('__faceReady'), face = grab('__faceIn');
+const pp = src.match(/var __PP=\{EYEW:([\d.]+), EYEY:([\d.]+)\}/);
 ok('the detector is fetched only when it is used', /document\.createElement\("script"\)/.test(ready) && !/face-api/.test(src.slice(0, src.indexOf('function __faceReady'))));
-ok('the maths backend is up before the model loads', /tf\.setBackend\("webgl"\)[\s\S]{0,120}tf\.ready\(\)[\s\S]{0,200}loadFromUri/.test(ready));
+ok('the maths backend is up before the model loads',
+  ready.indexOf('tf.setBackend') >= 0 && ready.indexOf('tf.ready()') > ready.indexOf('tf.setBackend') && ready.indexOf('loadFromUri') > ready.indexOf('tf.ready()'));
 ok('a failed load can be retried',      /__faceReady\._p=null/.test(ready));
+ok('landmarks load too, not just the box', /faceLandmark68TinyNet\.loadFromUri/.test(ready));
+ok('and the eyes are read off them',    /withFaceLandmarks\(true\)/.test(face) && /getLeftEye\(\)/.test(face) && /getRightEye\(\)/.test(face));
 ok('all four turns are tried',          /turns=\[0,90,270,180\]/.test(auto));
 ok('a clear face stops the turning early', /best\.score>=0\.75/.test(auto));
 ok('nothing is guessed without a face', /if\(!best\)return null/.test(auto));
-ok('the head is sized to the frame',    /FACE=0\.42/.test(auto) && /sc=\(FACE\*vh\)\/Math\.max\(1,best\.fh\)/.test(auto));
-ok('and sits above the middle',         /EYE=0\.44/.test(auto));
-ok('zoom cannot shrink below cover',    /Math\.max\(1,Math\.min\(3,sc\/base\)\)/.test(auto));
-ok('the result is clamped like a drag', /__frameClamp\(\{w:w,h:h\},best\.rot,zoom,vw,vh\)/.test(auto));
-ok('it returns what the framer returns',/return \{rot:best\.rot,zoom:zoom/.test(auto));
+
+// The three things that make every photo come out the same.
+ok('the composition is one shared setting', !!pp);
+ok('the head sits at passport proportions', Number(pp[1]) > 0.2 && Number(pp[1]) < 0.34 && Number(pp[2]) > 0.33 && Number(pp[2]) < 0.5);
+ok('scale comes from the eye-to-eye width, so every face is the same size', /sc=\(__PP\.EYEW\*vw\)\/D/.test(auto));
+ok('the eye line lands at the same height every time', /oy:\(__PP\.EYEY\*vh\)-\(vh\/2\)-sc\*vy/.test(auto) && /ox:-sc\*vx/.test(auto));
+ok('a tilted head is straightened',     /roll=Math\.atan2\(dy,dx\)/.test(auto) && /rot:best\.rot-roll/.test(auto));
+ok('an absurd tilt is not believed',    /Math\.abs\(roll\)>35\)roll=0/.test(auto));
+ok('eyes too close together are not trusted', /if\(!\(D>2\)\)return __autoFrameFromBox/.test(auto));
+ok('the fallback still uses one fixed head size', /sc=\(0\.42\*vh\)\/Math\.max\(1,best\.fh\)/.test(box));
+
+// A passport crop has to be free to pull back from a close-up, so it sets an ABSOLUTE scale, and whatever it
+// reaches past the edge of the photo is filled with the colour around that photo's border, not white.
+ok('it passes an absolute scale',       /scale:sc/.test(auto) && /f\.scale!=null\)\?f\.scale:/.test(frameImg));
+ok('the manual framer still uses cover+zoom', /Math\.max\(vw\/ew,vh\/eh\)\*\(f\.zoom\|\|1\)/.test(frameImg));
+ok('the fill blends with the photo',    /bg:"auto"/.test(auto) && /f\.bg==="auto"\?__edgeColor\(im\)/.test(frameImg));
+
 // A second run must re-crop the ORIGINAL, never a crop of a crop, and must be undoable.
 ok('the untouched picture is kept',     /orig:base/.test(src));
 ok('and is what a re-run crops from',   /\(doc&&\(doc\.orig\|\|doc\.img\)\)/.test(src));
