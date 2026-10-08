@@ -58832,8 +58832,8 @@ function StudentDirectory({
     }
     if (!(await window.__confirm({
       title: "Make " + list.length + " passport photo" + (list.length === 1 ? "" : "s") + "?",
-      body: "Each one is turned the right way up and cropped to the face. The picture as it is now is kept, so this can be undone, and any photo whose face cannot be found is left alone. It takes a few minutes — keep this page open.",
-      confirmText: "Auto-frame"
+      body: "Every one comes out the same: turned the right way up, the head straightened, and cropped so the eyes sit on the same line at the same size on every card. The picture as it is now is kept, so this can be undone, and any photo whose face cannot be found is left alone. It takes a few minutes — keep this page open.",
+      confirmText: "Make passport photos"
     }))) return;
     autoStop.current = false;
     setAutoRun({
@@ -59846,7 +59846,7 @@ function StudentDirectory({
       cursor: "pointer",
       fontFamily: "var(--ss-font)"
     }
-  }, "Auto-frame these photos"), canFixPhotos && !autoRun && React.createElement("button", {
+  }, "Make these passport photos"), canFixPhotos && !autoRun && React.createElement("button", {
     onClick: undoAutoFrame,
     title: "Put every auto-framed photo in this class back as it was",
     style: {
@@ -59903,7 +59903,7 @@ function StudentDirectory({
       color: "var(--ap-muted)",
       marginTop: 5
     }
-  }, "Keep this page open. Each photo is turned upright and cropped to the face; the one before is kept so this can be undone.")), React.createElement("button", {
+  }, "Keep this page open. Each head is straightened and cropped to the same size and position; the picture before is kept, so this can be undone.")), React.createElement("button", {
     onClick: function () {
       autoStop.current = true;
     },

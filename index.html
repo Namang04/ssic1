@@ -1106,8 +1106,8 @@ function __faceIn(cv){return __faceReady().then(function(F){
     var best=null;(list||[]).forEach(function(r){var b=r.detection.box,q=r.detection.score*b.width*b.height;
       if(best&&q<=best.q)return;
       var mid=function(pts){var x=0,y=0;pts.forEach(function(p){x+=p.x;y+=p.y;});return{x:x/pts.length,y:y/pts.length};};
-      var L=mid(r.landmarks.getLeftEye()),R=mid(r.landmarks.getRightEye());
-      best={q:q,x:b.x,y:b.y,w:b.width,h:b.height,score:r.detection.score,lx:L.x,ly:L.y,rx:R.x,ry:R.y};});
+      var L=mid(r.landmarks.getLeftEye()),R=mid(r.landmarks.getRightEye()),M=mid(r.landmarks.getMouth());
+      best={q:q,x:b.x,y:b.y,w:b.width,h:b.height,score:r.detection.score,lx:L.x,ly:L.y,rx:R.x,ry:R.y,mx:M.x,my:M.y};});
     return best;});});}
 // Try the picture each way up and keep whichever shows the clearest face. An upright photo usually answers on
 // the first try, so the other three turns are only paid for when the photo really is sideways.
@@ -1121,24 +1121,37 @@ function __autoFrame(src,vw,vh){return __loadImg(src).then(function(im){
   var w=im.naturalWidth||im.width, h=im.naturalHeight||im.height, best=null, turns=[0,90,270,180];
   var step=function(i){
     if(i>=turns.length)return Promise.resolve();
-    if(best&&best.score>=0.75)return Promise.resolve();        // already a clear face: no need to keep turning
+    if(best&&best.ok&&best.score>=0.75)return Promise.resolve();  // a clear, upright face: no need to keep turning
     var rot=turns[i], side=(rot===90||rot===270), ew=side?h:w, eh=side?w:h;
     var d=Math.min(1,320/Math.max(ew,eh));
     var cv=document.createElement("canvas");cv.width=Math.max(1,Math.round(ew*d));cv.height=Math.max(1,Math.round(eh*d));
     var cx=cv.getContext("2d");cx.fillStyle="#fff";cx.fillRect(0,0,cv.width,cv.height);
     cx.translate(cv.width/2,cv.height/2);cx.rotate(rot*Math.PI/180);cx.scale(d,d);cx.drawImage(im,-w/2,-h/2,w,h);
     return __faceIn(cv).then(function(f){
-      if(f&&(!best||f.q>best.q))best={q:f.q,score:f.score,rot:rot,ew:ew,eh:eh,d:d,
-        lx:f.lx/d,ly:f.ly/d,rx:f.rx/d,ry:f.ry/d,cx:(f.x+f.w/2)/d,cy:(f.y+f.h/2)/d,fh:f.h/d};
+      if(f){
+        // A face detector fires on an upside-down or sideways face too, just less confidently — so confidence
+        // alone picked the wrong way up on real photos. The landmarks settle it: in a picture that is truly the
+        // right way up the MOUTH sits below the EYES and the eye line is roughly level. Anything else is
+        // the same face read at the wrong quarter-turn.
+        var dx=f.rx-f.lx, dy=f.ry-f.ly;
+        var roll=Math.atan2(dy,dx)*180/Math.PI;
+        var eyeY=(f.ly+f.ry)/2;
+        var upright=(f.my>eyeY+0.08*f.h)&&Math.abs(roll)<=35;
+        var cand={q:f.q,score:f.score,ok:upright,roll:roll,rot:rot,ew:ew,eh:eh,d:d,
+          lx:f.lx/d,ly:f.ly/d,rx:f.rx/d,ry:f.ry/d,cx:(f.x+f.w/2)/d,cy:(f.y+f.h/2)/d,fh:f.h/d};
+        // An upright reading always beats a crooked one, however sure the detector was about the crooked one.
+        if(!best||(cand.ok&&!best.ok)||(cand.ok===best.ok&&cand.score>best.score))best=cand;
+      }
       return step(i+1);});};
   return step(0).then(function(){
-    if(!best)return null;
+    // No turn gave an upright face — a profile, a hand across the chin, a child looking away. Leave the photo
+    // exactly as it is rather than risk printing it upside down; the office can frame those few by hand.
+    if(!best||!best.ok)return null;
     // Eye-to-eye vector in the upright-ish picture: its angle is the head's tilt, its length is the scale.
     var dx=best.rx-best.lx, dy=best.ry-best.ly;
     var D=Math.sqrt(dx*dx+dy*dy);
     if(!(D>2))return __autoFrameFromBox(best,w,h,vw,vh);        // eyes too close to trust (tiny or side-on face)
-    var roll=Math.atan2(dy,dx)*180/Math.PI;
-    if(Math.abs(roll)>35)roll=0;                                // a head is not tilted that far: don't trust it
+    var roll=best.roll;                                         // already checked to be a believable tilt
     var sc=(__PP.EYEW*vw)/D;                                    // same eye-to-eye width on every photo
     // The eye midpoint, as a vector from the picture's centre, in the frame we are about to save.
     var mx=(best.lx+best.rx)/2-best.ew/2, my=(best.ly+best.ry)/2-best.eh/2;
@@ -16093,7 +16106,12 @@ function StudentDirectory({user, dirDB, testsDB, examsDB, studentsDB, attendance
           await window.__fbSetDoc(window.__fbDoc(window.__db,"studentPhotos",a),Object.assign({},doc||{},
             {admNo:a,name:list[i].name||"",img:img,orig:base,autoFramedAt:new Date().toISOString(),by:(user&&user.username)||""}));
           __photoSet(a,img);fixed++;
-        }else skip++;
+        }else{
+          // No upright face this time. If an earlier run had cropped this one, put its original back rather
+          // than leaving a bad crop standing — so running this again repairs whatever the old version got wrong.
+          if(doc&&doc.orig&&doc.autoFramedAt){try{await window.__fbUpdateDoc(window.__fbDoc(window.__db,"studentPhotos",a),{img:doc.orig,autoFramedAt:null});__photoSet(a,doc.orig);}catch(e){}}
+          skip++;
+        }
       }catch(e){skip++;}
       setAutoRun({done:i+1,total:list.length,fixed:fixed,skip:skip});
       await new Promise(r=>setTimeout(r,0)); // let the screen repaint between pupils

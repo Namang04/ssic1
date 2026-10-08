@@ -45,8 +45,15 @@ ok('a failed load can be retried',      /__faceReady\._p=null/.test(ready));
 ok('landmarks load too, not just the box', /faceLandmark68TinyNet\.loadFromUri/.test(ready));
 ok('and the eyes are read off them',    /withFaceLandmarks\(true\)/.test(face) && /getLeftEye\(\)/.test(face) && /getRightEye\(\)/.test(face));
 ok('all four turns are tried',          /turns=\[0,90,270,180\]/.test(auto));
-ok('a clear face stops the turning early', /best\.score>=0\.75/.test(auto));
-ok('nothing is guessed without a face', /if\(!best\)return null/.test(auto));
+ok('a clear UPRIGHT face stops the turning early', /best&&best\.ok&&best\.score>=0\.75/.test(auto));
+ok('nothing is guessed without an upright face', /if\(!best\|\|!best\.ok\)return null/.test(auto));
+// A detector fires on an inverted face too, so confidence alone chose the wrong way up on real photos.
+ok('the mouth must sit below the eyes',  /f\.my>eyeY\+0\.08\*f\.h/.test(auto));
+ok('and the eye line must be roughly level', /Math\.abs\(roll\)<=35/.test(auto));
+ok('the mouth is read off the landmarks', /getMouth\(\)/.test(face));
+ok('an upright reading beats a surer crooked one', /cand\.ok&&!best\.ok/.test(auto));
+ok('rotations are compared by score, not box area', /cand\.ok===best\.ok&&cand\.score>best\.score/.test(auto));
+ok('a re-run repairs an earlier bad crop', /doc&&doc\.orig&&doc\.autoFramedAt\)\{try\{await window\.__fbUpdateDoc/.test(src));
 
 // The three things that make every photo come out the same.
 ok('the composition is one shared setting', !!pp);
@@ -54,7 +61,7 @@ ok('the head sits at passport proportions', Number(pp[1]) > 0.2 && Number(pp[1])
 ok('scale comes from the eye-to-eye width, so every face is the same size', /sc=\(__PP\.EYEW\*vw\)\/D/.test(auto));
 ok('the eye line lands at the same height every time', /oy:\(__PP\.EYEY\*vh\)-\(vh\/2\)-sc\*vy/.test(auto) && /ox:-sc\*vx/.test(auto));
 ok('a tilted head is straightened',     /roll=Math\.atan2\(dy,dx\)/.test(auto) && /rot:best\.rot-roll/.test(auto));
-ok('an absurd tilt is not believed',    /Math\.abs\(roll\)>35\)roll=0/.test(auto));
+ok('the tilt used is the one already checked', /var roll=best\.roll;/.test(auto));
 ok('eyes too close together are not trusted', /if\(!\(D>2\)\)return __autoFrameFromBox/.test(auto));
 ok('the fallback still uses one fixed head size', /sc=\(0\.42\*vh\)\/Math\.max\(1,best\.fh\)/.test(box));
 
