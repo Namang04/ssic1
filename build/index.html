@@ -3153,15 +3153,13 @@ function __examPerfFor(examsData, clsLabel, adm, name) {
       var mx = Number(s.max) || 100;
       var absent = got && /^a/i.test(String(v).trim());
       if (absent) {
-        max += mx;
         has = true;
-        anyFail = true;
         subs.push({
           name: s.name,
           max: mx,
           mark: null,
           absent: true,
-          pct: 0
+          pct: null
         });
         return;
       }
@@ -45299,56 +45297,78 @@ function termWeights(clsLabel, subject) {
   };
 }
 function termComposite(cfg, utMark, utMax, examMark, examMax, wv) {
-  var total = 0,
+  var got = 0,
+    outOf = 0,
     any = false,
-    missing = [];
+    missing = [],
+    absentOn = [];
   var isAb = function (v) {
     return typeof v === "string" && /^a/i.test(v.trim());
   };
   var num = function (v) {
-    if (isAb(v)) return 0;
     return v != null && v !== "" && !isNaN(Number(v)) ? Number(v) : null;
   };
-  var absent = isAb(utMark) || isAb(examMark);
   var p = {};
   if (cfg.ut > 0) {
-    var u = num(utMark);
-    if (u != null) {
-      p.ut = Math.round(u / (utMax || 20) * cfg.ut * 10) / 10;
-      total += p.ut;
-      any = true;
+    if (isAb(utMark)) {
+      p.ut = "AB";
+      absentOn.push("Unit Test");
     } else {
-      p.ut = null;
-      missing.push("Unit Test");
+      var u = num(utMark);
+      if (u != null) {
+        p.ut = Math.round(u / (utMax || 20) * cfg.ut * 10) / 10;
+        got += p.ut;
+        outOf += cfg.ut;
+        any = true;
+      } else {
+        p.ut = null;
+        missing.push("Unit Test");
+      }
     }
   }
   p.writeins = {};
   cfg.writeins.forEach(function (w) {
-    var v = num(wv && wv[w.key]);
+    var raw = wv && wv[w.key];
+    if (isAb(raw)) {
+      p.writeins[w.key] = "AB";
+      absentOn.push(w.label);
+      return;
+    }
+    var v = num(raw);
     if (v != null) {
       var vv = Math.min(v, w.max);
       p.writeins[w.key] = vv;
-      total += vv;
+      got += vv;
+      outOf += w.max;
       any = true;
     } else {
       p.writeins[w.key] = null;
       missing.push(w.label);
     }
   });
-  var e = num(examMark);
-  if (e != null) {
-    p.exam = Math.round(e / (examMax || 100) * cfg.exam * 10) / 10;
-    total += p.exam;
-    any = true;
+  if (isAb(examMark)) {
+    p.exam = "AB";
+    absentOn.push(cfg.examLabel);
   } else {
-    p.exam = null;
-    missing.push(cfg.examLabel);
+    var e = num(examMark);
+    if (e != null) {
+      p.exam = Math.round(e / (examMax || 100) * cfg.exam * 10) / 10;
+      got += p.exam;
+      outOf += cfg.exam;
+      any = true;
+    } else {
+      p.exam = null;
+      missing.push(cfg.examLabel);
+    }
   }
   return {
-    total: any ? Math.round(total * 10) / 10 : null,
+    total: any ? Math.round(got / (outOf || 1) * 1000) / 10 : null,
+    raw: any ? Math.round(got * 10) / 10 : null,
+    outOf: outOf,
     parts: p,
     missing: missing,
-    absent: absent
+    absentOn: absentOn,
+    absent: absentOn.length > 0
   };
 }
 const CO_TRAITS = [["punctuality", "Regularity & Punctuality"], ["discipline", "Discipline & Code of Conduct"], ["confidence", "Class Participation & Confidence"], ["curiosity", "Inquisitiveness & Critical Thinking"], ["collaboration", "Collaboration & Team Spirit"], ["responsibility", "Sense of Responsibility"]];
@@ -45423,6 +45443,7 @@ table.sc tr.tot td{background:#eef1f7;font-weight:800;color:#0d1b2a;border-top:1
 .sc-sign .ln{border-top:1px dotted #9aa3b0;margin-bottom:4px}
 .sc-foot{margin-top:12px;border-top:1px solid #e3e7ef;padding-top:6px;display:flex;justify-content:space-between;font-size:9px;color:#8a93a1}
 .inc{color:#b9770b}
+.abs{color:#b3261e;font-weight:800}
 /* Pre-printed stationery: the sheet already carries the school header and the footer band, so the card drops
    its own header and the print margins clear both. Margins come from Branch Setup, since stationery varies. */
 .scard.lh{width:auto;padding:0}
@@ -45924,15 +45945,14 @@ function Exams({
       const mx = Number(s.max) || 100;
       const absent = has && /^a/i.test(String(v).trim());
       if (absent) {
-        max += mx;
         hasMarks = true;
-        anyFail = true;
         subjects.push({
           name: s.name,
           max: mx,
           marks: null,
-          pct: 0,
-          grade: "—"
+          pct: null,
+          grade: "—",
+          absent: true
         });
         return;
       }
@@ -45998,7 +46018,8 @@ function Exams({
     let sum = 0,
       n = 0,
       anyIncomplete = false,
-      anyFail = false;
+      anyFail = false,
+      anyAbsent = false;
     const utMax = {},
       wSeen = {},
       wOrder = [],
@@ -46064,8 +46085,9 @@ function Exams({
       if (c.total != null && !inc) {
         sum += c.total;
         n++;
-        if (c.total < 33 || c.absent) anyFail = true;
+        if (c.total < 33) anyFail = true;
       } else anyIncomplete = true;
+      if (c.absent) anyAbsent = true;
       rows.push({
         name: s.name,
         cells: cells,
@@ -46075,6 +46097,9 @@ function Exams({
         },
         total: c.total,
         inc: inc,
+        ab: !!c.absent,
+        absentOn: c.absentOn || [],
+        outOf: c.outOf,
         grade: c.total == null || inc ? null : cbseGrade(c.total)
       });
     });
@@ -46111,6 +46136,7 @@ function Exams({
       grade: pct == null ? "—" : cbseGrade(pct),
       anyIncomplete: anyIncomplete,
       anyFail: anyFail,
+      anyAbsent: anyAbsent,
       examLabel: senior ? "Theory" : String(ex.name || "").trim() || top(exLab) || "Exam",
       examMax: Number(top(exMax)) || 80
     };
@@ -46142,13 +46168,17 @@ function Exams({
       const mxh = m => td.senior ? "" : `<span class="mx">${m}</span>`;
       head = '<th class="l">Subject</th>' + td.cols.map(c => `<th>${esc(c.label)}${mxh(c.max)}</th>`).join("") + `<th>${esc(td.examLabel)}${mxh(td.examMax)}</th><th>Total<span class="mx">100</span></th><th>Grade</th>`;
       body = td.rows.map(row => {
-        const mk = (v, mx, dom) => `<td>${v == null ? '—' : __rm(v)}${td.senior ? `<span class="mx"> / ${mx}</span>` : mx !== dom ? `<span class="mx"> /${mx}</span>` : ''}</td>`;
+        const mk = (v, mx, dom) => {
+          const ab = v === "AB";
+          const sh = ab ? '<span class="abs">AB</span>' : v == null ? '—' : __rm(v);
+          return `<td>${sh}${td.senior && !ab ? `<span class="mx"> / ${mx}</span>` : !ab && mx !== dom ? `<span class="mx"> /${mx}</span>` : ''}</td>`;
+        };
         const cells = td.cols.map(c => {
           const d = row.cells[c.key];
           return d ? mk(d.v, d.max, c.max) : '<td>—</td>';
         }).join("");
         const exCell = mk(row.exam.v, row.exam.max, td.examMax);
-        return `<tr><td class="l sub">${esc(__dispSubj(ex.cls, row.name))}</td>${cells}${exCell}<td><b>${row.total == null ? '—' : __rm(row.total)}${row.inc ? '<span class="inc">*</span>' : ''}</b></td><td class="g">${row.grade || '—'}</td></tr>`;
+        return `<tr><td class="l sub">${esc(__dispSubj(ex.cls, row.name))}</td>${cells}${exCell}<td><b>${row.total == null ? '—' : __rm(row.total)}${row.inc ? '<span class="inc">*</span>' : row.ab ? '<span class="abs">†</span>' : ''}</b></td><td class="g">${row.grade || '—'}</td></tr>`;
       }).join("");
       const sumOf = f => {
         let s = 0,
@@ -46212,6 +46242,7 @@ function Exams({
       <table class="sc"><thead><tr>${head}</tr></thead><tbody>${body}${totRow}</tbody></table>
       <div class="sc-tiles" style="grid-template-columns:${tiles.map(t => t[0] + "fr").join(" ")}">${tiles.map(t => t[1]).join("")}</div>
       ${td.anyIncomplete ? '<div class="sc-note">Subjects marked <b>*</b> still have a component to be entered, so they carry no grade yet and are left out of the overall.</div>' : ''}
+      ${td.anyAbsent ? '<div class="sc-note">AB = absent for that paper. An absence is never counted as zero: subjects marked <b>†</b> are assessed on the components the pupil sat, scaled to 100.</div>' : ''}
       <div class="sc-cols"${addl.length ? '' : ' style="grid-template-columns:1fr"'}>
         ${tog.coscholastic ? `<div><div class="sc-h">Co-Scholastic</div><table class="sc"><tbody>${coRows.join("")}</tbody></table></div>` : ''}
         ${addl.length ? `<div><div class="sc-h">Additional Subjects</div><table class="sc"><tbody>${addl.map(s => `<tr><td class="l sub">${esc(__dispSubj(ex.cls, s.name))}</td><td>${esc(s.grade) || '—'}</td></tr>`).join("")}</tbody></table></div>` : ''}
@@ -46383,19 +46414,20 @@ function Exams({
         p = c.parts || {},
         cfg = tc.cfg;
       const bits = [];
-      if (cfg.ut > 0) bits.push(`UT ${p.ut == null ? '—' : p.ut}<span class="wt">/${cfg.ut}</span>`);
+      const _ab = v => v === "AB" ? '<b style="color:#b3261e">AB</b>' : v == null ? '—' : v;
+      if (cfg.ut > 0) bits.push(`UT ${_ab(p.ut)}${p.ut === "AB" ? '' : `<span class="wt">/${cfg.ut}</span>`}`);
       cfg.writeins.forEach(w => {
         const v = p.writeins ? p.writeins[w.key] : null;
-        bits.push(`${esc(w.label)} ${v == null ? '—' : v}<span class="wt">/${w.max}</span>`);
+        bits.push(`${esc(w.label)} ${_ab(v)}${v === "AB" ? '' : `<span class="wt">/${w.max}</span>`}`);
       });
-      const examCell = `${p.exam == null ? '—' : p.exam}<span class="wt">/${cfg.exam}</span>`;
+      const examCell = `${_ab(p.exam)}${p.exam === "AB" ? '' : `<span class="wt">/${cfg.exam}</span>`}`;
       const incomplete = c.missing && c.missing.length > 0;
       if (c.total != null && !incomplete) {
         sumTot += c.total;
         nDone++;
-        if (c.total < 33 || c.absent) anyFail = true;
+        if (c.total < 33) anyFail = true;
       } else anyIncomplete = true;
-      rows.push(`<tr><td class="l">${esc(s.name)}</td><td>${bits.join(' &nbsp;·&nbsp; ')}</td><td>${examCell}</td><td><b>${c.total == null ? '—' : c.total}${incomplete && c.total != null ? '<span style="color:#b9770b">*</span>' : ''}</b></td><td>${c.total == null || incomplete ? '—' : `<b style="color:#0d1b2a">${cbseGrade(c.total)}</b>`}</td></tr>`);
+      rows.push(`<tr><td class="l">${esc(s.name)}</td><td>${bits.join(' &nbsp;·&nbsp; ')}</td><td>${examCell}</td><td><b>${c.total == null ? '—' : c.total}${incomplete && c.total != null ? '<span style="color:#b9770b">*</span>' : c.absent ? '<span style="color:#b3261e">†</span>' : ''}</b></td><td>${c.total == null || incomplete ? '—' : `<b style="color:#0d1b2a">${cbseGrade(c.total)}</b>`}</td></tr>`);
     });
     const overallPct = nDone ? Math.round(sumTot / nDone) : null;
     return {
@@ -46591,7 +46623,7 @@ function Exams({
       <div class="rt">Marksheet — ${esc(ex.name)}${msec ? " · Section " + esc(msec) : ""}${withInt ? " · with internal marks" : ""}</div>
       <div class="msinfo"><span>Class: <b>${esc(ex.cls)}${msec ? " — Sec " + esc(msec) : ""}</b></span><span>Exam date: <b>${esc(ex.date || "—")}</b></span><span>Students assessed: <b>${done.length}</b> of ${cr.length}</span><span>Pass: <b>${passCount}</b> (${done.length ? Math.round(passCount / done.length * 100) : 0}%)</span><span>Class average: <b>${avg}%</b></span><span>Printed: <b>${today()}</b></span></div>
       <table><thead><tr><th>S.No</th><th>Adm No</th><th class="l">Student</th>${subjNames.map(n => `<th>${esc(__dispSubj(ex.cls, n))}${withInt ? '<div class="wt">internal + theory &middot; 100</div>' : maxBy[n] ? `<div class="wt">/${maxBy[n]}</div>` : ""}</th>`).join("")}<th>Total</th><th>%</th><th>Grade</th><th>Rank</th><th>Result</th></tr></thead><tbody>${rows}</tbody></table>
-      <div class="legend">AB = absent (counted as 0) · blank = subject not taken · N.IMP = Needs Improvement (below 33% overall or in a subject) · rank is within ${msec ? "this section" : "the class"} · rows in grey have no marks entered.${withInt ? " Each subject cell reads internal + theory with its weighted total out of 100; the total, percentage, grade and rank follow that." : ""}</div>
+      <div class="legend">AB = absent for that paper — never counted as zero: the paper is left out of the marks and the maximum, so the percentage is over the papers sat († marks a subject assessed that way) · blank = subject not taken · N.IMP = Needs Improvement (below 33% overall or in a subject) · rank is within ${msec ? "this section" : "the class"} · rows in grey have no marks entered.${withInt ? " Each subject cell reads internal + theory with its weighted total out of 100; the total, percentage, grade and rank follow that." : ""}</div>
       <div class="sign"><span>Class Teacher</span><span>Examination In-charge</span><span>Principal</span></div>
     </div>`;
     const MS_CSS = `@page{size:A4 landscape;margin:10mm}
@@ -48404,20 +48436,24 @@ function Exams({
     });
     const inputFor = (r, w) => {
       var v = r.wv[w.key];
+      var ab = v === "AB";
       return React.createElement("input", {
         value: v == null ? "" : v,
         inputMode: "decimal",
         disabled: !r.adm,
-        title: r.adm ? w.label + " · maximum " + w.max : "Add this student's admission number before entering internal marks",
+        title: r.adm ? w.label + " · maximum " + w.max + " · type AB if the pupil was absent" : "Add this student's admission number before entering internal marks",
         onChange: function (e) {
           if (!r.adm) return;
-          var x = e.target.value.replace(/[^0-9.]/g, "");
+          var t = e.target.value.trim();
+          var x = /^a/i.test(t) ? "AB" : t.replace(/[^0-9.]/g, "");
           setCell(r.adm, w.key, x);
         },
         placeholder: r.adm ? "0–" + w.max : "Adm no",
         style: {
           ...cellInp,
-          opacity: r.adm ? 1 : .55
+          opacity: r.adm ? 1 : .55,
+          fontWeight: ab ? 800 : undefined,
+          color: ab ? "var(--tx-org)" : undefined
         }
       });
     };
@@ -48680,7 +48716,12 @@ function Exams({
         style: {
           color: "var(--tx-org)"
         }
-      }, "*") : null, tot != null && !miss ? React.createElement("span", {
+      }, "*") : null, r.comp && r.comp.absent && tot != null && !miss ? React.createElement("span", {
+        title: "absent: " + r.comp.absentOn.join(", ") + " — scaled out, not scored 0",
+        style: {
+          color: "var(--tx-red)"
+        }
+      }, "\u2020") : null, tot != null && !miss ? React.createElement("span", {
         style: {
           marginLeft: 6,
           color: cbseGColor(cbseGrade(tot)),
@@ -48855,7 +48896,13 @@ function Exams({
             color: "var(--tx-org)",
             fontWeight: 700
           }
-        }, "*") : null), React.createElement("td", {
+        }, "*") : null, r.comp && r.comp.absent && tot != null && !(r.comp.missing.length > 0) ? React.createElement("span", {
+          title: "absent: " + r.comp.absentOn.join(", ") + " — scaled out of the total, not scored 0",
+          style: {
+            color: "var(--tx-red)",
+            fontWeight: 700
+          }
+        }, "\u2020") : null), React.createElement("td", {
           style: {
             ...td,
             textAlign: "center",
@@ -48892,7 +48939,11 @@ function Exams({
       style: {
         color: "var(--tx-org)"
       }
-    }, "*"), " = some component still missing (Grade shows once all are in). Written marks come from the exams; only internals save here."), trMsg && React.createElement("span", {
+    }, "*"), " = some component still missing (Grade shows once all are in). ", React.createElement("b", {
+      style: {
+        color: "var(--tx-red)"
+      }
+    }, "\u2020"), " = the pupil was absent for a component, so it is left out of the total and the subject is scaled to 100 \u2014 type ", React.createElement("b", null, "AB"), " for an absentee, never 0. Written marks come from the exams; only internals save here."), trMsg && React.createElement("span", {
       style: {
         fontSize: 12.5,
         fontWeight: 600,

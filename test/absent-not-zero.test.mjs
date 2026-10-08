@@ -1,9 +1,8 @@
-// Absence is not a zero (2026-10-08, director, on the CBSE rule). Two faults were reported from the
-// half-yearly: a pupil who missed Unit Test 1 had NO percentage on the card at all, and a pupil marked
-// absent was scored zero. CBSE records a paper not sat as "AB" with no marks (Examination Bye-laws ch.7,
-// 40.1(iii) — the Board awards no aggregate), and its only provision for a missed periodic test is the
-// average of the best two of three. So an "AB" component is left out of BOTH the marks and the maximum and
-// the subject is scaled to 100; a BLANK stays "unfinished data", which carries no grade.
+// Absent is absent — not a zero — and NOTHING is scaled (director, 2026-10-08, in those words).
+// Two faults were reported from the half-yearly: a pupil who missed Unit Test 1 had NO percentage on the card
+// at all, and a pupil marked absent was written in as a zero. So an "AB" component now earns no marks and no
+// zero, the cell prints AB, and THE SUBJECT STILL TOTALS OUT OF 100 — what is left is left, no maximum is cut
+// and no mark is scaled up. A BLANK stays different: it is a mark nobody has entered, so no grade yet.
 // These run the REAL termComposite and termWeights from index.html.
 import { readFileSync } from 'node:fs';
 const src = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
@@ -21,41 +20,40 @@ ok('class 7 scheme is the CBSE 10/5/5/80',  J.ut === 10 && J.exam === 80 && J.wr
 const missedUT = termComposite(J, "", 20, 64, 80, { notebook: 4, enrichment: 5 });
 ok('a BLANK unit test still leaves the subject incomplete', missedUT.missing.join() === 'Unit Test');
 const abUT = termComposite(J, "AB", 20, 64, 80, { notebook: 4, enrichment: 5 });
-ok('an absent unit test is not missing data',  abUT.missing.length === 0);
+ok('an absent unit test is not missing data',   abUT.missing.length === 0);
 ok('an absent unit test is recorded as absent', abUT.absent === true && abUT.absentOn.join() === 'Unit Test');
-ok('the component prints AB, not 0',           abUT.parts.ut === 'AB');
-ok('the maximum drops by the paper not sat',   abUT.outOf === 90);
-// 64/80*80 = 64 written + 4 + 5 = 73 out of 90 → 81.1
-ok('the subject is scaled to 100 over what was sat', abUT.total === 81.1 && abUT.raw === 73);
-ok('so the pupil HAS a percentage',            abUT.total != null);
-ok('and it is not the old zero-for-the-UT 73', abUT.total !== 73);
+ok('the component prints AB, not 0',            abUT.parts.ut === 'AB');
+ok('NOTHING is scaled — still out of 100',      abUT.outOf === 100);
+ok('the pupil keeps exactly what they earned',  abUT.total === 73);
+ok('so the percentage is visible at last',      abUT.total != null);
 
 // ── the complaint: "absent is reflecting as zero" ──
 const allIn = termComposite(J, 16, 20, 64, 80, { notebook: 4, enrichment: 5 });
-ok('nothing absent: the total is unchanged /100', allIn.total === 81 && allIn.outOf === 100 && allIn.absent === false);
-ok('a full house carries no absence flag',     allIn.absentOn.length === 0);
+ok('nothing absent: the total is unchanged',    allIn.total === 81 && allIn.outOf === 100 && allIn.absent === false);
+ok('a full house carries no absence flag',      allIn.absentOn.length === 0);
 const absNb = termComposite(J, 16, 20, 64, 80, { notebook: "AB", enrichment: 5 });
-ok('an absent notebook is scaled out too',     absNb.outOf === 95 && absNb.parts.writeins.notebook === 'AB');
-// 8 + 64 + 5 = 77 of 95 → 81.1
-ok('and does not cost the pupil 5 marks',      absNb.total === 81.1);
+ok('an absent notebook shows AB, not 0',        absNb.parts.writeins.notebook === 'AB');
+ok('and the maximum is untouched',              absNb.outOf === 100 && absNb.total === 77);
 
 // ── a genuine zero is still a zero ──
 const zero = termComposite(J, 0, 20, 0, 80, { notebook: 0, enrichment: 0 });
-ok('0 entered means 0 scored',                 zero.total === 0 && zero.outOf === 100 && zero.absent === false);
+ok('0 entered means 0 scored',                  zero.total === 0 && zero.outOf === 100 && zero.absent === false);
 
-// ── seniors: practical/theory ──
+// ── seniors: practical/theory, same rule ──
 const sAb = termComposite(S, undefined, 20, "AB", 100, { practical: 27 });
-ok('senior absent from theory: practical only', sAb.outOf === 30 && sAb.parts.exam === 'AB' && sAb.total === 90);
-ok('the absence is named for the footnote',     sAb.absentOn.join() === 'Theory');
+ok('senior absent from theory: AB in the cell',  sAb.parts.exam === 'AB');
+ok('no 90/100 from a practical alone',           sAb.total === 27 && sAb.outOf === 100);
+ok('the absence is named for the footnote',      sAb.absentOn.join() === 'Theory');
 const sBlank = termComposite(S, undefined, 20, "", 100, { practical: 27 });
-ok('a blank theory paper is still incomplete',  sBlank.missing.join() === 'Theory');
+ok('a blank theory paper is still incomplete',   sBlank.missing.join() === 'Theory');
 
-// ── absent in everything: nothing to scale ──
+// ── absent in everything ──
 const none = termComposite(J, "AB", 20, "AB", 100, { notebook: "AB", enrichment: "AB" });
-ok('absent for every component: no total',      none.total === null && none.outOf === 0 && none.absent === true);
+ok('absent for every component: no total',       none.total === null && none.absent === true);
+ok('and the maximum is still the full 100',      none.outOf === 100);
 
-// ── the written exam keeps its own scaling ──
+// ── the written exam keeps its own scaling to its weight (that is the scheme, not a rescue) ──
 const half = termComposite(J, 10, 20, 40, 80, { notebook: 5, enrichment: 5 });
-ok('a 20-mark unit test is scaled to its 10',   half.parts.ut === 5);
-ok('and the exam to its 80',                    half.parts.exam === 40 && half.total === 55);
+ok('a 20-mark unit test counts for its 10',      half.parts.ut === 5);
+ok('and an 80-mark paper for its 80',            half.parts.exam === 40 && half.total === 55);
 console.log(`\n  ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);

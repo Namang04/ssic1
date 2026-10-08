@@ -1739,10 +1739,10 @@ function __examPerfFor(examsData,clsLabel,adm,name){
       var v=__examMarkOf(ex,s.name,adm,name);var got=v!==undefined&&v!=="";
       if(s.graded){if(got){has=true;subs.push({name:s.name,graded:true,grade:String(v)});}return;}
       var mx=Number(s.max)||100;
-      // "AB" is an absence, not a zero (same rule as the report card): the paper is left out of the marks AND
-      // the maximum, so the percentage is over the papers sat and an absence alone does not fail the pupil.
+      // "AB" is an absence, not a zero (same rule as the report card): no marks and no zero for that paper, but
+      // its maximum still counts — nothing is scaled. An absence alone no longer fails the pupil.
       var absent=got&&/^a/i.test(String(v).trim());
-      if(absent){has=true;subs.push({name:s.name,max:mx,mark:null,absent:true,pct:null});return;}
+      if(absent){max+=mx;has=true;subs.push({name:s.name,max:mx,mark:null,absent:true,pct:null});return;}
       if(got){var m=Number(v);if(!isNaN(m)){obt+=m;max+=mx;has=true;var sp=mx?Math.round(m/mx*100):0;if(m*100<33*mx)anyFail=true;subs.push({name:s.name,max:mx,mark:m,pct:sp});}}
     });
     if(!has)return;
@@ -12631,31 +12631,33 @@ function termWeights(clsLabel, subject){
 // Composite /100 from raw marks (each scaled to its weight). utMark/examMark out of utMax/examMax; wv = {key:value}.
 // Returns {total, parts:{ut,exam,writeins}, missing:[labels]} — total is null only if nothing entered.
 function termComposite(cfg, utMark, utMax, examMark, examMax, wv){
-  // ABSENCE IS NOT A ZERO (director, 2026-10-08, on the CBSE rule). CBSE records a paper not sat as "AB" and
-  // awards no marks for it; the only provision for a missed periodic test is the AVERAGE OF THE BEST TWO of
-  // three (Acad circulars, Class IX–X internal assessment), and the Board awards no aggregate at all
-  // (Examination Bye-laws ch.7, 40.1(iii)). So a component marked "AB" is left out of BOTH the marks and the
-  // maximum, and the subject is assessed on what the pupil actually sat, scaled to 100.
-  //   WAS: "AB" scored 0, which failed the subject; a BLANK excluded the subject from the result entirely, so a
-  //   pupil who missed Unit Test 1 had no percentage on the card at all.
+  // ABSENT IS ABSENT — NOT A ZERO, AND NOTHING IS SCALED (director, 2026-10-08, in those words).
+  // A component marked "AB" carries no marks and no zero: the cell prints AB, nothing is added, nothing is
+  // deducted, and THE SUBJECT STILL TOTALS OUT OF 100. What is left is left — no maximum is reduced and no
+  // mark is scaled up anywhere in the app.
+  //   WAS: "AB" was written into the total as a literal 0 and forced the whole result to fail, and a BLANK
+  //   component excluded the subject from the result entirely — which is why a pupil who missed Unit Test 1
+  //   had no percentage on the card at all.
   // A BLANK stays different from an absence: it is a mark no one has entered yet, so the subject is still
   // incomplete and carries no grade. Teachers mark an absentee "AB" (the AB button in Enter Marks).
-  var got=0, outOf=0, any=false, missing=[], absentOn=[];
+  var got=0, full=0, any=false, missing=[], absentOn=[];
   var isAb=function(v){return typeof v==="string"&&/^a/i.test(v.trim());};
   var num=function(v){return (v!=null&&v!==""&&!isNaN(Number(v)))?Number(v):null;};
   var p={};
   if(cfg.ut>0){
+    full+=cfg.ut;
     if(isAb(utMark)){ p.ut="AB"; absentOn.push("Unit Test"); }
-    else { var u=num(utMark); if(u!=null){ p.ut=Math.round(u/(utMax||20)*cfg.ut*10)/10; got+=p.ut; outOf+=cfg.ut; any=true; } else { p.ut=null; missing.push("Unit Test"); } }
+    else { var u=num(utMark); if(u!=null){ p.ut=Math.round(u/(utMax||20)*cfg.ut*10)/10; got+=p.ut; any=true; } else { p.ut=null; missing.push("Unit Test"); } }
   }
   p.writeins={};
-  cfg.writeins.forEach(function(w){ var raw=wv&&wv[w.key];
+  cfg.writeins.forEach(function(w){ var raw=wv&&wv[w.key]; full+=Number(w.max)||0;
     if(isAb(raw)){ p.writeins[w.key]="AB"; absentOn.push(w.label); return; }
-    var v=num(raw); if(v!=null){ var vv=Math.min(v,w.max); p.writeins[w.key]=vv; got+=vv; outOf+=w.max; any=true; } else { p.writeins[w.key]=null; missing.push(w.label); } });
+    var v=num(raw); if(v!=null){ var vv=Math.min(v,w.max); p.writeins[w.key]=vv; got+=vv; any=true; } else { p.writeins[w.key]=null; missing.push(w.label); } });
+  full+=cfg.exam;
   if(isAb(examMark)){ p.exam="AB"; absentOn.push(cfg.examLabel); }
-  else { var e=num(examMark); if(e!=null){ p.exam=Math.round(e/(examMax||100)*cfg.exam*10)/10; got+=p.exam; outOf+=cfg.exam; any=true; } else { p.exam=null; missing.push(cfg.examLabel); } }
-  // scaled over the components sat, so the subject still has a mark out of 100 and nobody is zeroed for being ill
-  return { total: any?Math.round(got/(outOf||1)*1000)/10:null, raw: any?Math.round(got*10)/10:null, outOf: outOf,
+  else { var e=num(examMark); if(e!=null){ p.exam=Math.round(e/(examMax||100)*cfg.exam*10)/10; got+=p.exam; any=true; } else { p.exam=null; missing.push(cfg.examLabel); } }
+  // total = the marks the pupil actually has, still out of the subject's full 100. Nothing scaled.
+  return { total: any?Math.round(got*10)/10:null, raw: any?Math.round(got*10)/10:null, outOf: full,
            parts:p, missing:missing, absentOn:absentOn, absent:absentOn.length>0 };
 }
 // The school's own co-scholastic traits, exactly as its report card has always listed them (2026-10-05,
@@ -12943,11 +12945,11 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
       const notApplicable=has&&/^n\/?a$/i.test(String(v).trim());if(notApplicable)return;
       if(s.graded){if(has){hasMarks=true;subjects.push({name:s.name,graded:true,grade:String(v),marks:null,max:0,pct:null});}return;} // graded co-scholastic: a grade counts as "has marks" so a co-scholastic-only report isn't dropped
       const mx=Number(s.max)||100;
-      // "AB" = enrolled in the subject but absent for the paper. CBSE never scores that as zero, so the paper is
-      // left OUT of both the marks and the maximum: the percentage is over the papers actually sat, and being
-      // absent no longer fails the pupil on its own. (Was: full maximum added, 0 awarded, result forced to fail.)
+      // "AB" = enrolled in the subject but absent for the paper. Absent is absent, not a zero: the cell prints AB
+      // and the subject earns nothing, but ITS MAXIMUM STILL COUNTS — nothing is scaled. The one thing dropped is
+      // the old automatic fail: the marks the pupil has decide the result. (Was: 0 awarded and result forced to fail.)
       const absent=has&&/^a/i.test(String(v).trim());
-      if(absent){hasMarks=true;subjects.push({name:s.name,max:mx,marks:null,pct:null,grade:"—",absent:true});return;}
+      if(absent){max+=mx;hasMarks=true;subjects.push({name:s.name,max:mx,marks:null,pct:null,grade:"—",absent:true});return;}
       if(has){const m=Number(v);if(!isNaN(m)){obt+=m;max+=mx;hasMarks=true;const sp=mx?Math.round(m/mx*100):0;if(m*100<33*mx)anyFail=true;subjects.push({name:s.name,max:mx,marks:m,pct:sp,grade:cbseGrade(sp)});}}
       // no mark entered (blank) → the student does not study this subject → omit it from the marksheet & totals
       });
@@ -12992,8 +12994,8 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
       }else cfg.writeins.forEach(w=>{if(!wSeen[w.key]){wSeen[w.key]={label:w.label,maxes:{}};wOrder.push(w.key);}wSeen[w.key].maxes[w.max]=(wSeen[w.key].maxes[w.max]||0)+1;cells[w.key]={v:(p.writeins||{})[w.key],max:w.max};});
       exMax[cfg.exam]=(exMax[cfg.exam]||0)+1;exLab[cfg.examLabel]=(exLab[cfg.examLabel]||0)+1;
       const inc=!!(c.missing&&c.missing.length);
-      // An absence is scaled out of the subject (termComposite), so the subject still carries a mark and a grade
-      // and still counts towards the overall — it is only flagged. A BLANK component is unfinished data: no grade.
+      // An absence earns no marks and no zero (termComposite) and the subject still totals out of 100, so it
+      // keeps a mark, a grade and its place in the overall — it is only flagged. A BLANK is unfinished data: no grade.
       if(c.total!=null&&!inc){sum+=c.total;n++;if(c.total<33)anyFail=true;}else anyIncomplete=true;
       if(c.absent)anyAbsent=true;
       rows.push({name:s.name,cells:cells,exam:{v:p.exam,max:cfg.exam},total:c.total,inc:inc,ab:!!c.absent,
@@ -13079,7 +13081,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
       <table class="sc"><thead><tr>${head}</tr></thead><tbody>${body}${totRow}</tbody></table>
       <div class="sc-tiles" style="grid-template-columns:${tiles.map(t=>t[0]+"fr").join(" ")}">${tiles.map(t=>t[1]).join("")}</div>
       ${td.anyIncomplete?'<div class="sc-note">Subjects marked <b>*</b> still have a component to be entered, so they carry no grade yet and are left out of the overall.</div>':''}
-      ${td.anyAbsent?'<div class="sc-note">AB = absent for that paper. An absence is never counted as zero: subjects marked <b>†</b> are assessed on the components the pupil sat, scaled to 100.</div>':''}
+      ${td.anyAbsent?'<div class="sc-note"><b>AB</b> = absent for that paper. No marks are awarded for it and none are carried over: the subject still totals out of 100, so subjects marked <b>†</b> show only the marks the pupil actually earned.</div>':''}
       <div class="sc-cols"${addl.length?'':' style="grid-template-columns:1fr"'}>
         ${tog.coscholastic?`<div><div class="sc-h">Co-Scholastic</div><table class="sc"><tbody>${coRows.join("")}</tbody></table></div>`:''}
         ${addl.length?`<div><div class="sc-h">Additional Subjects</div><table class="sc"><tbody>${addl.map(s=>`<tr><td class="l sub">${esc(__dispSubj(ex.cls,s.name))}</td><td>${esc(s.grade)||'—'}</td></tr>`).join("")}</tbody></table></div>`:''}
@@ -13287,7 +13289,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
       <div class="rt">Marksheet — ${esc(ex.name)}${msec?" · Section "+esc(msec):""}${withInt?" · with internal marks":""}</div>
       <div class="msinfo"><span>Class: <b>${esc(ex.cls)}${msec?" — Sec "+esc(msec):""}</b></span><span>Exam date: <b>${esc(ex.date||"—")}</b></span><span>Students assessed: <b>${done.length}</b> of ${cr.length}</span><span>Pass: <b>${passCount}</b> (${done.length?Math.round(passCount/done.length*100):0}%)</span><span>Class average: <b>${avg}%</b></span><span>Printed: <b>${today()}</b></span></div>
       <table><thead><tr><th>S.No</th><th>Adm No</th><th class="l">Student</th>${subjNames.map(n=>`<th>${esc(__dispSubj(ex.cls,n))}${withInt?'<div class="wt">internal + theory &middot; 100</div>':(maxBy[n]?`<div class="wt">/${maxBy[n]}</div>`:"")}</th>`).join("")}<th>Total</th><th>%</th><th>Grade</th><th>Rank</th><th>Result</th></tr></thead><tbody>${rows}</tbody></table>
-      <div class="legend">AB = absent for that paper — never counted as zero: the paper is left out of the marks and the maximum, so the percentage is over the papers sat († marks a subject assessed that way) · blank = subject not taken · N.IMP = Needs Improvement (below 33% overall or in a subject) · rank is within ${msec?"this section":"the class"} · rows in grey have no marks entered.${withInt?" Each subject cell reads internal + theory with its weighted total out of 100; the total, percentage, grade and rank follow that.":""}</div>
+      <div class="legend">AB = absent for that paper — no marks are awarded for it and no zero is written in; the maximum is unchanged, so the total and percentage show only what the pupil earned · blank = subject not taken · N.IMP = Needs Improvement (below 33% overall or in a subject) · rank is within ${msec?"this section":"the class"} · rows in grey have no marks entered.${withInt?" Each subject cell reads internal + theory with its weighted total out of 100; the total, percentage, grade and rank follow that.":""}</div>
       <div class="sign"><span>Class Teacher</span><span>Examination In-charge</span><span>Principal</span></div>
     </div>`;
     const MS_CSS=`@page{size:A4 landscape;margin:10mm}
@@ -13612,7 +13614,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
         const nCols=1+(cfg.ut>0?1:0)+cfg.writeins.length+3;
         const secCount={};rows.forEach(r=>{const k=trSecOf(r.st);secCount[k]=(secCount[k]||0)+1;});
         const inputFor=(r,w)=>{var v=r.wv[w.key];var ab=v==="AB";
-          // "AB" is accepted here as well as in Enter Marks: an absence is scaled out of the subject, not scored 0.
+          // "AB" is accepted here as well as in Enter Marks: an absence earns nothing and is never written in as a 0.
           return <input value={v==null?"":v} inputMode="decimal" disabled={!r.adm} title={r.adm?(w.label+" · maximum "+w.max+" · type AB if the pupil was absent"):"Add this student's admission number before entering internal marks"} onChange={function(e){if(!r.adm)return;var t=e.target.value.trim();var x=/^a/i.test(t)?"AB":t.replace(/[^0-9.]/g,"");setCell(r.adm,w.key,x);}} placeholder={r.adm?("0–"+w.max):"Adm no"} style={{...cellInp,opacity:r.adm?1:.55,fontWeight:ab?800:undefined,color:ab?"var(--tx-org)":undefined}}/>;};
         const done=rows.filter(r=>r.comp&&r.comp.total!=null&&r.comp.missing.length===0);
         const clsAvg=done.length?Math.round(done.reduce((a,r)=>a+r.comp.total,0)/done.length):null;
@@ -13660,7 +13662,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
                   acc.push(<div key={"m#"+(r.adm||r.st.name||"")+"#"+ri} style={{padding:"12px 14px",borderBottom:"1px solid var(--c-f0)"}}>
                     <div style={{display:"flex",alignItems:"baseline",gap:8}}>
                       <div style={{flex:1,minWidth:0,fontWeight:700,fontSize:13.5,color:"var(--ap-ink)"}}>{r.st.name}</div>
-                      <div style={{fontSize:12.5,fontWeight:800,fontFamily:"var(--ss-font)",whiteSpace:"nowrap",color:tot==null?"var(--c-94)":(tot>=33?"var(--ap-ink)":"var(--tx-red)")}}>{tot==null?"—":tot}<span style={{fontWeight:500,color:"var(--c-94)"}}>/100</span>{miss&&tot!=null?<span style={{color:"var(--tx-org)"}}>*</span>:null}{r.comp&&r.comp.absent&&tot!=null&&!miss?<span title={"absent: "+r.comp.absentOn.join(", ")+" — scaled out, not scored 0"} style={{color:"var(--tx-red)"}}>†</span>:null}{tot!=null&&!miss?<span style={{marginLeft:6,color:cbseGColor(cbseGrade(tot)),fontWeight:700}}>{cbseGrade(tot)}</span>:null}</div>
+                      <div style={{fontSize:12.5,fontWeight:800,fontFamily:"var(--ss-font)",whiteSpace:"nowrap",color:tot==null?"var(--c-94)":(tot>=33?"var(--ap-ink)":"var(--tx-red)")}}>{tot==null?"—":tot}<span style={{fontWeight:500,color:"var(--c-94)"}}>/100</span>{miss&&tot!=null?<span style={{color:"var(--tx-org)"}}>*</span>:null}{r.comp&&r.comp.absent&&tot!=null&&!miss?<span title={"absent: "+r.comp.absentOn.join(", ")+" — no marks for it, and no zero; the total is still out of 100"} style={{color:"var(--tx-red)"}}>†</span>:null}{tot!=null&&!miss?<span style={{marginLeft:6,color:cbseGColor(cbseGrade(tot)),fontWeight:700}}>{cbseGrade(tot)}</span>:null}</div>
                     </div>
                     <div style={{display:"flex",gap:12,flexWrap:"wrap",fontSize:11.5,color:"var(--c-64)",marginTop:3}}>
                       {cfg.ut>0&&<span>Unit Test {p.ut==null?"—":p.ut} / {cfg.ut}</span>}
@@ -13687,14 +13689,14 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
                       {cfg.ut>0&&<td style={{...td,textAlign:"center",color:p.ut==null?"var(--c-94)":"var(--c-64)",fontFamily:"var(--ss-font)"}}>{p.ut==null?"—":p.ut}</td>}
                       {cfg.writeins.map(function(w){return <td key={w.key} style={{...td,textAlign:"center"}}>{inputFor(r,w)}</td>;})}
                       <td style={{...td,textAlign:"center",color:p.exam==null?"var(--c-94)":"var(--c-64)",fontFamily:"var(--ss-font)"}}>{p.exam==null?"—":p.exam}</td>
-                      <td style={{...td,textAlign:"center",fontWeight:800,fontFamily:"var(--ss-font)",color:tot==null?"var(--c-94)":(tot>=33?"var(--ap-ink)":"var(--tx-red)")}}>{tot==null?"—":tot}{r.comp&&r.comp.missing.length>0&&tot!=null?<span title={"missing: "+r.comp.missing.join(", ")} style={{color:"var(--tx-org)",fontWeight:700}}>*</span>:null}{r.comp&&r.comp.absent&&tot!=null&&!(r.comp.missing.length>0)?<span title={"absent: "+r.comp.absentOn.join(", ")+" — scaled out of the total, not scored 0"} style={{color:"var(--tx-red)",fontWeight:700}}>†</span>:null}</td>
+                      <td style={{...td,textAlign:"center",fontWeight:800,fontFamily:"var(--ss-font)",color:tot==null?"var(--c-94)":(tot>=33?"var(--ap-ink)":"var(--tx-red)")}}>{tot==null?"—":tot}{r.comp&&r.comp.missing.length>0&&tot!=null?<span title={"missing: "+r.comp.missing.join(", ")} style={{color:"var(--tx-org)",fontWeight:700}}>*</span>:null}{r.comp&&r.comp.absent&&tot!=null&&!(r.comp.missing.length>0)?<span title={"absent: "+r.comp.absentOn.join(", ")+" — no marks for it, and no zero; the total is still out of 100"} style={{color:"var(--tx-red)",fontWeight:700}}>†</span>:null}</td>
                       <td style={{...td,textAlign:"center",paddingRight:15}}>{tot==null||(r.comp&&r.comp.missing.length>0)?<span style={{color:"var(--c-94)"}}>—</span>:<span style={{color:cbseGColor(cbseGrade(tot)),fontWeight:700}}>{cbseGrade(tot)}</span>}</td>
                     </tr>;
                   })());return acc;},[])}</tbody>
                 </table>
               </div>}
               <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",borderTop:"1px solid var(--ap-line)",padding:"12px 16px",background:"var(--c-f7)"}}>
-                <span style={{fontSize:11.5,color:"var(--c-94)"}}><b style={{color:"var(--tx-org)"}}>*</b> = some component still missing (Grade shows once all are in). <b style={{color:"var(--tx-red)"}}>†</b> = the pupil was absent for a component, so it is left out of the total and the subject is scaled to 100 — type <b>AB</b> for an absentee, never 0. Written marks come from the exams; only internals save here.</span>
+                <span style={{fontSize:11.5,color:"var(--c-94)"}}><b style={{color:"var(--tx-org)"}}>*</b> = some component still missing (Grade shows once all are in). <b style={{color:"var(--tx-red)"}}>†</b> = the pupil was absent for a component: it earns no marks and is not written in as a zero, and the subject still totals out of 100 — type <b>AB</b> for an absentee, never 0 and never blank. Written marks come from the exams; only internals save here.</span>
                 {trMsg&&<span style={{fontSize:12.5,fontWeight:600,color:trMsg.indexOf("✓")===0?"var(--tx-grn2)":(trMsg.indexOf("")===0?"var(--tx-org2)":"var(--tx-red)")}}>{trMsg}</span>}
                 <Btn onClick={saveTermDraft} disabled={trSaving} style={{marginLeft:"auto"}}>{trSaving?"Saving…":"Save internals"}</Btn>
               </div>
