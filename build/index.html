@@ -1551,7 +1551,8 @@ function __faceIn(cv) {
           };
         };
         var L = mid(r.landmarks.getLeftEye()),
-          R = mid(r.landmarks.getRightEye());
+          R = mid(r.landmarks.getRightEye()),
+          M = mid(r.landmarks.getMouth());
         best = {
           q: q,
           x: b.x,
@@ -1562,7 +1563,9 @@ function __faceIn(cv) {
           lx: L.x,
           ly: L.y,
           rx: R.x,
-          ry: R.y
+          ry: R.y,
+          mx: M.x,
+          my: M.y
         };
       });
       return best;
@@ -1581,7 +1584,7 @@ function __autoFrame(src, vw, vh) {
       turns = [0, 90, 270, 180];
     var step = function (i) {
       if (i >= turns.length) return Promise.resolve();
-      if (best && best.score >= 0.75) return Promise.resolve();
+      if (best && best.ok && best.score >= 0.75) return Promise.resolve();
       var rot = turns[i],
         side = rot === 90 || rot === 270,
         ew = side ? h : w,
@@ -1598,32 +1601,41 @@ function __autoFrame(src, vw, vh) {
       cx.scale(d, d);
       cx.drawImage(im, -w / 2, -h / 2, w, h);
       return __faceIn(cv).then(function (f) {
-        if (f && (!best || f.q > best.q)) best = {
-          q: f.q,
-          score: f.score,
-          rot: rot,
-          ew: ew,
-          eh: eh,
-          d: d,
-          lx: f.lx / d,
-          ly: f.ly / d,
-          rx: f.rx / d,
-          ry: f.ry / d,
-          cx: (f.x + f.w / 2) / d,
-          cy: (f.y + f.h / 2) / d,
-          fh: f.h / d
-        };
+        if (f) {
+          var dx = f.rx - f.lx,
+            dy = f.ry - f.ly;
+          var roll = Math.atan2(dy, dx) * 180 / Math.PI;
+          var eyeY = (f.ly + f.ry) / 2;
+          var upright = f.my > eyeY + 0.08 * f.h && Math.abs(roll) <= 35;
+          var cand = {
+            q: f.q,
+            score: f.score,
+            ok: upright,
+            roll: roll,
+            rot: rot,
+            ew: ew,
+            eh: eh,
+            d: d,
+            lx: f.lx / d,
+            ly: f.ly / d,
+            rx: f.rx / d,
+            ry: f.ry / d,
+            cx: (f.x + f.w / 2) / d,
+            cy: (f.y + f.h / 2) / d,
+            fh: f.h / d
+          };
+          if (!best || cand.ok && !best.ok || cand.ok === best.ok && cand.score > best.score) best = cand;
+        }
         return step(i + 1);
       });
     };
     return step(0).then(function () {
-      if (!best) return null;
+      if (!best || !best.ok) return null;
       var dx = best.rx - best.lx,
         dy = best.ry - best.ly;
       var D = Math.sqrt(dx * dx + dy * dy);
       if (!(D > 2)) return __autoFrameFromBox(best, w, h, vw, vh);
-      var roll = Math.atan2(dy, dx) * 180 / Math.PI;
-      if (Math.abs(roll) > 35) roll = 0;
+      var roll = best.roll;
       var sc = __PP.EYEW * vw / D;
       var mx = (best.lx + best.rx) / 2 - best.ew / 2,
         my = (best.ly + best.ry) / 2 - best.eh / 2;
@@ -58863,7 +58875,18 @@ function StudentDirectory({
           }));
           __photoSet(a, img);
           fixed++;
-        } else skip++;
+        } else {
+          if (doc && doc.orig && doc.autoFramedAt) {
+            try {
+              await window.__fbUpdateDoc(window.__fbDoc(window.__db, "studentPhotos", a), {
+                img: doc.orig,
+                autoFramedAt: null
+              });
+              __photoSet(a, doc.orig);
+            } catch (e) {}
+          }
+          skip++;
+        }
       } catch (e) {
         skip++;
       }

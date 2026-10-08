@@ -16079,6 +16079,7 @@ function StudentDirectory({user, dirDB, testsDB, examsDB, studentsDB, attendance
     await window.__fbSetDoc(window.__fbDoc(window.__db,"studentPhotos",String(adm)),{admNo:String(adm),name:name||"",img:img,updatedAt:new Date().toISOString(),by:(user&&user.username)||""});
     __photoSet(String(adm),img);setFraming(null);setPhotoMsg("✓ Saved — "+(name||"photo"));setTimeout(()=>setPhotoMsg(""),2200);
   };
+  const photoTileBtn={border:"1px solid var(--c-d2)",background:"var(--c-fff)",borderRadius:6,padding:"4px 0",fontSize:10.5,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)",color:"var(--ap-ink2)",minWidth:0};
   // Passport-photo the whole class. Every photo is turned upright, the head straightened, and the crop set from
   // the EYES so each one comes out the same size in the same place. The picture as it stands
   // is kept on the record as `orig`, so a second run always re-crops from the ORIGINAL (never a crop of a crop)
@@ -16119,6 +16120,15 @@ function StudentDirectory({user, dirDB, testsDB, examsDB, studentsDB, attendance
     setAutoRun(null);
     setPhotoMsg("✓ "+fixed+" framed"+(skip?" · "+skip+" left alone (no face found)":""));
   };
+  // Undo one pupil's photo. The record keeps the picture as it stood before the crop, so this puts that back
+  // without touching anybody else. Nothing to go back to is said plainly rather than failing quietly.
+  const undoOne=async(adm,name)=>{
+    const a=String(adm);setPhotoMsg("");
+    const doc=await _photoDoc(a);
+    if(!doc||!doc.orig){setPhotoMsg("No earlier version of "+(name||"that photo")+" — it has not been cropped by the app.");return;}
+    try{await window.__fbUpdateDoc(window.__fbDoc(window.__db,"studentPhotos",a),{img:doc.orig,autoFramedAt:null});
+      __photoSet(a,doc.orig);setPhotoMsg("↺ "+(name||"Photo")+" put back");setTimeout(()=>setPhotoMsg(""),2200);
+    }catch(e){setPhotoMsg("Could not put it back — "+((e&&e.message)||"try again"));}};
   const undoAutoFrame=async()=>{
     const list=filtered.slice(0,500).filter(x=>x.admNo);
     if(!await window.__confirm({title:"Undo auto-framing?",body:"Every photo auto-framed in this class goes back to the picture it was before. Photos framed by hand are not touched.",confirmText:"Undo",danger:true}))return;
@@ -16335,7 +16345,7 @@ function StudentDirectory({user, dirDB, testsDB, examsDB, studentsDB, attendance
               {photoMsg&&<span style={{fontSize:12.5,fontWeight:700,color:"var(--tx-grn2)"}}>{photoMsg}</span>}
               <span style={{marginLeft:"auto",fontSize:11.5,color:"var(--ap-muted)"}}>Shown exactly as the report card crops them.</span>
               {canFixPhotos&&!autoRun&&<button onClick={autoFrameAll} style={{border:"none",background:"var(--btn-pri-bg)",color:"#fff",borderRadius:7,padding:"7px 14px",fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Make these passport photos</button>}
-              {canFixPhotos&&!autoRun&&<button onClick={undoAutoFrame} title="Put every auto-framed photo in this class back as it was" style={{border:"1px solid var(--c-d2)",background:"var(--c-fff)",color:"var(--ap-ink2)",borderRadius:7,padding:"7px 12px",fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Undo</button>}
+              {canFixPhotos&&!autoRun&&<button onClick={undoAutoFrame} title="Put every photo in this class back as it was before the app cropped it" style={{border:"1px solid var(--c-d2)",background:"var(--c-fff)",color:"var(--ap-ink2)",borderRadius:7,padding:"7px 12px",fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Undo all</button>}
             </div>
             {autoRun&&<div style={{border:"1px solid var(--bd-amb)",background:"var(--bg-amb)",borderRadius:8,padding:"11px 14px",marginBottom:13,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
               <div style={{flex:"1 1 220px",minWidth:0}}>
@@ -16345,7 +16355,7 @@ function StudentDirectory({user, dirDB, testsDB, examsDB, studentsDB, attendance
               </div>
               <button onClick={function(){autoStop.current=true;}} style={{border:"1px solid var(--c-d2)",background:"var(--c-fff)",color:"var(--ap-ink2)",borderRadius:7,padding:"7px 13px",fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Stop</button>
             </div>}
-            <div style={{display:"grid",gap:13,gridTemplateColumns:"repeat(auto-fill,minmax(104px,1fr))"}}>
+            <div style={{display:"grid",gap:13,gridTemplateColumns:"repeat(auto-fill,minmax(112px,1fr))"}}>
               {filtered.slice(0,500).map(function(st,i){var a=String(st.admNo||"");var ph=dirPhotos[a];var g=GRADS[i%GRADS.length];
                 return (<div key={a||st.name||i} style={{minWidth:0}}>
                   <div style={{width:"100%",aspectRatio:"3 / 4",borderRadius:7,overflow:"hidden",border:"1px solid var(--ap-line)",display:"grid",placeItems:"center",background:ph?"var(--c-f0)":("linear-gradient(140deg,"+g[0]+","+g[1]+")"),color:"#fff",fontWeight:800,fontSize:20}}>
@@ -16353,9 +16363,10 @@ function StudentDirectory({user, dirDB, testsDB, examsDB, studentsDB, attendance
                   </div>
                   <div title={st.name} style={{fontSize:11.5,fontWeight:700,color:"var(--ap-ink)",marginTop:6,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{st.name}</div>
                   <div style={{fontSize:10.5,color:"var(--c-94)",fontFamily:"var(--ss-font)"}}>{a||"no adm no."}</div>
-                  {canFixPhotos&&a&&<div style={{display:"flex",gap:5,marginTop:5}}>
-                    {ph&&<button onClick={function(){setFraming({adm:a,name:st.name,src:ph});}} style={{flex:1,border:"1px solid var(--c-d2)",background:"var(--c-fff)",borderRadius:6,padding:"4px 0",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)",color:"var(--ap-ink2)"}}>Fix</button>}
-                    <label style={{flex:1,textAlign:"center",border:"1px solid var(--c-d2)",background:"var(--c-fff)",borderRadius:6,padding:"4px 0",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)",color:"var(--ap-ink2)"}}>{ph?"Replace":"Add"}
+                  {canFixPhotos&&a&&<div style={{display:"flex",gap:4,marginTop:5}}>
+                    {ph&&<button onClick={function(){setFraming({adm:a,name:st.name,src:ph});}} title="Frame this one by hand" style={{...photoTileBtn,flex:1}}>Fix</button>}
+                    {ph&&<button onClick={function(){undoOne(a,st.name);}} title={"Put "+st.name+"'s photo back as it was before the app cropped it"} style={{...photoTileBtn,flex:1}}>Undo</button>}
+                    <label style={{...photoTileBtn,flex:1,textAlign:"center",display:"block"}}>{ph?"New":"Add"}
                       <input type="file" accept="image/*" style={{display:"none"}} onChange={function(e){var f=e.target.files&&e.target.files[0];e.target.value="";pickPhotoFor(a,st.name,f);}}/></label>
                   </div>}
                 </div>);})}

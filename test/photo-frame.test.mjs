@@ -75,4 +75,9 @@ ok('the fill blends with the photo',    /bg:"auto"/.test(auto) && /f\.bg==="auto
 ok('the untouched picture is kept',     /orig:base/.test(src));
 ok('and is what a re-run crops from',   /\(doc&&\(doc\.orig\|\|doc\.img\)\)/.test(src));
 ok('undo puts the original back',       /img:doc\.orig,autoFramedAt:null/.test(src));
+// One pupil at a time, not only the whole class.
+ok('a single photo can be put back',    /const undoOne=async\(adm,name\)/.test(src));
+ok('and it says so when there is nothing to go back to', /No earlier version of/.test(src));
+ok('each tile carries its own Undo',    />Undo<\/button>/.test(src) && /undoOne\(a,st\.name\)/.test(src));
+ok('the class-wide one is named apart', />Undo all<\/button>/.test(src));
 console.log(`\n  ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
