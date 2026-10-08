@@ -13052,9 +13052,10 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
           return `<td>${sh}${(td.senior&&!ab)?`<span class="mx"> / ${mx}</span>`:((!ab&&mx!==dom)?`<span class="mx"> /${mx}</span>`:'')}</td>`;};
         const cells=td.cols.map(c=>{const d=row.cells[c.key];return d?mk(d.v,d.max,c.max):'<td>—</td>';}).join("");
         const exCell=mk(row.exam.v,row.exam.max,td.examMax);
-        // A blank component IS an absence now, so the card carries one mark only: † beside a subject where
-        // something was not sat. There is no "incomplete" state left to show a parent.
-        const totCell=row.nores?'<span class="abs">AB</span>':`${row.total==null?'—':__rm(row.total)}${row.ab?'<span class="abs">†</span>':''}`;
+        // No markers on a printed card and no footnotes (director: "everything should be clean"). The AB in the
+        // component's own cell is the whole story, so the Total column carries a number, or AB when the subject
+        // has no result at all.
+        const totCell=row.nores?'<span class="abs">AB</span>':`${row.total==null?'—':__rm(row.total)}`;
         return `<tr><td class="l sub">${esc(__dispSubj(ex.cls,row.name))}</td>${cells}${exCell}<td><b>${totCell}</b></td><td class="g">${row.grade||'—'}</td></tr>`;
       }).join("");
       const sumOf=f=>{let s=0,any=false;td.rows.forEach(row=>{const v=f(row);if(v!=null&&v!==""&&v!=="AB"){s+=Number(v)||0;any=true;}});return any?Math.round(s):null;}; // "AB" is not a 0 to be added up
@@ -13100,8 +13101,6 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
       <div class="sc-h">Scholastic Areas</div>
       <table class="sc"><thead><tr>${head}</tr></thead><tbody>${body}${totRow}</tbody></table>
       <div class="sc-tiles" style="grid-template-columns:${tiles.map(t=>t[0]+"fr").join(" ")}">${tiles.map(t=>t[1]).join("")}</div>
-      ${td.anyVoid?`<div class="sc-note"><b>AB</b> = absent for that paper. Absent in the written paper and, under the board rule, the practical and internal marks are not counted, so the subject carries no result — it still counts for its 100 in the total of ${td.n*100}.</div>`:''}
-      ${(td.anyAbsent&&!td.anyVoid)?'<div class="sc-note"><b>AB</b> = absent for that component. No marks are awarded for it and none are deducted — never a zero: the subject still totals out of 100, so subjects marked <b>†</b> show only the marks the pupil actually earned.</div>':''}
       <div class="sc-cols"${addl.length?'':' style="grid-template-columns:1fr"'}>
         ${tog.coscholastic?`<div><div class="sc-h">Co-Scholastic</div><table class="sc"><tbody>${coRows.join("")}</tbody></table></div>`:''}
         ${addl.length?`<div><div class="sc-h">Additional Subjects</div><table class="sc"><tbody>${addl.map(s=>`<tr><td class="l sub">${esc(__dispSubj(ex.cls,s.name))}</td><td>${esc(s.grade)||'—'}</td></tr>`).join("")}</tbody></table></div>`:''}
@@ -13221,7 +13220,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
       sumTot+=(c.total==null?0:c.total); nDone++;              // every subject counts, out of its full 100
       if(c.noResult||c.total<33)anyFail=true;
       if(incomplete)anyIncomplete=true;
-      const _tot=c.noResult?'<span style="color:#b3261e">AB</span>':`${c.total}${c.absent?'<span style="color:#b3261e">†</span>':''}`;
+      const _tot=c.noResult?'<span style="color:#b3261e">AB</span>':`${c.total}`;
       rows.push(`<tr><td class="l">${esc(s.name)}</td><td>${bits.join(' &nbsp;·&nbsp; ')}</td><td>${examCell}</td><td><b>${_tot}</b></td><td>${c.total==null?'—':`<b style="color:#0d1b2a">${cbseGrade(c.total)}</b>`}</td></tr>`);
     });
     const overallPct=nDone?Math.round(sumTot/nDone):null; // avg of per-subject /100 composites
@@ -13312,7 +13311,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
       <div class="rt">Marksheet — ${esc(ex.name)}${msec?" · Section "+esc(msec):""}${withInt?" · with internal marks":""}</div>
       <div class="msinfo"><span>Class: <b>${esc(ex.cls)}${msec?" — Sec "+esc(msec):""}</b></span><span>Exam date: <b>${esc(ex.date||"—")}</b></span><span>Students assessed: <b>${done.length}</b> of ${cr.length}</span><span>Pass: <b>${passCount}</b> (${done.length?Math.round(passCount/done.length*100):0}%)</span><span>Class average: <b>${avg}%</b></span><span>Printed: <b>${today()}</b></span></div>
       <table><thead><tr><th>S.No</th><th>Adm No</th><th class="l">Student</th>${subjNames.map(n=>`<th>${esc(__dispSubj(ex.cls,n))}${withInt?'<div class="wt">internal + theory &middot; 100</div>':(maxBy[n]?`<div class="wt">/${maxBy[n]}</div>`:"")}</th>`).join("")}<th>Total</th><th>%</th><th>Grade</th><th>Rank</th><th>Result</th></tr></thead><tbody>${rows}</tbody></table>
-      <div class="legend">AB = absent for that paper — never entered as a zero, and the subject earns nothing; absent in the written paper and the practical and internals are not counted either (board rule). The subject still carries its maximum: the total is out of every subject the pupil takes · blank = subject not taken · N.IMP = Needs Improvement (below 33% overall or in a subject) · rank is within ${msec?"this section":"the class"} · rows in grey have no marks entered.${withInt?" Each subject cell reads internal + theory with its weighted total out of 100; the total, percentage, grade and rank follow that.":""}</div>
+      <div class="legend">AB = absent · blank = subject not taken · N.IMP = Needs Improvement (below 33% overall or in a subject) · rank is within ${msec?"this section":"the class"} · rows in grey have no marks entered.${withInt?" Each subject cell reads internal + theory with its weighted total out of 100; the total, percentage, grade and rank follow that.":""}</div>
       <div class="sign"><span>Class Teacher</span><span>Examination In-charge</span><span>Principal</span></div>
     </div>`;
     const MS_CSS=`@page{size:A4 landscape;margin:10mm}
@@ -13685,7 +13684,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
                   acc.push(<div key={"m#"+(r.adm||r.st.name||"")+"#"+ri} style={{padding:"12px 14px",borderBottom:"1px solid var(--c-f0)"}}>
                     <div style={{display:"flex",alignItems:"baseline",gap:8}}>
                       <div style={{flex:1,minWidth:0,fontWeight:700,fontSize:13.5,color:"var(--ap-ink)"}}>{r.st.name}</div>
-                      <div style={{fontSize:12.5,fontWeight:800,fontFamily:"var(--ss-font)",whiteSpace:"nowrap",color:tot==null?"var(--c-94)":(tot>=33?"var(--ap-ink)":"var(--tx-red)")}}>{tot==null?(r.comp&&r.comp.noResult?<span style={{color:"var(--tx-red)"}}>AB</span>:"—"):tot}<span style={{fontWeight:500,color:"var(--c-94)"}}>/100</span>{miss&&tot!=null?<span style={{color:"var(--tx-org)"}}>*</span>:null}{r.comp&&r.comp.absent&&tot!=null&&!miss?<span title={"absent: "+r.comp.absentOn.join(", ")+" — no marks for it, and no zero; the total is still out of 100"} style={{color:"var(--tx-red)"}}>†</span>:null}{tot!=null&&!miss?<span style={{marginLeft:6,color:cbseGColor(cbseGrade(tot)),fontWeight:700}}>{cbseGrade(tot)}</span>:null}</div>
+                      <div style={{fontSize:12.5,fontWeight:800,fontFamily:"var(--ss-font)",whiteSpace:"nowrap",color:tot==null?"var(--c-94)":(tot>=33?"var(--ap-ink)":"var(--tx-red)")}}>{tot==null?(r.comp&&r.comp.noResult?<span style={{color:"var(--tx-red)"}}>AB</span>:"—"):tot}<span style={{fontWeight:500,color:"var(--c-94)"}}>/100</span>{miss&&tot!=null?<span style={{color:"var(--tx-org)"}}>*</span>:null}{tot!=null&&!miss?<span style={{marginLeft:6,color:cbseGColor(cbseGrade(tot)),fontWeight:700}}>{cbseGrade(tot)}</span>:null}</div>
                     </div>
                     <div style={{display:"flex",gap:12,flexWrap:"wrap",fontSize:11.5,color:"var(--c-64)",marginTop:3}}>
                       {cfg.ut>0&&<span>Unit Test {p.ut==null?"—":p.ut} / {cfg.ut}</span>}
@@ -13712,14 +13711,14 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
                       {cfg.ut>0&&<td style={{...td,textAlign:"center",color:p.ut==null?"var(--c-94)":"var(--c-64)",fontFamily:"var(--ss-font)"}}>{p.ut==null?"—":p.ut}</td>}
                       {cfg.writeins.map(function(w){return <td key={w.key} style={{...td,textAlign:"center"}}>{inputFor(r,w)}</td>;})}
                       <td style={{...td,textAlign:"center",color:p.exam==null?"var(--c-94)":"var(--c-64)",fontFamily:"var(--ss-font)"}}>{p.exam==null?"—":p.exam}</td>
-                      <td style={{...td,textAlign:"center",fontWeight:800,fontFamily:"var(--ss-font)",color:tot==null?"var(--c-94)":(tot>=33?"var(--ap-ink)":"var(--tx-red)")}}>{tot==null?(r.comp&&r.comp.noResult?<span style={{color:"var(--tx-red)",fontWeight:800}} title="absent for the written paper — the practical and internals are not counted (board rule)">AB</span>:"—"):tot}{r.comp&&r.comp.missing.length>0&&tot!=null?<span title={"missing: "+r.comp.missing.join(", ")} style={{color:"var(--tx-org)",fontWeight:700}}>*</span>:null}{r.comp&&r.comp.absent&&tot!=null&&!(r.comp.missing.length>0)?<span title={"absent: "+r.comp.absentOn.join(", ")+" — no marks for it, and no zero; the total is still out of 100"} style={{color:"var(--tx-red)",fontWeight:700}}>†</span>:null}</td>
+                      <td style={{...td,textAlign:"center",fontWeight:800,fontFamily:"var(--ss-font)",color:tot==null?"var(--c-94)":(tot>=33?"var(--ap-ink)":"var(--tx-red)")}}>{tot==null?(r.comp&&r.comp.noResult?<span style={{color:"var(--tx-red)",fontWeight:800}} title="absent for the written paper — the practical and internals are not counted (board rule)">AB</span>:"—"):tot}{r.comp&&r.comp.missing.length>0&&tot!=null?<span title={"missing: "+r.comp.missing.join(", ")} style={{color:"var(--tx-org)",fontWeight:700}}>*</span>:null}</td>
                       <td style={{...td,textAlign:"center",paddingRight:15}}>{tot==null||(r.comp&&r.comp.missing.length>0)?<span style={{color:"var(--c-94)"}}>—</span>:<span style={{color:cbseGColor(cbseGrade(tot)),fontWeight:700}}>{cbseGrade(tot)}</span>}</td>
                     </tr>;
                   })());return acc;},[])}</tbody>
                 </table>
               </div>}
               <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",borderTop:"1px solid var(--ap-line)",padding:"12px 16px",background:"var(--c-f7)"}}>
-                <span style={{fontSize:11.5,color:"var(--c-94)"}}><b style={{color:"var(--tx-org)"}}>*</b> = some component still missing (Grade shows once all are in). <b style={{color:"var(--tx-red)"}}>†</b> = absent for a component: it earns no marks and is never written in as a zero, and the subject still totals out of 100. Absent for the <b>written paper</b> and the subject carries no result at all — the practical and internals are not counted (board rule). Type <b>AB</b> for an absentee, never 0 and never blank. Written marks come from the exams; only internals save here.</span>
+                <span style={{fontSize:11.5,color:"var(--c-94)"}}><b style={{color:"var(--tx-org)"}}>*</b> = some component still missing (Grade shows once all are in). An empty box counts as <b>AB</b> — absent: it earns no marks and is never a zero, and the subject still totals out of 100. Absent for the <b>written paper</b> and the subject carries no result at all (board rule). Type the marks, or leave the box empty only when the pupil really was absent. Written marks come from the exams; only internals save here.</span>
                 {trMsg&&<span style={{fontSize:12.5,fontWeight:600,color:trMsg.indexOf("✓")===0?"var(--tx-grn2)":(trMsg.indexOf("")===0?"var(--tx-org2)":"var(--tx-red)")}}>{trMsg}</span>}
                 <Btn onClick={saveTermDraft} disabled={trSaving} style={{marginLeft:"auto"}}>{trSaving?"Saving…":"Save internals"}</Btn>
               </div>
