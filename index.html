@@ -16078,7 +16078,7 @@ function StudentDirectory({user, dirDB, testsDB, examsDB, studentsDB, attendance
     if(!list.length){setPhotoMsg("No photos here to frame.");return;}
     if(!window.__db||!window.__fbSetDoc){setPhotoMsg("Not connected");return;}
     if(!await window.__confirm({title:"Make "+list.length+" passport photo"+(list.length===1?"":"s")+"?",
-      body:"Each one is turned the right way up and cropped to the face. The picture as it is now is kept, so this can be undone, and any photo whose face cannot be found is left alone. It takes a few minutes — keep this page open.",confirmText:"Auto-frame"}))return;
+      body:"Every one comes out the same: turned the right way up, the head straightened, and cropped so the eyes sit on the same line at the same size on every card. The picture as it is now is kept, so this can be undone, and any photo whose face cannot be found is left alone. It takes a few minutes — keep this page open.",confirmText:"Make passport photos"}))return;
     autoStop.current=false;setAutoRun({done:0,total:list.length,fixed:0,skip:0});
     let fixed=0,skip=0;
     for(let i=0;i<list.length;i++){
@@ -16316,14 +16316,14 @@ function StudentDirectory({user, dirDB, testsDB, examsDB, studentsDB, attendance
               <div style={{fontSize:14,fontWeight:700,color:"var(--ap-ink)"}}>Photos <span style={{fontWeight:500,color:"var(--c-ae)"}}>· {clsFilter==="all"?"all classes":__uiClassLabel(clsFilter)}{secFilter!=="all"?" · Section "+secFilter:""} · {filtered.filter(function(x){return dirPhotos[String(x.admNo||"")];}).length} of {filtered.length} have one</span></div>
               {photoMsg&&<span style={{fontSize:12.5,fontWeight:700,color:"var(--tx-grn2)"}}>{photoMsg}</span>}
               <span style={{marginLeft:"auto",fontSize:11.5,color:"var(--ap-muted)"}}>Shown exactly as the report card crops them.</span>
-              {canFixPhotos&&!autoRun&&<button onClick={autoFrameAll} style={{border:"none",background:"var(--btn-pri-bg)",color:"#fff",borderRadius:7,padding:"7px 14px",fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Auto-frame these photos</button>}
+              {canFixPhotos&&!autoRun&&<button onClick={autoFrameAll} style={{border:"none",background:"var(--btn-pri-bg)",color:"#fff",borderRadius:7,padding:"7px 14px",fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Make these passport photos</button>}
               {canFixPhotos&&!autoRun&&<button onClick={undoAutoFrame} title="Put every auto-framed photo in this class back as it was" style={{border:"1px solid var(--c-d2)",background:"var(--c-fff)",color:"var(--ap-ink2)",borderRadius:7,padding:"7px 12px",fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Undo</button>}
             </div>
             {autoRun&&<div style={{border:"1px solid var(--bd-amb)",background:"var(--bg-amb)",borderRadius:8,padding:"11px 14px",marginBottom:13,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
               <div style={{flex:"1 1 220px",minWidth:0}}>
                 <div style={{fontSize:12.5,fontWeight:800,color:"var(--tx-org2)"}}>Finding faces — {autoRun.done} of {autoRun.total} · {autoRun.fixed} framed{autoRun.skip?" · "+autoRun.skip+" left alone":""}</div>
                 <div style={{height:6,borderRadius:99,background:"var(--c-fff)",overflow:"hidden",marginTop:6}}><div style={{height:"100%",width:Math.round(autoRun.done/Math.max(1,autoRun.total)*100)+"%",background:"var(--btn-pri-bg)"}}/></div>
-                <div style={{fontSize:11,color:"var(--ap-muted)",marginTop:5}}>Keep this page open. Each photo is turned upright and cropped to the face; the one before is kept so this can be undone.</div>
+                <div style={{fontSize:11,color:"var(--ap-muted)",marginTop:5}}>Keep this page open. Each head is straightened and cropped to the same size and position; the picture before is kept, so this can be undone.</div>
               </div>
               <button onClick={function(){autoStop.current=true;}} style={{border:"1px solid var(--c-d2)",background:"var(--c-fff)",color:"var(--ap-ink2)",borderRadius:7,padding:"7px 13px",fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Stop</button>
             </div>}

@@ -5,7 +5,7 @@
    - ssic-content.js (the heavy ~7.5MB question bank + notes bundle): CACHE-FIRST → instant on repeat
      opens. It's versioned via ?v= in the loader, so bumping that version fetches a fresh copy.
    - Firebase / Firestore / Google APIs: NEVER intercepted (Firestore has its own offline cache). */
-const CACHE = 'ssic-043f6cb50f2d';   /* BUMP THIS ON EVERY DEPLOY — activate() purges any cache whose name differs, which is the only thing that forces a stale shell out of a returning browser. */
+const CACHE = 'ssic-8276b7228e1a';   /* BUMP THIS ON EVERY DEPLOY — activate() purges any cache whose name differs, which is the only thing that forces a stale shell out of a returning browser. */
 
 self.addEventListener('install', function (e) { self.skipWaiting(); });
 

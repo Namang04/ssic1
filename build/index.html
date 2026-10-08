@@ -1460,13 +1460,13 @@ function __frameImg(src, f, vw, vh, ow, oh, q) {
         h = im.naturalHeight || im.height;
       var ew = r === 90 || r === 270 ? h : w,
         eh = r === 90 || r === 270 ? w : h;
-      var sc = Math.max(vw / ew, vh / eh) * (f.zoom || 1),
+      var sc = f.scale != null ? f.scale : Math.max(vw / ew, vh / eh) * (f.zoom || 1),
         k = ow / vw;
       var cv = document.createElement("canvas");
       cv.width = ow;
       cv.height = oh;
       var cx = cv.getContext("2d");
-      cx.fillStyle = "#fff";
+      cx.fillStyle = f.bg === "auto" ? __edgeColor(im) : f.bg || "#fff";
       cx.fillRect(0, 0, ow, oh);
       cx.translate(ow / 2 + (f.ox || 0) * k, oh / 2 + (f.oy || 0) * k);
       cx.rotate(r * Math.PI / 180);
@@ -1497,8 +1497,9 @@ function __faceReady() {
       var ready = F.tf && F.tf.ready ? F.tf.setBackend("webgl").catch(function () {}).then(function () {
         return F.tf.ready();
       }) : Promise.resolve();
+      var M = "https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model";
       ready.then(function () {
-        return F.nets.tinyFaceDetector.loadFromUri("https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model");
+        return Promise.all([F.nets.tinyFaceDetector.loadFromUri(M), F.nets.faceLandmark68TinyNet.loadFromUri(M)]);
       }).then(function () {
         res(F);
       }, function (e) {
@@ -1531,24 +1532,47 @@ function __faceIn(cv) {
     return F.detectAllFaces(cv, new F.TinyFaceDetectorOptions({
       inputSize: 320,
       scoreThreshold: 0.4
-    })).then(function (list) {
+    })).withFaceLandmarks(true).then(function (list) {
       var best = null;
       (list || []).forEach(function (r) {
-        var b = r.box,
-          q = r.score * b.width * b.height;
-        if (!best || q > best.q) best = {
+        var b = r.detection.box,
+          q = r.detection.score * b.width * b.height;
+        if (best && q <= best.q) return;
+        var mid = function (pts) {
+          var x = 0,
+            y = 0;
+          pts.forEach(function (p) {
+            x += p.x;
+            y += p.y;
+          });
+          return {
+            x: x / pts.length,
+            y: y / pts.length
+          };
+        };
+        var L = mid(r.landmarks.getLeftEye()),
+          R = mid(r.landmarks.getRightEye());
+        best = {
           q: q,
           x: b.x,
           y: b.y,
           w: b.width,
           h: b.height,
-          score: r.score
+          score: r.detection.score,
+          lx: L.x,
+          ly: L.y,
+          rx: R.x,
+          ry: R.y
         };
       });
       return best;
     });
   });
 }
+var __PP = {
+  EYEW: 0.26,
+  EYEY: 0.40
+};
 function __autoFrame(src, vw, vh) {
   return __loadImg(src).then(function (im) {
     var w = im.naturalWidth || im.width,
@@ -1580,6 +1604,11 @@ function __autoFrame(src, vw, vh) {
           rot: rot,
           ew: ew,
           eh: eh,
+          d: d,
+          lx: f.lx / d,
+          ly: f.ly / d,
+          rx: f.rx / d,
+          ry: f.ry / d,
           cx: (f.x + f.w / 2) / d,
           cy: (f.y + f.h / 2) / d,
           fh: f.h / d
@@ -1589,27 +1618,69 @@ function __autoFrame(src, vw, vh) {
     };
     return step(0).then(function () {
       if (!best) return null;
-      var FACE = 0.42,
-        EYE = 0.44;
-      var base = Math.max(vw / best.ew, vh / best.eh);
-      var sc = FACE * vh / Math.max(1, best.fh);
-      var zoom = Math.max(1, Math.min(3, sc / base));
-      sc = base * zoom;
-      var ox = -sc * (best.cx - best.ew / 2);
-      var oy = EYE * vh - vh / 2 - sc * (best.cy - best.eh / 2);
-      var lim = __frameClamp({
-        w: w,
-        h: h
-      }, best.rot, zoom, vw, vh);
+      var dx = best.rx - best.lx,
+        dy = best.ry - best.ly;
+      var D = Math.sqrt(dx * dx + dy * dy);
+      if (!(D > 2)) return __autoFrameFromBox(best, w, h, vw, vh);
+      var roll = Math.atan2(dy, dx) * 180 / Math.PI;
+      if (Math.abs(roll) > 35) roll = 0;
+      var sc = __PP.EYEW * vw / D;
+      var mx = (best.lx + best.rx) / 2 - best.ew / 2,
+        my = (best.ly + best.ry) / 2 - best.eh / 2;
+      var a = -roll * Math.PI / 180,
+        ca = Math.cos(a),
+        sa = Math.sin(a);
+      var vx = mx * ca - my * sa,
+        vy = mx * sa + my * ca;
       return {
-        rot: best.rot,
-        zoom: zoom,
+        rot: best.rot - roll,
+        scale: sc,
+        bg: "auto",
         score: best.score,
-        ox: Math.max(-lim.x, Math.min(lim.x, ox)),
-        oy: Math.max(-lim.y, Math.min(lim.y, oy))
+        eyes: true,
+        ox: -sc * vx,
+        oy: __PP.EYEY * vh - vh / 2 - sc * vy
       };
     });
   });
+}
+function __autoFrameFromBox(best, w, h, vw, vh) {
+  var sc = 0.42 * vh / Math.max(1, best.fh);
+  return {
+    rot: best.rot,
+    scale: sc,
+    bg: "auto",
+    score: best.score,
+    eyes: false,
+    ox: -sc * (best.cx - best.ew / 2),
+    oy: 0.44 * vh - vh / 2 - sc * (best.cy - best.eh / 2)
+  };
+}
+function __edgeColor(im) {
+  try {
+    var n = 24,
+      c = document.createElement("canvas");
+    c.width = n;
+    c.height = n;
+    var x = c.getContext("2d");
+    x.drawImage(im, 0, 0, n, n);
+    var d = x.getImageData(0, 0, n, n).data,
+      r = 0,
+      g = 0,
+      b = 0,
+      k = 0;
+    for (var i = 0; i < n; i++) for (var j = 0; j < n; j++) {
+      if (i > 2 && i < n - 3 && j > 2 && j < n - 3) continue;
+      var q = (j * n + i) * 4;
+      r += d[q];
+      g += d[q + 1];
+      b += d[q + 2];
+      k++;
+    }
+    return k ? "rgb(" + Math.round(r / k) + "," + Math.round(g / k) + "," + Math.round(b / k) + ")" : "#fff";
+  } catch (e) {
+    return "#fff";
+  }
 }
 function __frameClamp(nat, rot, zoom, vw, vh) {
   if (!nat) return {
@@ -58760,7 +58831,7 @@ function StudentDirectory({
       return;
     }
     if (!(await window.__confirm({
-      title: "Auto-frame " + list.length + " photo" + (list.length === 1 ? "" : "s") + "?",
+      title: "Make " + list.length + " passport photo" + (list.length === 1 ? "" : "s") + "?",
       body: "Each one is turned the right way up and cropped to the face. The picture as it is now is kept, so this can be undone, and any photo whose face cannot be found is left alone. It takes a few minutes — keep this page open.",
       confirmText: "Auto-frame"
     }))) return;
