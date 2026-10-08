@@ -1451,6 +1451,51 @@ function __compressImg(file, maxDim, quality) {
     fr.readAsDataURL(file);
   });
 }
+function __frameImg(src, f, vw, vh, ow, oh, q) {
+  return new Promise(function (res, rej) {
+    var im = new Image();
+    im.onload = function () {
+      var r = ((f.rot || 0) % 360 + 360) % 360,
+        w = im.naturalWidth || im.width,
+        h = im.naturalHeight || im.height;
+      var ew = r === 90 || r === 270 ? h : w,
+        eh = r === 90 || r === 270 ? w : h;
+      var sc = Math.max(vw / ew, vh / eh) * (f.zoom || 1),
+        k = ow / vw;
+      var cv = document.createElement("canvas");
+      cv.width = ow;
+      cv.height = oh;
+      var cx = cv.getContext("2d");
+      cx.fillStyle = "#fff";
+      cx.fillRect(0, 0, ow, oh);
+      cx.translate(ow / 2 + (f.ox || 0) * k, oh / 2 + (f.oy || 0) * k);
+      cx.rotate(r * Math.PI / 180);
+      cx.scale(sc * k, sc * k);
+      cx.drawImage(im, -w / 2, -h / 2, w, h);
+      try {
+        res(cv.toDataURL("image/jpeg", q || 0.78));
+      } catch (e) {
+        rej(e);
+      }
+    };
+    im.onerror = rej;
+    im.src = src;
+  });
+}
+function __frameClamp(nat, rot, zoom, vw, vh) {
+  if (!nat) return {
+    x: 0,
+    y: 0
+  };
+  var r = ((rot || 0) % 360 + 360) % 360;
+  var ew = r === 90 || r === 270 ? nat.h : nat.w,
+    eh = r === 90 || r === 270 ? nat.w : nat.h;
+  var sc = Math.max(vw / ew, vh / eh) * (zoom || 1);
+  return {
+    x: Math.max(0, (ew * sc - vw) / 2),
+    y: Math.max(0, (eh * sc - vh) / 2)
+  };
+}
 const {
   useState,
   useMemo,
@@ -1458,6 +1503,250 @@ const {
   useCallback,
   useRef
 } = React;
+function PhotoFramer({
+  src,
+  name,
+  onSave,
+  onClose
+}) {
+  const VW = 192,
+    VH = 256;
+  const [rot, setRot] = useState(0),
+    [zoom, setZoom] = useState(1),
+    [off, setOff] = useState({
+      x: 0,
+      y: 0
+    });
+  const [nat, setNat] = useState(null),
+    [busy, setBusy] = useState("");
+  const drag = useRef(null);
+  useEffect(function () {
+    let live = true;
+    const im = new Image();
+    im.onload = function () {
+      if (live) setNat({
+        w: im.naturalWidth || im.width,
+        h: im.naturalHeight || im.height
+      });
+    };
+    im.src = src;
+    return function () {
+      live = false;
+    };
+  }, [src]);
+  const lim = __frameClamp(nat, rot, zoom, VW, VH);
+  const clamp = o => ({
+    x: Math.max(-lim.x, Math.min(lim.x, o.x)),
+    y: Math.max(-lim.y, Math.min(lim.y, o.y))
+  });
+  const sc = nat ? function () {
+    const r = (rot % 360 + 360) % 360;
+    const ew = r === 90 || r === 270 ? nat.h : nat.w,
+      eh = r === 90 || r === 270 ? nat.w : nat.h;
+    return Math.max(VW / ew, VH / eh) * zoom;
+  }() : 1;
+  const pt = e => {
+    const t = e.touches && e.touches[0] || e;
+    return {
+      x: t.clientX,
+      y: t.clientY
+    };
+  };
+  const start = e => {
+    const q = pt(e);
+    drag.current = {
+      x: q.x,
+      y: q.y,
+      ox: off.x,
+      oy: off.y
+    };
+  };
+  const move = e => {
+    if (!drag.current) return;
+    const q = pt(e);
+    setOff(clamp({
+      x: drag.current.ox + (q.x - drag.current.x),
+      y: drag.current.oy + (q.y - drag.current.y)
+    }));
+    if (e.cancelable) e.preventDefault();
+  };
+  const end = () => {
+    drag.current = null;
+  };
+  const turn = d => {
+    setRot(r => r + d);
+    setOff({
+      x: 0,
+      y: 0
+    });
+  };
+  const save = async () => {
+    setBusy("Saving\u2026");
+    try {
+      const out = await __frameImg(src, {
+        rot: rot,
+        zoom: zoom,
+        ox: off.x,
+        oy: off.y
+      }, VW, VH, 240, 320, 0.78);
+      await onSave(out);
+    } catch (err) {
+      setBusy("" + (err && err.message || "Could not save"));
+      return;
+    }
+    setBusy("");
+  };
+  const btn = {
+    border: "1px solid var(--c-d2)",
+    background: "var(--c-fff)",
+    borderRadius: 7,
+    padding: "7px 12px",
+    fontSize: 12.5,
+    fontWeight: 700,
+    cursor: "pointer",
+    fontFamily: "var(--ss-font)",
+    color: "var(--ap-ink2)"
+  };
+  return React.createElement("div", {
+    onMouseUp: end,
+    onMouseLeave: end,
+    onTouchEnd: end,
+    style: {
+      position: "fixed",
+      inset: 0,
+      zIndex: 9000,
+      background: "rgba(10,18,30,.55)",
+      display: "grid",
+      placeItems: "center",
+      padding: 16
+    }
+  }, React.createElement("div", {
+    className: "ap-panel",
+    style: {
+      padding: 18,
+      width: "min(420px,96vw)",
+      background: "var(--c-fff)"
+    }
+  }, React.createElement("div", {
+    style: {
+      fontSize: 14.5,
+      fontWeight: 800,
+      color: "var(--ap-ink)"
+    }
+  }, "Frame ", name || "photo"), React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: "var(--ap-muted)",
+      margin: "3px 0 13px"
+    }
+  }, "Drag the face into the box. Rotate a sideways picture upright, and zoom in on a distant one."), React.createElement("div", {
+    style: {
+      display: "grid",
+      placeItems: "center"
+    }
+  }, React.createElement("div", {
+    onMouseDown: start,
+    onMouseMove: move,
+    onTouchStart: start,
+    onTouchMove: move,
+    style: {
+      width: VW,
+      height: VH,
+      overflow: "hidden",
+      position: "relative",
+      borderRadius: 7,
+      border: "1px solid var(--ap-line)",
+      background: "var(--c-f0)",
+      cursor: "grab",
+      touchAction: "none"
+    }
+  }, nat && React.createElement("img", {
+    src: src,
+    alt: "",
+    draggable: false,
+    style: {
+      position: "absolute",
+      left: "50%",
+      top: "50%",
+      width: nat.w,
+      height: nat.h,
+      maxWidth: "none",
+      marginLeft: -nat.w / 2,
+      marginTop: -nat.h / 2,
+      transformOrigin: "center center",
+      transform: "translate(" + off.x + "px," + off.y + "px) rotate(" + rot + "deg) scale(" + sc + ")",
+      userSelect: "none"
+    }
+  }))), React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      margin: "13px 0 4px"
+    }
+  }, React.createElement("button", {
+    onClick: () => turn(-90),
+    style: btn,
+    title: "Rotate left"
+  }, "\u21BA"), React.createElement("button", {
+    onClick: () => turn(90),
+    style: btn,
+    title: "Rotate right"
+  }, "\u21BB"), React.createElement("input", {
+    type: "range",
+    min: "1",
+    max: "3",
+    step: "0.02",
+    value: zoom,
+    onChange: e => {
+      const z = Number(e.target.value);
+      setZoom(z);
+      setOff(o => clamp(o));
+    },
+    style: {
+      flex: 1
+    },
+    title: "Zoom"
+  }), React.createElement("button", {
+    onClick: () => {
+      setRot(0);
+      setZoom(1);
+      setOff({
+        x: 0,
+        y: 0
+      });
+    },
+    style: btn
+  }, "Reset")), React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 9,
+      justifyContent: "flex-end",
+      marginTop: 12,
+      alignItems: "center"
+    }
+  }, busy && React.createElement("span", {
+    style: {
+      marginRight: "auto",
+      fontSize: 12,
+      fontWeight: 600,
+      color: "var(--ap-muted)"
+    }
+  }, busy), React.createElement("button", {
+    onClick: onClose,
+    style: btn
+  }, "Cancel"), React.createElement("button", {
+    onClick: save,
+    disabled: !nat || !!busy,
+    style: {
+      ...btn,
+      background: "var(--btn-pri-bg)",
+      color: "#fff",
+      border: "none",
+      opacity: !nat || busy ? .6 : 1
+    }
+  }, "Save photo"))));
+}
 let __QB_CACHE = null;
 window.__QB_FIGURES = window.__QB_FIGURES || {};
 window.__qSig = function (q) {
@@ -3101,7 +3390,8 @@ function PhotoAvatar(props) {
     style: {
       width: "100%",
       height: "100%",
-      objectFit: "cover"
+      objectFit: "cover",
+      objectPosition: "50% 30%"
     }
   }) : ini);
 }
@@ -40759,6 +41049,7 @@ function StudentProfile({
   const canEditPhoto = !!user && (user.role === "admin" || user.role === "office" || user.role === "vp" || user.role === "teacher");
   const [photo, setPhoto] = useOnePhoto(padm);
   const [photoBusy, setPhotoBusy] = useState("");
+  const [framePick, setFramePick] = useState(null);
   const onPickPhoto = async e => {
     const f = e.target.files && e.target.files[0];
     e.target.value = "";
@@ -40767,9 +41058,17 @@ function StudentProfile({
       setPhotoBusy("Not connected");
       return;
     }
-    setPhotoBusy("Optimising…");
+    setPhotoBusy("Opening…");
     try {
-      const img = await __compressImg(f, 256, 0.62);
+      const big = await __compressImg(f, 900, 0.9);
+      setPhotoBusy("");
+      setFramePick(big);
+    } catch (err) {
+      setPhotoBusy("" + (err && err.message || "Could not read that picture"));
+    }
+  };
+  const saveFramed = async img => {
+    try {
       setPhotoBusy("Saving…");
       await window.__fbSetDoc(window.__fbDoc(window.__db, "studentPhotos", padm), {
         admNo: padm,
@@ -40780,6 +41079,7 @@ function StudentProfile({
       });
       __photoSet(padm, img);
       setPhoto(img);
+      setFramePick(null);
       setPhotoBusy("✓ Saved");
       setTimeout(() => setPhotoBusy(""), 1600);
     } catch (err) {
@@ -41125,7 +41425,15 @@ th{background:#0d1b2a;color:#fff;font-weight:600}td.l{text-align:left;font-weigh
       gap: 15,
       flexWrap: "wrap"
     }
-  }, React.createElement("label", {
+  }, framePick && React.createElement(PhotoFramer, {
+    src: framePick,
+    name: student,
+    onClose: function () {
+      setFramePick(null);
+      setPhotoBusy("");
+    },
+    onSave: saveFramed
+  }), React.createElement("label", {
     style: {
       position: "relative",
       flexShrink: 0,
@@ -41154,7 +41462,8 @@ th{background:#0d1b2a;color:#fff;font-weight:600}td.l{text-align:left;font-weigh
     style: {
       width: "100%",
       height: "100%",
-      objectFit: "cover"
+      objectFit: "cover",
+      objectPosition: "50% 30%"
     }
   }) : initials(student)), canEditPhoto && padm && React.createElement("span", {
     style: {
@@ -42398,7 +42707,8 @@ function ParentView({
       inset: 0,
       width: "100%",
       height: "100%",
-      objectFit: "cover"
+      objectFit: "cover",
+      objectPosition: "50% 30%"
     }
   }) : null), React.createElement("div", {
     style: {
@@ -45370,7 +45680,7 @@ const CARD_CSS = `*{box-sizing:border-box}body{font-family:'Times New Roman',Geo
 .card{padding:26px 30px;max-width:820px;margin:0 auto;position:relative}.pb{page-break-after:always}
 .hdr{text-align:center;border-bottom:2.5px solid #0d1b2a;padding-bottom:10px}.hdr h1{font-size:21px;font-weight:800;margin:0;color:#0d1b2a}.hdr .sub{font-size:11.5px;color:#555;margin-top:3px}
 .hdrlogo{width:56px;height:56px;margin:0 auto 6px;background:url("${window.__LOGO}") center/contain no-repeat}
-.stuphoto{position:absolute;top:22px;right:30px;width:66px;height:80px;border:1px solid #0d1b2a;border-radius:4px;overflow:hidden;display:flex;align-items:center;justify-content:center;text-align:center;font-size:8px;color:#999;background:#fff}.stuphoto img{width:100%;height:100%;object-fit:cover}
+.stuphoto{position:absolute;top:22px;right:30px;width:66px;height:80px;border:1px solid #0d1b2a;border-radius:4px;overflow:hidden;display:flex;align-items:center;justify-content:center;text-align:center;font-size:8px;color:#999;background:#fff}.stuphoto img{width:100%;height:100%;object-fit:cover;object-position:50% 30%}
 .rt{text-align:center;font-size:14px;font-weight:700;color:#0d1b2a;margin:12px 0;text-transform:uppercase;letter-spacing:.5px}
 .info{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px 18px;font-size:12.5px;margin:10px 0;padding:9px 12px;border:1px solid #cfcfcf;border-radius:6px}.info b{color:#0d1b2a}
 table{width:100%;border-collapse:collapse;font-size:12.5px;margin:6px 0}th,td{border:1px solid #cfcfcf;padding:6px 8px;text-align:center}th{background:#eef1f8;color:#0d1b2a}td.l,th.l{text-align:left}
@@ -45390,7 +45700,8 @@ h3{font-size:12.5px;color:#0d1b2a;margin:14px 0 4px;text-transform:uppercase;let
 .sc-id .t1{margin-top:3px;font-size:9.5px;font-weight:700;letter-spacing:.2px;color:#9a7b22}
 .sc-id .t2{margin-top:3px;font-size:10px;color:#5b6675}
 .sc-photo{width:60px;height:74px;border:1px solid #c9ced8;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:7.5px;color:#9aa3b0;text-align:center;overflow:hidden;background:#fff}
-.sc-photo img{width:100%;height:100%;object-fit:cover}
+/* a head sits in the upper half of a photo, so an unframed picture crops better from the top than the middle */
+.sc-photo img{width:100%;height:100%;object-fit:cover;object-position:50% 30%}
 .sc-rule{height:3px;border-radius:3px;background:linear-gradient(90deg,#0d1b2a 0 62%,#c9a84c 62% 100%)}
 .sc-band{margin-top:10px;background:#0d1b2a;border-radius:7px;padding:9px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;color:#fff}
 .sc-band .ttl{font-size:13px;font-weight:800;letter-spacing:.9px;text-transform:uppercase}
@@ -55935,6 +56246,7 @@ function DirectoryProfile({
   const aName = rosterName || stu.name;
   const [photo, setPhoto] = useOnePhoto(adm);
   const [photoBusy, setPhotoBusy] = useState("");
+  const [framePick, setFramePick] = useState(null);
   const onPickPhoto = async e => {
     const f = e.target.files && e.target.files[0];
     e.target.value = "";
@@ -55943,9 +56255,17 @@ function DirectoryProfile({
       setPhotoBusy("Not connected");
       return;
     }
-    setPhotoBusy("Optimising…");
+    setPhotoBusy("Opening…");
     try {
-      const img = await __compressImg(f, 256, 0.62);
+      const big = await __compressImg(f, 900, 0.9);
+      setPhotoBusy("");
+      setFramePick(big);
+    } catch (err) {
+      setPhotoBusy("" + (err && err.message || "Could not read that picture"));
+    }
+  };
+  const saveFramed = async img => {
+    try {
       setPhotoBusy("Saving…");
       await window.__fbSetDoc(window.__fbDoc(window.__db, "studentPhotos", adm), {
         admNo: adm,
@@ -55956,6 +56276,7 @@ function DirectoryProfile({
       });
       __photoSet(adm, img);
       setPhoto(img);
+      setFramePick(null);
       setPhotoBusy("✓ Saved");
       setTimeout(() => setPhotoBusy(""), 1600);
     } catch (err) {
@@ -56865,6 +57186,14 @@ function DirectoryProfile({
       height: 64,
       background: "linear-gradient(120deg,#0d1726,#1a3050)"
     }
+  }), framePick && React.createElement(PhotoFramer, {
+    src: framePick,
+    name: stu.name,
+    onClose: function () {
+      setFramePick(null);
+      setPhotoBusy("");
+    },
+    onSave: saveFramed
   }), React.createElement("label", {
     style: {
       display: "block",
@@ -56903,7 +57232,8 @@ function DirectoryProfile({
     style: {
       width: "100%",
       height: "100%",
-      objectFit: "cover"
+      objectFit: "cover",
+      objectPosition: "50% 30%"
     }
   }) : initials(stu.name)), canEditDir && adm && React.createElement("span", {
     style: {
@@ -58259,6 +58589,42 @@ function StudentDirectory({
     } catch (_) {}
     return "active";
   });
+  const [photoWall, setPhotoWall] = useState(false);
+  const [framing, setFraming] = useState(null);
+  const [photoMsg, setPhotoMsg] = useState("");
+  const canFixPhotos = !!user && (user.role === "admin" || user.role === "office" || user.role === "vp");
+  const savePhoto = async (adm, name, img) => {
+    if (!window.__db || !window.__fbSetDoc) {
+      setPhotoMsg("Not connected");
+      return;
+    }
+    await window.__fbSetDoc(window.__fbDoc(window.__db, "studentPhotos", String(adm)), {
+      admNo: String(adm),
+      name: name || "",
+      img: img,
+      updatedAt: new Date().toISOString(),
+      by: user && user.username || ""
+    });
+    __photoSet(String(adm), img);
+    setFraming(null);
+    setPhotoMsg("✓ Saved — " + (name || "photo"));
+    setTimeout(() => setPhotoMsg(""), 2200);
+  };
+  const pickPhotoFor = async (adm, name, file) => {
+    if (!file) return;
+    setPhotoMsg("Opening…");
+    try {
+      const big = await __compressImg(file, 900, 0.9);
+      setPhotoMsg("");
+      setFraming({
+        adm: String(adm),
+        name: name,
+        src: big
+      });
+    } catch (e) {
+      setPhotoMsg("Could not read that picture");
+    }
+  };
   const [syncMsg, setSyncMsg] = useState("");
   const all = useMemo(() => {
     var out = [];
@@ -59110,6 +59476,24 @@ function StudentDirectory({
         fontSize: 12.5
       }
     }, o[1]);
+  })), React.createElement("div", {
+    className: "ap-subnav",
+    style: {
+      display: "flex",
+      gap: 5
+    },
+    title: "See every pupil cropped the way the report card crops them"
+  }, [[false, "Roster"], [true, "Photos"]].map(function (o) {
+    return React.createElement("button", {
+      key: String(o[0]),
+      className: "ap-pill" + (photoWall === o[0] ? " on" : ""),
+      onClick: function () {
+        setPhotoWall(o[0]);
+      },
+      style: {
+        fontSize: 12.5
+      }
+    }, o[1]);
   }))), imp && React.createElement("div", {
     style: {
       marginBottom: 12,
@@ -59117,7 +59501,168 @@ function StudentDirectory({
       fontWeight: 600,
       color: imp.charAt(0) === "✓" ? "#16a34a" : "var(--c-64)"
     }
-  }, imp), React.createElement("div", {
+  }, imp), photoWall && React.createElement("div", {
+    className: "ap-panel",
+    style: {
+      padding: 16,
+      marginBottom: 14
+    }
+  }, React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "baseline",
+      gap: 10,
+      flexWrap: "wrap",
+      marginBottom: 13
+    }
+  }, React.createElement("div", {
+    style: {
+      fontSize: 14,
+      fontWeight: 700,
+      color: "var(--ap-ink)"
+    }
+  }, "Photos ", React.createElement("span", {
+    style: {
+      fontWeight: 500,
+      color: "var(--c-ae)"
+    }
+  }, "\xB7 ", clsFilter === "all" ? "all classes" : __uiClassLabel(clsFilter), secFilter !== "all" ? " · Section " + secFilter : "", " \xB7 ", filtered.filter(function (x) {
+    return dirPhotos[String(x.admNo || "")];
+  }).length, " of ", filtered.length, " have one")), photoMsg && React.createElement("span", {
+    style: {
+      fontSize: 12.5,
+      fontWeight: 700,
+      color: "var(--tx-grn2)"
+    }
+  }, photoMsg), React.createElement("span", {
+    style: {
+      marginLeft: "auto",
+      fontSize: 11.5,
+      color: "var(--ap-muted)"
+    }
+  }, "Shown exactly as the report card crops them.")), React.createElement("div", {
+    style: {
+      display: "grid",
+      gap: 13,
+      gridTemplateColumns: "repeat(auto-fill,minmax(104px,1fr))"
+    }
+  }, filtered.slice(0, 500).map(function (st, i) {
+    var a = String(st.admNo || "");
+    var ph = dirPhotos[a];
+    var g = GRADS[i % GRADS.length];
+    return React.createElement("div", {
+      key: a || st.name || i,
+      style: {
+        minWidth: 0
+      }
+    }, React.createElement("div", {
+      style: {
+        width: "100%",
+        aspectRatio: "3 / 4",
+        borderRadius: 7,
+        overflow: "hidden",
+        border: "1px solid var(--ap-line)",
+        display: "grid",
+        placeItems: "center",
+        background: ph ? "var(--c-f0)" : "linear-gradient(140deg," + g[0] + "," + g[1] + ")",
+        color: "#fff",
+        fontWeight: 800,
+        fontSize: 20
+      }
+    }, ph ? React.createElement("img", {
+      src: ph,
+      alt: "",
+      style: {
+        width: "100%",
+        height: "100%",
+        objectFit: "cover",
+        objectPosition: "50% 30%"
+      }
+    }) : initials(st.name)), React.createElement("div", {
+      title: st.name,
+      style: {
+        fontSize: 11.5,
+        fontWeight: 700,
+        color: "var(--ap-ink)",
+        marginTop: 6,
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis"
+      }
+    }, st.name), React.createElement("div", {
+      style: {
+        fontSize: 10.5,
+        color: "var(--c-94)",
+        fontFamily: "var(--ss-font)"
+      }
+    }, a || "no adm no."), canFixPhotos && a && React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 5,
+        marginTop: 5
+      }
+    }, ph && React.createElement("button", {
+      onClick: function () {
+        setFraming({
+          adm: a,
+          name: st.name,
+          src: ph
+        });
+      },
+      style: {
+        flex: 1,
+        border: "1px solid var(--c-d2)",
+        background: "var(--c-fff)",
+        borderRadius: 6,
+        padding: "4px 0",
+        fontSize: 11,
+        fontWeight: 700,
+        cursor: "pointer",
+        fontFamily: "var(--ss-font)",
+        color: "var(--ap-ink2)"
+      }
+    }, "Fix"), React.createElement("label", {
+      style: {
+        flex: 1,
+        textAlign: "center",
+        border: "1px solid var(--c-d2)",
+        background: "var(--c-fff)",
+        borderRadius: 6,
+        padding: "4px 0",
+        fontSize: 11,
+        fontWeight: 700,
+        cursor: "pointer",
+        fontFamily: "var(--ss-font)",
+        color: "var(--ap-ink2)"
+      }
+    }, ph ? "Replace" : "Add", React.createElement("input", {
+      type: "file",
+      accept: "image/*",
+      style: {
+        display: "none"
+      },
+      onChange: function (e) {
+        var f = e.target.files && e.target.files[0];
+        e.target.value = "";
+        pickPhotoFor(a, st.name, f);
+      }
+    }))));
+  })), filtered.length > 500 && React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: "var(--ap-muted)",
+      marginTop: 11
+    }
+  }, "Showing the first 500 \u2014 narrow it down with the class or section filter.")), framing && React.createElement(PhotoFramer, {
+    src: framing.src,
+    name: framing.name,
+    onClose: function () {
+      setFraming(null);
+    },
+    onSave: function (img) {
+      return savePhoto(framing.adm, framing.name, img);
+    }
+  }), !photoWall && React.createElement("div", {
     style: {
       background: "var(--c-fff)",
       border: "1px solid var(--ap-line)",
@@ -59243,7 +59788,8 @@ function StudentDirectory({
       style: {
         width: "100%",
         height: "100%",
-        objectFit: "cover"
+        objectFit: "cover",
+        objectPosition: "50% 30%"
       }
     }) : initials(s.name)), React.createElement("div", {
       style: {
@@ -59368,7 +59914,7 @@ function StudentDirectory({
   }, Math.min(filtered.length, 500)), filtered.length > 500 ? " of " + filtered.length : "", " students"), canFees && React.createElement("div", null, filtered.filter(function (s) {
     var r = riskByAdm[String(s.admNo || "")] || {};
     return !isLeftS(s) && r.dues > 0;
-  }).length, " with fee dues"))), filtered.length > 500 && React.createElement("div", {
+  }).length, " with fee dues"))), !photoWall && filtered.length > 500 && React.createElement("div", {
     style: {
       marginTop: 10,
       fontSize: 12,

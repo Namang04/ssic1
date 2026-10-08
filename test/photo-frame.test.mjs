@@ -34,4 +34,22 @@ ok('preview swaps sides at 90/270', /\(r===90\|\|r===270\)\?nat\.h:nat\.w/.test(
 // Dragging stops at the edge of the picture, so no white gap can be saved.
 ok('the drag is clamped',           /__frameClamp/.test(framer) && /clamp\(/.test(framer));
 ok('a white backdrop is painted first, so a transparent PNG does not save black', /fillStyle="#fff";cx\.fillRect\(0,0,ow,oh\)/.test(frameImg));
+
+// ── automatic framing ──
+const auto = grab('__autoFrame'), ready = grab('__faceReady');
+ok('the detector is fetched only when it is used', /document\.createElement\("script"\)/.test(ready) && !/face-api/.test(src.slice(0, src.indexOf('function __faceReady'))));
+ok('the maths backend is up before the model loads', /tf\.setBackend\("webgl"\)[\s\S]{0,120}tf\.ready\(\)[\s\S]{0,200}loadFromUri/.test(ready));
+ok('a failed load can be retried',      /__faceReady\._p=null/.test(ready));
+ok('all four turns are tried',          /turns=\[0,90,270,180\]/.test(auto));
+ok('a clear face stops the turning early', /best\.score>=0\.75/.test(auto));
+ok('nothing is guessed without a face', /if\(!best\)return null/.test(auto));
+ok('the head is sized to the frame',    /FACE=0\.42/.test(auto) && /sc=\(FACE\*vh\)\/Math\.max\(1,best\.fh\)/.test(auto));
+ok('and sits above the middle',         /EYE=0\.44/.test(auto));
+ok('zoom cannot shrink below cover',    /Math\.max\(1,Math\.min\(3,sc\/base\)\)/.test(auto));
+ok('the result is clamped like a drag', /__frameClamp\(\{w:w,h:h\},best\.rot,zoom,vw,vh\)/.test(auto));
+ok('it returns what the framer returns',/return \{rot:best\.rot,zoom:zoom/.test(auto));
+// A second run must re-crop the ORIGINAL, never a crop of a crop, and must be undoable.
+ok('the untouched picture is kept',     /orig:base/.test(src));
+ok('and is what a re-run crops from',   /\(doc&&\(doc\.orig\|\|doc\.img\)\)/.test(src));
+ok('undo puts the original back',       /img:doc\.orig,autoFramedAt:null/.test(src));
 console.log(`\n  ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);

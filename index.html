@@ -1073,6 +1073,64 @@ function __frameImg(src,f,vw,vh,ow,oh,q){return new Promise(function(res,rej){
     try{res(cv.toDataURL("image/jpeg",q||0.78));}catch(e){rej(e);}
   };
   im.onerror=rej;im.src=src;});}
+// ── Automatic face framing ─────────────────────────────────────────────────────────────────────────
+// Photos arrive however the teacher happened to be standing: sideways, upside down, the child a long way off.
+// This finds the face, works out which way up the picture should be, and returns the same {rot,zoom,ox,oy} the
+// manual framer produces, so both paths save through __frameImg and look identical.
+// The detector (a ~190KB model) is fetched only when someone actually runs it, never on load.
+function __faceReady(){
+  if(__faceReady._p)return __faceReady._p;
+  __faceReady._p=new Promise(function(res,rej){
+    if(window.faceapi&&window.faceapi.nets.tinyFaceDetector.isLoaded)return res(window.faceapi);
+    var s=document.createElement("script");
+    s.src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js";
+    s.onload=function(){var F=window.faceapi;
+      if(!F||!F.nets){rej(new Error("The face-detection library did not load."));return;}
+      // The maths backend has to be up before any weights can be read \u2014 webgl where the machine allows it,
+      // otherwise whatever the browser can give us. Loading the model first simply fails.
+      var ready=(F.tf&&F.tf.ready)?F.tf.setBackend("webgl").catch(function(){}).then(function(){return F.tf.ready();}):Promise.resolve();
+      ready.then(function(){return F.nets.tinyFaceDetector.loadFromUri("https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model");})
+        .then(function(){res(F);},function(e){__faceReady._p=null;rej(new Error("Could not load the face-detection model \u2014 "+((e&&e.message)||"check the internet connection")+"."));});};
+    s.onerror=function(){__faceReady._p=null;rej(new Error("Could not reach the face-detection library \u2014 check the internet connection."));};
+    document.head.appendChild(s);});
+  return __faceReady._p;}
+function __loadImg(src){return new Promise(function(res,rej){var im=new Image();im.onload=function(){res(im);};im.onerror=function(){rej(new Error("That picture could not be read."));};im.src=src;});}
+// The biggest, most confident face in one canvas.
+function __faceIn(cv){return __faceReady().then(function(F){
+  return F.detectAllFaces(cv,new F.TinyFaceDetectorOptions({inputSize:320,scoreThreshold:0.4})).then(function(list){
+    var best=null;(list||[]).forEach(function(r){var b=r.box,q=r.score*b.width*b.height;
+      if(!best||q>best.q)best={q:q,x:b.x,y:b.y,w:b.width,h:b.height,score:r.score};});
+    return best;});});}
+// Try the picture each way up and keep whichever shows the clearest face. An upright photo usually answers on
+// the first try, so the other three turns are only paid for when the photo really is sideways.
+function __autoFrame(src,vw,vh){return __loadImg(src).then(function(im){
+  var w=im.naturalWidth||im.width, h=im.naturalHeight||im.height, best=null, turns=[0,90,270,180];
+  var step=function(i){
+    if(i>=turns.length)return Promise.resolve();
+    if(best&&best.score>=0.75)return Promise.resolve();        // already a clear face: no need to keep turning
+    var rot=turns[i], side=(rot===90||rot===270), ew=side?h:w, eh=side?w:h;
+    var d=Math.min(1,320/Math.max(ew,eh));
+    var cv=document.createElement("canvas");cv.width=Math.max(1,Math.round(ew*d));cv.height=Math.max(1,Math.round(eh*d));
+    var cx=cv.getContext("2d");cx.fillStyle="#fff";cx.fillRect(0,0,cv.width,cv.height);
+    cx.translate(cv.width/2,cv.height/2);cx.rotate(rot*Math.PI/180);cx.scale(d,d);cx.drawImage(im,-w/2,-h/2,w,h);
+    return __faceIn(cv).then(function(f){
+      if(f&&(!best||f.q>best.q))best={q:f.q,score:f.score,rot:rot,ew:ew,eh:eh,
+        cx:(f.x+f.w/2)/d, cy:(f.y+f.h/2)/d, fh:f.h/d};
+      return step(i+1);});};
+  return step(0).then(function(){
+    if(!best)return null;
+    // A head should fill about 42% of the frame's height and sit a little above the middle, which is how a
+    // passport photograph is composed \u2014 enough hair above, shoulders below.
+    var FACE=0.42, EYE=0.44;
+    var base=Math.max(vw/best.ew,vh/best.eh);
+    var sc=(FACE*vh)/Math.max(1,best.fh);
+    var zoom=Math.max(1,Math.min(3,sc/base));
+    sc=base*zoom;
+    var ox=-sc*(best.cx-best.ew/2);
+    var oy=(EYE*vh)-(vh/2)-sc*(best.cy-best.eh/2);
+    var lim=__frameClamp({w:w,h:h},best.rot,zoom,vw,vh);
+    return {rot:best.rot,zoom:zoom,score:best.score,
+      ox:Math.max(-lim.x,Math.min(lim.x,ox)), oy:Math.max(-lim.y,Math.min(lim.y,oy))};});});}
 // How far the picture may be dragged before a white edge shows.
 function __frameClamp(nat,rot,zoom,vw,vh){
   if(!nat)return{x:0,y:0};
@@ -15979,6 +16037,48 @@ function StudentDirectory({user, dirDB, testsDB, examsDB, studentsDB, attendance
     await window.__fbSetDoc(window.__fbDoc(window.__db,"studentPhotos",String(adm)),{admNo:String(adm),name:name||"",img:img,updatedAt:new Date().toISOString(),by:(user&&user.username)||""});
     __photoSet(String(adm),img);setFraming(null);setPhotoMsg("✓ Saved — "+(name||"photo"));setTimeout(()=>setPhotoMsg(""),2200);
   };
+  // Auto-frame the whole class. Every photo is turned upright and cropped to the face; the picture as it stands
+  // is kept on the record as `orig`, so a second run always re-crops from the ORIGINAL (never a crop of a crop)
+  // and the whole thing can be undone. A photo whose face cannot be found is left exactly as it was.
+  const[autoRun,setAutoRun]=useState(null); // {done,total,fixed,skip,stop}
+  const autoStop=useRef(false);
+  const _photoDoc=async(a)=>{try{const d=await window.__fbGetDoc(window.__fbDoc(window.__db,"studentPhotos",String(a)));return d&&d.exists()?d.data():null;}catch(e){return null;}};
+  const autoFrameAll=async()=>{
+    const list=filtered.slice(0,500).filter(x=>x.admNo&&dirPhotos[String(x.admNo)]);
+    if(!list.length){setPhotoMsg("No photos here to frame.");return;}
+    if(!window.__db||!window.__fbSetDoc){setPhotoMsg("Not connected");return;}
+    if(!await window.__confirm({title:"Auto-frame "+list.length+" photo"+(list.length===1?"":"s")+"?",
+      body:"Each one is turned the right way up and cropped to the face. The picture as it is now is kept, so this can be undone, and any photo whose face cannot be found is left alone. It takes a few minutes — keep this page open.",confirmText:"Auto-frame"}))return;
+    autoStop.current=false;setAutoRun({done:0,total:list.length,fixed:0,skip:0});
+    let fixed=0,skip=0;
+    for(let i=0;i<list.length;i++){
+      if(autoStop.current)break;
+      const a=String(list[i].admNo);
+      try{
+        const doc=await _photoDoc(a);
+        const base=(doc&&(doc.orig||doc.img))||dirPhotos[a];
+        const f=base?await __autoFrame(base,192,256):null;
+        if(f){
+          const img=await __frameImg(base,f,192,256,240,320,0.78);
+          await window.__fbSetDoc(window.__fbDoc(window.__db,"studentPhotos",a),Object.assign({},doc||{},
+            {admNo:a,name:list[i].name||"",img:img,orig:base,autoFramedAt:new Date().toISOString(),by:(user&&user.username)||""}));
+          __photoSet(a,img);fixed++;
+        }else skip++;
+      }catch(e){skip++;}
+      setAutoRun({done:i+1,total:list.length,fixed:fixed,skip:skip});
+      await new Promise(r=>setTimeout(r,0)); // let the screen repaint between pupils
+    }
+    setAutoRun(null);
+    setPhotoMsg("✓ "+fixed+" framed"+(skip?" · "+skip+" left alone (no face found)":""));
+  };
+  const undoAutoFrame=async()=>{
+    const list=filtered.slice(0,500).filter(x=>x.admNo);
+    if(!await window.__confirm({title:"Undo auto-framing?",body:"Every photo auto-framed in this class goes back to the picture it was before. Photos framed by hand are not touched.",confirmText:"Undo",danger:true}))return;
+    let back=0;
+    for(const st of list){const a=String(st.admNo);const doc=await _photoDoc(a);
+      if(doc&&doc.orig&&doc.autoFramedAt){try{await window.__fbUpdateDoc(window.__fbDoc(window.__db,"studentPhotos",a),{img:doc.orig,autoFramedAt:null});__photoSet(a,doc.orig);back++;}catch(e){}}}
+    setPhotoMsg(back?("↺ "+back+" photo"+(back===1?"":"s")+" put back"):"Nothing to put back here.");
+  };
   // A newly picked file is framed at a workable size first, so the crop is taken from the original photo and
   // not from the 256px thumbnail the app used to store straight away.
   const pickPhotoFor=async(adm,name,file)=>{
@@ -16186,7 +16286,17 @@ function StudentDirectory({user, dirDB, testsDB, examsDB, studentsDB, attendance
               <div style={{fontSize:14,fontWeight:700,color:"var(--ap-ink)"}}>Photos <span style={{fontWeight:500,color:"var(--c-ae)"}}>· {clsFilter==="all"?"all classes":__uiClassLabel(clsFilter)}{secFilter!=="all"?" · Section "+secFilter:""} · {filtered.filter(function(x){return dirPhotos[String(x.admNo||"")];}).length} of {filtered.length} have one</span></div>
               {photoMsg&&<span style={{fontSize:12.5,fontWeight:700,color:"var(--tx-grn2)"}}>{photoMsg}</span>}
               <span style={{marginLeft:"auto",fontSize:11.5,color:"var(--ap-muted)"}}>Shown exactly as the report card crops them.</span>
+              {canFixPhotos&&!autoRun&&<button onClick={autoFrameAll} style={{border:"none",background:"var(--btn-pri-bg)",color:"#fff",borderRadius:7,padding:"7px 14px",fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Auto-frame these photos</button>}
+              {canFixPhotos&&!autoRun&&<button onClick={undoAutoFrame} title="Put every auto-framed photo in this class back as it was" style={{border:"1px solid var(--c-d2)",background:"var(--c-fff)",color:"var(--ap-ink2)",borderRadius:7,padding:"7px 12px",fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Undo</button>}
             </div>
+            {autoRun&&<div style={{border:"1px solid var(--bd-amb)",background:"var(--bg-amb)",borderRadius:8,padding:"11px 14px",marginBottom:13,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+              <div style={{flex:"1 1 220px",minWidth:0}}>
+                <div style={{fontSize:12.5,fontWeight:800,color:"var(--tx-org2)"}}>Finding faces — {autoRun.done} of {autoRun.total} · {autoRun.fixed} framed{autoRun.skip?" · "+autoRun.skip+" left alone":""}</div>
+                <div style={{height:6,borderRadius:99,background:"var(--c-fff)",overflow:"hidden",marginTop:6}}><div style={{height:"100%",width:Math.round(autoRun.done/Math.max(1,autoRun.total)*100)+"%",background:"var(--btn-pri-bg)"}}/></div>
+                <div style={{fontSize:11,color:"var(--ap-muted)",marginTop:5}}>Keep this page open. Each photo is turned upright and cropped to the face; the one before is kept so this can be undone.</div>
+              </div>
+              <button onClick={function(){autoStop.current=true;}} style={{border:"1px solid var(--c-d2)",background:"var(--c-fff)",color:"var(--ap-ink2)",borderRadius:7,padding:"7px 13px",fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Stop</button>
+            </div>}
             <div style={{display:"grid",gap:13,gridTemplateColumns:"repeat(auto-fill,minmax(104px,1fr))"}}>
               {filtered.slice(0,500).map(function(st,i){var a=String(st.admNo||"");var ph=dirPhotos[a];var g=GRADS[i%GRADS.length];
                 return (<div key={a||st.name||i} style={{minWidth:0}}>
