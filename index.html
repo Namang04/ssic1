@@ -13621,16 +13621,39 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
     {exams.map(e=><option key={e.id} value={e.id}>{e.name} · {e.cls} · {e.term}</option>)}
   </select>);
 
-  const cr=(()=>{if(!(exam&&tab==="reports"))return [];let r=classResults(exam);
-    if(msSec){const _sm=sectionsOf(exam.cls);r=r.filter(x=>(_sm[x.student]||"")===msSec);let _k=0,_pv=null,_n=0;r=r.map(x=>{if(!x.hasMarks)return{...x,rank:null};_n++;if(x.pct!==_pv){_k=_n;_pv=x.pct;}return{...x,rank:_k};});}
-    return r;})(); // section picker filters the whole Report Cards view + re-ranks within the section
+  // THE SCREEN MUST SHOW WHAT THE CARD PRINTS (director, 2026-10-10: "the report card marks and the marks on
+  // the page where report card is there are drastically different"). The printed card totals each subject out
+  // of 100 from the whole scheme — Unit Test, Notebook, Subject Enrichment and the written paper scaled to its
+  // weight — while this screen was reading the written paper alone, out of the paper's own maximum. A pupil
+  // therefore read 20% here and 24% on their own card. Every figure below now comes from the card's own
+  // termRowsData, and the ranking with it, so the two can never drift apart again.
+  // Not a useMemo: this sits after the loading early-return above, so a hook here would change hook order
+  // between renders. Plain work instead — it is the same pass the card preview already makes.
+  const cr=(()=>{
+    if(!(exam&&tab==="reports"))return [];
+    let r=classResults(exam);
+    if(msSec){const _sm=sectionsOf(exam.cls);r=r.filter(x=>(_sm[x.student]||"")===msSec);}
+    let anyW=false;
+    r=r.map(x=>{const t=termRowsData(exam,x.student,String(admOfExam(exam.cls,x.student)||""));
+      if(t&&t.n){anyW=true;return Object.assign({},x,{pct:t.pct,obt:Math.round(t.sum),max:t.n*100,anyFail:t.anyFail,td:t});}
+      return Object.assign({},x,{td:t});});
+    // Rank on the figures actually shown, within whatever cohort is on screen (a section, or the whole class).
+    const rk={};let k=0,pv=null,n=0;
+    r.filter(x=>x.hasMarks&&x.max>0).slice().sort((a,b)=>b.pct-a.pct||b.obt-a.obt)
+      .forEach(x=>{n++;if(x.pct!==pv){k=n;pv=x.pct;}rk[x.student]=k;});
+    r=r.map(x=>Object.assign({},x,{rank:rk[x.student]||null,weighted:anyW}));
+    return r;
+  })();
   const marked=cr.filter(x=>x.hasMarks);
   const assessed=marked.filter(x=>x.max>0); // numeric marks only — grade-only co-scholastic cards don't skew pass/avg stats
   const passCount=assessed.filter(x=>!x.anyFail&&x.pct>=33).length;
   // Worst-first intervention data for the Reports tab: who's failing, which subjects are weak, and the
   // parent phone — so report-card time becomes triage time. Phone from the roster (teacher-readable) + directory.
   const fails=marked.filter(x=>x.max>0&&(x.anyFail||x.pct<33)).sort((a,b)=>a.pct-b.pct);
-  const subjAvg=(()=>{const m={};marked.forEach(x=>(x.subjects||[]).forEach(s=>{if(s.marks!=null){const o=m[s.name]=m[s.name]||{sum:0,n:0,low:0};o.sum+=s.pct;o.n++;if(s.pct<33)o.low++;}}));return Object.keys(m).map(name=>({name,avg:Math.round(m[name].sum/m[name].n),low:m[name].low,n:m[name].n})).sort((a,b)=>a.avg-b.avg);})();
+  // Subject averages follow the same weighted totals the card prints, not the raw paper marks.
+  const subjAvg=(()=>{const m={};marked.forEach(x=>{
+    if(x.td&&x.td.n){x.td.rows.forEach(rw=>{if(rw.total==null)return;const o=m[rw.name]=m[rw.name]||{sum:0,n:0,low:0};o.sum+=rw.total;o.n++;if(rw.total<33)o.low++;});return;}
+    (x.subjects||[]).forEach(s=>{if(s.marks!=null){const o=m[s.name]=m[s.name]||{sum:0,n:0,low:0};o.sum+=s.pct;o.n++;if(s.pct<33)o.low++;}});});return Object.keys(m).map(name=>({name,avg:Math.round(m[name].sum/m[name].n),low:m[name].low,n:m[name].n})).sort((a,b)=>a.avg-b.avg);})();
   const _exPhoneByAdm=(()=>{const m={};Object.values((academicRosterDB&&academicRosterDB.data)||{}).forEach(d=>{((d&&d.students)||[]).forEach(s=>{if(s&&s.admNo&&s.contact)m[String(s.admNo)]=String(s.contact);});});Object.values((dirDB&&dirDB.data)||{}).forEach(d=>{((d&&d.students)||[]).forEach(s=>{if(s&&s.admNo){const p=_attPhone(s);if(p)m[String(s.admNo)]=p;}});});return m;})();
   const _exPhone=(stu)=>{const a=admOfExam(exam?exam.cls:"",stu);return a?(_exPhoneByAdm[String(a)]||""):"";};
   const _examMsg=(stu,r)=>"Dear Parent, Greetings from "+SCHOOL_NAME+". In the "+(exam?exam.name:"recent exam")+", "+stu+" scored "+(r?r.pct:0)+"% ("+(r?r.obt:0)+"/"+(r?r.max:0)+")"+((r&&(r.anyFail||r.pct<33))?", below the pass mark in some subjects":"")+". Kindly meet the class teacher to discuss. Thank you.";
@@ -14076,7 +14099,7 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
           {(()=>{
             const gaps={},noMarks=[],scho=(exam.subjects||[]).filter(x=>x&&!x.graded);
             let notReady=0;
-            cr.forEach(x=>{const _a=String(admOfExam(exam.cls,x.student)||"");const t=termRowsData(exam,x.student,_a);
+            cr.forEach(x=>{const t=x.td||termRowsData(exam,x.student,String(admOfExam(exam.cls,x.student)||"")); // already worked out with cr
               if(!t.rows.length)return;
               if(t.rows.some(r=>r.missing&&r.missing.length))notReady++;
               t.rows.forEach(r=>{(r.missing||[]).forEach(m=>{const k=r.name+" \u00b7 "+m;gaps[k]=(gaps[k]||0)+1;});});});

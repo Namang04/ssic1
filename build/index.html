@@ -58822,6 +58822,18 @@ function StudentDirectory({
     setPhotoMsg("✓ Saved — " + (name || "photo"));
     setTimeout(() => setPhotoMsg(""), 2200);
   };
+  const photoTileBtn = {
+    border: "1px solid var(--c-d2)",
+    background: "var(--c-fff)",
+    borderRadius: 6,
+    padding: "4px 0",
+    fontSize: 10.5,
+    fontWeight: 700,
+    cursor: "pointer",
+    fontFamily: "var(--ss-font)",
+    color: "var(--ap-ink2)",
+    minWidth: 0
+  };
   const [autoRun, setAutoRun] = useState(null);
   const autoStop = useRef(false);
   const _photoDoc = async a => {
@@ -58900,6 +58912,26 @@ function StudentDirectory({
     }
     setAutoRun(null);
     setPhotoMsg("✓ " + fixed + " framed" + (skip ? " · " + skip + " left alone (no face found)" : ""));
+  };
+  const undoOne = async (adm, name) => {
+    const a = String(adm);
+    setPhotoMsg("");
+    const doc = await _photoDoc(a);
+    if (!doc || !doc.orig) {
+      setPhotoMsg("No earlier version of " + (name || "that photo") + " — it has not been cropped by the app.");
+      return;
+    }
+    try {
+      await window.__fbUpdateDoc(window.__fbDoc(window.__db, "studentPhotos", a), {
+        img: doc.orig,
+        autoFramedAt: null
+      });
+      __photoSet(a, doc.orig);
+      setPhotoMsg("↺ " + (name || "Photo") + " put back");
+      setTimeout(() => setPhotoMsg(""), 2200);
+    } catch (e) {
+      setPhotoMsg("Could not put it back — " + (e && e.message || "try again"));
+    }
   };
   const undoAutoFrame = async () => {
     const list = filtered.slice(0, 500).filter(x => x.admNo);
@@ -59871,7 +59903,7 @@ function StudentDirectory({
     }
   }, "Make these passport photos"), canFixPhotos && !autoRun && React.createElement("button", {
     onClick: undoAutoFrame,
-    title: "Put every auto-framed photo in this class back as it was",
+    title: "Put every photo in this class back as it was before the app cropped it",
     style: {
       border: "1px solid var(--c-d2)",
       background: "var(--c-fff)",
@@ -59883,7 +59915,7 @@ function StudentDirectory({
       cursor: "pointer",
       fontFamily: "var(--ss-font)"
     }
-  }, "Undo")), autoRun && React.createElement("div", {
+  }, "Undo all")), autoRun && React.createElement("div", {
     style: {
       border: "1px solid var(--bd-amb)",
       background: "var(--bg-amb)",
@@ -59945,7 +59977,7 @@ function StudentDirectory({
     style: {
       display: "grid",
       gap: 13,
-      gridTemplateColumns: "repeat(auto-fill,minmax(104px,1fr))"
+      gridTemplateColumns: "repeat(auto-fill,minmax(112px,1fr))"
     }
   }, filtered.slice(0, 500).map(function (st, i) {
     var a = String(st.admNo || "");
@@ -59999,7 +60031,7 @@ function StudentDirectory({
     }, a || "no adm no."), canFixPhotos && a && React.createElement("div", {
       style: {
         display: "flex",
-        gap: 5,
+        gap: 4,
         marginTop: 5
       }
     }, ph && React.createElement("button", {
@@ -60010,33 +60042,28 @@ function StudentDirectory({
           src: ph
         });
       },
+      title: "Frame this one by hand",
       style: {
-        flex: 1,
-        border: "1px solid var(--c-d2)",
-        background: "var(--c-fff)",
-        borderRadius: 6,
-        padding: "4px 0",
-        fontSize: 11,
-        fontWeight: 700,
-        cursor: "pointer",
-        fontFamily: "var(--ss-font)",
-        color: "var(--ap-ink2)"
+        ...photoTileBtn,
+        flex: 1
       }
-    }, "Fix"), React.createElement("label", {
+    }, "Fix"), ph && React.createElement("button", {
+      onClick: function () {
+        undoOne(a, st.name);
+      },
+      title: "Put " + st.name + "'s photo back as it was before the app cropped it",
       style: {
+        ...photoTileBtn,
+        flex: 1
+      }
+    }, "Undo"), React.createElement("label", {
+      style: {
+        ...photoTileBtn,
         flex: 1,
         textAlign: "center",
-        border: "1px solid var(--c-d2)",
-        background: "var(--c-fff)",
-        borderRadius: 6,
-        padding: "4px 0",
-        fontSize: 11,
-        fontWeight: 700,
-        cursor: "pointer",
-        fontFamily: "var(--ss-font)",
-        color: "var(--ap-ink2)"
+        display: "block"
       }
-    }, ph ? "Replace" : "Add", React.createElement("input", {
+    }, ph ? "New" : "Add", React.createElement("input", {
       type: "file",
       accept: "image/*",
       style: {
