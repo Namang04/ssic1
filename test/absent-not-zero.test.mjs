@@ -49,9 +49,9 @@ ok('the absence is named for the footnote',      sAb.absentOn.join() === 'Theory
 const sBlank = termComposite(S, undefined, 20, "", 100, { practical: 27 });
 ok('a blank theory paper voids it the same way', sBlank.noResult === true && sBlank.missing.join() === 'Theory');
 const sOk = termComposite(S, undefined, 20, 63, 100, { practical: 27 });
-ok('theory sat: the practical counts as normal', sOk.total === 71.1 && sOk.noResult === false);
+ok('theory sat: the practical counts as normal', sOk.total === 71 && sOk.noResult === false);
 const sPr = termComposite(S, undefined, 20, 63, 100, { practical: "AB" });
-ok('absent in the PRACTICAL does not void it',   sPr.noResult === false && sPr.total === 44.1 && sPr.outOf === 100);
+ok('absent in the PRACTICAL does not void it',   sPr.noResult === false && sPr.total === 44 && sPr.outOf === 100);
 
 // ── the same rule in the junior scheme: the written paper is the theory paper ──
 const jAb = termComposite(J, 16, 20, "AB", 80, { notebook: 5, enrichment: 5 });
@@ -77,4 +77,26 @@ ok('every subject has a total',                  shivam.every(c => c.total != nu
 ok('Mathematics is the 24 he earned',            shivam[0].total === 24);
 const tot = shivam.reduce((a,c)=>a+c.total,0);
 ok('the overall is out of all 8 subjects',       tot === 193 && Math.round(tot/shivam.length) === 24);
+
+// ── a printed card has to add up (director, 2026-10-12) ──
+// A 20-mark unit test scaled to 10 used to keep its half: 19 became 9.5, the cell printed 10, and the column
+// still added the 9.5s. Ansh Rai's unit tests showed 68 on the Overall row while the column counted by hand
+// came to 70. Every component is now a whole mark and the totals are built from those same whole marks.
+ok('19 out of 20 is the 10 the card prints', termComposite(J, 19, 20, 60, 80, { notebook: 4, enrichment: 4 }).parts.ut === 10);
+ok('17 out of 20 rounds the same way',       termComposite(J, 17, 20, 60, 80, {}).parts.ut === 9);
+ok('an even mark is unchanged',              termComposite(J, 16, 20, 60, 80, {}).parts.ut === 8);
+ok('the written paper is whole too',         termComposite(S, undefined, 20, 63, 100, { practical: 27 }).parts.exam === 44);
+ok('and so is a written-in component',       termComposite(J, 16, 20, 60, 80, { notebook: 4.5, enrichment: 4 }).parts.writeins.notebook === 5);
+// Ansh Rai: eight subjects, unit tests totalling 136 out of 160.
+const ansh = [19, 17, 15, 18, 16, 19, 15, 17].map(ut => termComposite(J, ut, 20, 60, 80, { notebook: 4, enrichment: 4 }));
+ok('his unit tests total 136 as entered',    [19, 17, 15, 18, 16, 19, 15, 17].reduce((a, b) => a + b, 0) === 136);
+const utCol = ansh.map(c => c.parts.ut);
+ok('every cell in the column is a whole mark', utCol.every(v => Number.isInteger(v)));
+// The point is not any one figure but that the Overall row equals the column counted by hand. Before this,
+// the cells printed 10+9+8+9+8+10+8+9 = 71 while the row added the halves and showed 68.
+ok('the column counted by hand IS the total', utCol.reduce((a, b) => a + b, 0) === 71);
+ok('which is not what the halves summed to', 136 / 2 !== utCol.reduce((a, b) => a + b, 0));
+ok('and the subject total adds the same cells',
+   ansh.every(c => c.total === c.parts.ut + c.parts.writeins.notebook + c.parts.writeins.enrichment + c.parts.exam));
+ok('so every subject total is whole',        ansh.every(c => Number.isInteger(c.total)));
 console.log(`\n  ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);

@@ -47656,25 +47656,40 @@ function Exams({
     if (msSec) {
       const _sm = sectionsOf(exam.cls);
       r = r.filter(x => (_sm[x.student] || "") === msSec);
-      let _k = 0,
-        _pv = null,
-        _n = 0;
-      r = r.map(x => {
-        if (!x.hasMarks) return {
-          ...x,
-          rank: null
-        };
-        _n++;
-        if (x.pct !== _pv) {
-          _k = _n;
-          _pv = x.pct;
-        }
-        return {
-          ...x,
-          rank: _k
-        };
-      });
     }
+    let anyW = false;
+    r = r.map(x => {
+      const t = termRowsData(exam, x.student, String(admOfExam(exam.cls, x.student) || ""));
+      if (t && t.n) {
+        anyW = true;
+        return Object.assign({}, x, {
+          pct: t.pct,
+          obt: Math.round(t.sum),
+          max: t.n * 100,
+          anyFail: t.anyFail,
+          td: t
+        });
+      }
+      return Object.assign({}, x, {
+        td: t
+      });
+    });
+    const rk = {};
+    let k = 0,
+      pv = null,
+      n = 0;
+    r.filter(x => x.hasMarks && x.max > 0).slice().sort((a, b) => b.pct - a.pct || b.obt - a.obt).forEach(x => {
+      n++;
+      if (x.pct !== pv) {
+        k = n;
+        pv = x.pct;
+      }
+      rk[x.student] = k;
+    });
+    r = r.map(x => Object.assign({}, x, {
+      rank: rk[x.student] || null,
+      weighted: anyW
+    }));
     return r;
   })();
   const marked = cr.filter(x => x.hasMarks);
@@ -47683,18 +47698,34 @@ function Exams({
   const fails = marked.filter(x => x.max > 0 && (x.anyFail || x.pct < 33)).sort((a, b) => a.pct - b.pct);
   const subjAvg = (() => {
     const m = {};
-    marked.forEach(x => (x.subjects || []).forEach(s => {
-      if (s.marks != null) {
-        const o = m[s.name] = m[s.name] || {
-          sum: 0,
-          n: 0,
-          low: 0
-        };
-        o.sum += s.pct;
-        o.n++;
-        if (s.pct < 33) o.low++;
+    marked.forEach(x => {
+      if (x.td && x.td.n) {
+        x.td.rows.forEach(rw => {
+          if (rw.total == null) return;
+          const o = m[rw.name] = m[rw.name] || {
+            sum: 0,
+            n: 0,
+            low: 0
+          };
+          o.sum += rw.total;
+          o.n++;
+          if (rw.total < 33) o.low++;
+        });
+        return;
       }
-    }));
+      (x.subjects || []).forEach(s => {
+        if (s.marks != null) {
+          const o = m[s.name] = m[s.name] || {
+            sum: 0,
+            n: 0,
+            low: 0
+          };
+          o.sum += s.pct;
+          o.n++;
+          if (s.pct < 33) o.low++;
+        }
+      });
+    });
     return Object.keys(m).map(name => ({
       name,
       avg: Math.round(m[name].sum / m[name].n),
@@ -50246,8 +50277,7 @@ function Exams({
       scho = (exam.subjects || []).filter(x => x && !x.graded);
     let notReady = 0;
     cr.forEach(x => {
-      const _a = String(admOfExam(exam.cls, x.student) || "");
-      const t = termRowsData(exam, x.student, _a);
+      const t = x.td || termRowsData(exam, x.student, String(admOfExam(exam.cls, x.student) || ""));
       if (!t.rows.length) return;
       if (t.rows.some(r => r.missing && r.missing.length)) notReady++;
       t.rows.forEach(r => {

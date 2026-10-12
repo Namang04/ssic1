@@ -12828,6 +12828,11 @@ function termComposite(cfg, utMark, utMax, examMark, examMax, wv){
   // (director). So a blank prints AB, earns nothing and is never written in as a zero, and the subject still
   // gets its total and its grade. A 0 actually entered is still a 0. The blank is still recorded in `missing`
   // so the Report Cards screen can tell the office which marks have simply not been typed in yet.
+  // EVERY COMPONENT IS A WHOLE MARK, and the totals are built from those same whole marks (director,
+  // 2026-10-12). A 20-mark unit test paper scaled to 10 used to keep its half: 19 became 9.5, the cell printed
+  // 10, and the column still added up the 9.5s. Ansh Rai's unit tests came to 68 on the Overall row while the
+  // column a parent counts by hand came to 70. A printed card has to add up, so the rounding happens here,
+  // once, and the number on the card IS the number in every total.
   var got=0, full=0, any=false, missing=[], absentOn=[];
   var isAb=function(v){return typeof v==="string"&&/^a/i.test(v.trim());};
   var num=function(v){return (v!=null&&v!==""&&!isNaN(Number(v)))?Number(v):null;};
@@ -12835,24 +12840,24 @@ function termComposite(cfg, utMark, utMax, examMark, examMax, wv){
   if(cfg.ut>0){
     full+=cfg.ut;
     var u=num(utMark);
-    if(u!=null){ p.ut=Math.round(u/(utMax||20)*cfg.ut*10)/10; got+=p.ut; any=true; }
+    if(u!=null){ p.ut=Math.round(u/(utMax||20)*cfg.ut); got+=p.ut; any=true; }
     else { p.ut="AB"; absentOn.push("Unit Test"); if(!isAb(utMark))missing.push("Unit Test"); }
   }
   p.writeins={};
   cfg.writeins.forEach(function(w){ var raw=wv&&wv[w.key]; full+=Number(w.max)||0;
     var v=num(raw);
-    if(v!=null){ var vv=Math.min(v,w.max); p.writeins[w.key]=vv; got+=vv; any=true; }
+    if(v!=null){ var vv=Math.round(Math.min(v,w.max)); p.writeins[w.key]=vv; got+=vv; any=true; }
     else { p.writeins[w.key]="AB"; absentOn.push(w.label); if(!isAb(raw))missing.push(w.label); } });
   full+=cfg.exam;
   var e=num(examMark);
-  if(e!=null){ p.exam=Math.round(e/(examMax||100)*cfg.exam*10)/10; got+=p.exam; any=true; }
+  if(e!=null){ p.exam=Math.round(e/(examMax||100)*cfg.exam); got+=p.exam; any=true; }
   else { p.exam="AB"; absentOn.push(cfg.examLabel); if(!isAb(examMark))missing.push(cfg.examLabel); }
   // BOARD RULE (director, 2026-10-08): absent in the THEORY paper and the practical is not counted — the
   // subject carries NO RESULT at all, however good the practical or the internals are. So the subject shows AB,
   // no total and no grade, and it is left out of the overall rather than entered there as a zero.
   var voided = p.exam==="AB";
   // total = the marks the pupil actually has, still out of the subject's full 100. Nothing scaled.
-  return { total: voided?null:Math.round(got*10)/10, raw: Math.round(got*10)/10, outOf: full, any: any,
+  return { total: voided?null:got, raw: got, outOf: full, any: any,
            noResult: voided, parts:p, missing:missing, absentOn:absentOn, absent:absentOn.length>0 };
 }
 // The school's own co-scholastic traits, exactly as its report card has always listed them (2026-10-05,
