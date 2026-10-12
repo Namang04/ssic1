@@ -99,4 +99,16 @@ ok('which is not what the halves summed to', 136 / 2 !== utCol.reduce((a, b) => 
 ok('and the subject total adds the same cells',
    ansh.every(c => c.total === c.parts.ut + c.parts.writeins.notebook + c.parts.writeins.enrichment + c.parts.exam));
 ok('so every subject total is whole',        ansh.every(c => Number.isInteger(c.total)));
+
+// ── the reprint list: what a total CAME TO before whole-mark rounding ──
+const exact = grab('__termExactTotal');
+(0, eval)(exact.replace(/^function /, 'globalThis.__termExactTotal = function '));
+const wv = { notebook: 4, enrichment: 4 };
+ok('it reproduces the old half-mark total', __termExactTotal(J, 19, 20, 60, 80, wv) === 77.5); // 9.5+4+4+60
+ok('while the card now shows a whole mark', termComposite(J, 19, 20, 60, 80, wv).total === 78);  // 10 +4+4+60
+ok('an even unit test never moved',         __termExactTotal(J, 16, 20, 60, 80, wv) === termComposite(J, 16, 20, 60, 80, wv).total);
+ok('a class-12 theory paper out of 100 moved', __termExactTotal(S, undefined, 20, 63, 100, { practical: 27 }) === 71.1);
+ok('one out of 70 never did',               __termExactTotal(S, undefined, 20, 63, 70, { practical: 27 }) === 90);
+ok('an absent paper has nothing to compare', __termExactTotal(J, 19, 20, "AB", 80, wv) === null);
+ok('nor does one not yet entered',           __termExactTotal(J, 19, 20, "", 80, wv) === null);
 console.log(`\n  ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);

@@ -1173,6 +1173,18 @@ function __edgeColor(im){try{
   for(var i=0;i<n;i++)for(var j=0;j<n;j++){if(i>2&&i<n-3&&j>2&&j<n-3)continue;var q=(j*n+i)*4;r+=d[q];g+=d[q+1];b+=d[q+2];k++;}
   return k?("rgb("+Math.round(r/k)+","+Math.round(g/k)+","+Math.round(b/k)+")"):"#fff";
 }catch(e){return "#fff";}}
+// What a subject's total CAME TO before whole-mark rounding (8cffcf2), so the app can say exactly whose
+// printed totals moved and by how much. Same arithmetic as termComposite had: components kept their halves.
+function __termExactTotal(cfg, utMark, utMax, examMark, examMax, wv){
+  var isAb=function(v){return typeof v==="string"&&/^a/i.test(v.trim());};
+  var num=function(v){return (v!=null&&v!==""&&!isNaN(Number(v)))?Number(v):null;};
+  if(isAb(examMark)||num(examMark)==null)return null;   // no result then, no comparison now
+  var got=0;
+  if(cfg.ut>0){var u=num(utMark); if(u!=null)got+=Math.round(u/(utMax||20)*cfg.ut*10)/10;}
+  cfg.writeins.forEach(function(w){var v=num(wv&&wv[w.key]); if(v!=null)got+=Math.min(v,w.max);});
+  got+=Math.round(num(examMark)/(examMax||100)*cfg.exam*10)/10;
+  return Math.round(got*10)/10;
+}
 // How far the picture may be dragged before a white edge shows.
 function __frameClamp(nat,rot,zoom,vw,vh){
   if(!nat)return{x:0,y:0};
@@ -12982,6 +12994,10 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
   useEffect(()=>{window.__reportCardDirty=extraDraftDirty?cardStu:"";const h=e=>{if(extraDraftDirty){e.preventDefault();e.returnValue="";}};window.addEventListener("beforeunload",h);return()=>{window.__reportCardDirty="";window.removeEventListener("beforeunload",h);};},[extraDraftDirty,cardStu]);
   const[rcTpl,setRcTpl]=useState("school"); // report-card format: school · cbse · nep · icse
   const[msSec,setMsSec]=useState(""); // marksheet scope: "" = whole class, else one section
+  // "tell me all the affected marksheets" (director, 2026-10-12). Whole-mark rounding moved some printed
+  // totals, so the app works out for itself whose, rather than anyone re-checking cards by hand. Off by
+  // default because it costs a second pass over the class.
+  const[showDelta,setShowDelta]=useState(false);
   const[msInt,setMsInt]=useState(false); // marksheet: print each subject's internal + theory split and its /100
   const[coDraft,setCoDraft]=useState({});const[coBusy,setCoBusy]=useState(false);const[coSec,setCoSec]=useState(""); // class teacher's co-scholastic grid
   const[rcTog,setRcTog]=useState({rank:true,coscholastic:true,attendance:true,remarks:true}); // sections shown on the card
@@ -13655,6 +13671,40 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
   // Worst-first intervention data for the Reports tab: who's failing, which subjects are weak, and the
   // parent phone — so report-card time becomes triage time. Phone from the roster (teacher-readable) + directory.
   const fails=marked.filter(x=>x.max>0&&(x.anyFail||x.pct<33)).sort((a,b)=>a.pct-b.pct);
+  // Which pupils' printed totals moved when components became whole marks. Worked out from their own data in
+  // the browser: the old total kept each component's half, the new one adds the whole marks the card shows.
+  const roundingChanges=(()=>{
+    if(!(exam&&tab==="reports"&&showDelta))return null;
+    const out=[];
+    cr.forEach(x=>{
+      const t=x.td; if(!t||!t.n)return;
+      const adm=String(admOfExam(exam.cls,x.student)||"");
+      const _w=(exam.weighted&&exam.weighted[adm])||{};
+      let oldSum=0; const subs=[];
+      t.rows.forEach(row=>{
+        if(row.total==null)return;
+        const tc=termSubjComposite(exam,row.name,x.student,adm);
+        const wv=_w[__subjKeyIn(_w,row.name)||row.name]||{};
+        const was=__termExactTotal(tc.cfg,tc.utMark,tc.utMax,tc.exMark,tc.exMax,wv);
+        if(was==null){oldSum+=row.total;return;}
+        oldSum+=was;
+        if(Math.abs(was-row.total)>0.001)subs.push({name:row.name,was:was,now:row.total});
+      });
+      const wasPct=Math.round(oldSum/t.n), nowPct=t.pct;
+      if(subs.length||Math.round(oldSum)!==Math.round(t.sum)||wasPct!==nowPct)
+        out.push({student:x.student,adm:adm,wasSum:Math.round(oldSum*10)/10,nowSum:t.sum,wasPct:wasPct,nowPct:nowPct,n:t.n,subs:subs});
+    });
+    return out;
+  })();
+  const exportDelta=()=>{
+    const head=["Admission","Student","Class","Section","Was (total)","Now (total)","Out of","Was %","Now %","Subjects changed"];
+    const _sm=sectionsOf(exam.cls);
+    const rows=(roundingChanges||[]).map(r=>[r.adm,r.student,exam.cls,_sm[r.student]||"",r.wasSum,r.nowSum,r.n*100,r.wasPct+"%",r.nowPct+"%",
+      r.subs.map(x=>x.name+" "+x.was+"\u2192"+x.now).join("; ")]);
+    const csv=[head,...rows].map(r=>r.map(c=>{c=String(c);return /[",\n]/.test(c)?'"'+c.replace(/"/g,'""')+'"':c;}).join(",")).join("\n");
+    const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"});const a=document.createElement("a");
+    a.href=URL.createObjectURL(blob);a.download=(exam.name+"_"+exam.cls+(msSec?"_Sec"+msSec:"")+"_totals_changed.csv").replace(/\s+/g,"_");a.click();URL.revokeObjectURL(a.href);
+  };
   // Subject averages follow the same weighted totals the card prints, not the raw paper marks.
   const subjAvg=(()=>{const m={};marked.forEach(x=>{
     if(x.td&&x.td.n){x.td.rows.forEach(rw=>{if(rw.total==null)return;const o=m[rw.name]=m[rw.name]||{sum:0,n:0,low:0};o.sum+=rw.total;o.n++;if(rw.total<33)o.low++;});return;}
@@ -14097,6 +14147,41 @@ function Exams({user,studentsDB,examsDB,attendanceDB,dirDB,academicRosterDB,exam
             <StatCard label="Not assessed" val={Math.max(0,cr.length-marked.length)} icon="edit" color={cr.length>marked.length?"var(--tx-org)":"var(--tx-grn2)"} sub={cr.length>marked.length?"finish marks before printing":"every student has a result"}/>
             <StatCard label="Needs attention" val={fails.length} icon="warn" color={fails.length?"#d2342a":"#1f9d55"} sub={fails.length?"failed one or more papers":"everyone passed"}/>
           </div>
+          {/* Whose printed totals moved when components became whole marks — so a reprint list is a fact, not a guess. */}
+          <div className="ap-panel" style={{padding:"11px 16px",marginBottom:14,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+            <div style={{flex:"1 1 260px",minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:700,color:"var(--ap-ink)"}}>Totals changed by whole-mark rounding</div>
+              <div style={{fontSize:11.5,color:"var(--ap-muted)",marginTop:2}}>A half mark inside a component used to be dropped from the totals while the cell already printed it rounded. Check which cards in this class were affected.</div>
+            </div>
+            <button onClick={function(){setShowDelta(!showDelta);}} style={{border:"1px solid var(--c-d2)",background:showDelta?"var(--ap-accent-soft)":"var(--c-fff)",color:"var(--ap-ink2)",borderRadius:7,padding:"7px 13px",fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>{showDelta?"Hide":"Check this class"}</button>
+            {showDelta&&roundingChanges&&roundingChanges.length>0&&<Btn v="ghost" onClick={exportDelta}>⬇ Export CSV</Btn>}
+          </div>
+          {showDelta&&roundingChanges&&(roundingChanges.length===0?
+            <div className="ap-panel" style={{padding:"13px 16px",marginBottom:14,background:"var(--bg-grn)",border:"1px solid var(--bd-grn)",fontSize:12.5,fontWeight:700,color:"var(--tx-grn2)"}}>No card in {__uiClassLabel(exam.cls)}{msSec?" · Section "+msSec:""} changed. Nothing to reprint here.</div>
+            :<div className="ap-panel" style={{padding:0,marginBottom:14,overflow:"hidden"}}>
+              <div style={{padding:"12px 16px",borderBottom:"1px solid var(--ap-line)",display:"flex",alignItems:"baseline",gap:9,flexWrap:"wrap"}}>
+                <b style={{fontSize:13.5,color:"var(--ap-ink)"}}>{roundingChanges.length} of {cr.filter(function(x){return x.td&&x.td.n;}).length} cards changed</b>
+                <span style={{fontSize:12,color:"var(--ap-muted)"}}>{__uiClassLabel(exam.cls)}{msSec?" · Section "+msSec:""} · reprint these</span>
+              </div>
+              <div style={{overflowX:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"collapse",minWidth:620,fontSize:12.5}}>
+                  <thead><tr style={{background:"var(--c-f7)"}}>
+                    {["Admission","Student","Was","Now","Was %","Now %","Subjects affected"].map(function(h,i){return <th key={i} style={{...th,textAlign:i>1&&i<6?"center":"left",paddingLeft:i===0?16:undefined}}>{h}</th>;})}
+                  </tr></thead>
+                  <tbody>{roundingChanges.slice(0,300).map(function(r,i){return (
+                    <tr key={r.adm||r.student||i} style={{borderTop:"1px solid var(--c-f0)"}}>
+                      <td style={{...td,paddingLeft:16,fontFamily:"var(--ss-font)",fontWeight:600}}>{r.adm||"—"}</td>
+                      <td style={{...td,fontWeight:600,color:"var(--ap-ink)"}}>{r.student}</td>
+                      <td style={{...td,textAlign:"center",color:"var(--ap-muted)",fontFamily:"var(--ss-font)"}}>{r.wasSum}</td>
+                      <td style={{...td,textAlign:"center",fontWeight:800,fontFamily:"var(--ss-font)"}}>{r.nowSum}<span style={{fontWeight:500,color:"var(--c-94)"}}>/{r.n*100}</span></td>
+                      <td style={{...td,textAlign:"center",color:"var(--ap-muted)",fontFamily:"var(--ss-font)"}}>{r.wasPct}%</td>
+                      <td style={{...td,textAlign:"center",fontWeight:800,fontFamily:"var(--ss-font)",color:r.nowPct!==r.wasPct?"var(--tx-grn2)":undefined}}>{r.nowPct}%</td>
+                      <td style={{...td,fontSize:11.5,color:"var(--ap-muted)"}}>{r.subs.length?r.subs.map(function(x){return x.name+" "+x.was+"→"+x.now;}).join(" · "):"rounding only"}</td>
+                    </tr>);})}</tbody>
+                </table>
+              </div>
+              {roundingChanges.length>300&&<div style={{padding:"10px 16px",fontSize:11.5,color:"var(--ap-muted)"}}>Showing the first 300 — the CSV has them all.</div>}
+            </div>)}
           {/* What is still missing before these cards can be printed. A Class 7 card printed "36% · Grade D" off
               the one subject that had every component, because nobody had entered Unit Test I for the rest — and a
               subject carried by NO pupil (Physical Education in Class 12) simply vanished from every card with

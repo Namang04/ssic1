@@ -45836,7 +45836,7 @@ function termComposite(cfg, utMark, utMax, examMark, examMax, wv) {
     full += cfg.ut;
     var u = num(utMark);
     if (u != null) {
-      p.ut = Math.round(u / (utMax || 20) * cfg.ut * 10) / 10;
+      p.ut = Math.round(u / (utMax || 20) * cfg.ut);
       got += p.ut;
       any = true;
     } else {
@@ -45851,7 +45851,7 @@ function termComposite(cfg, utMark, utMax, examMark, examMax, wv) {
     full += Number(w.max) || 0;
     var v = num(raw);
     if (v != null) {
-      var vv = Math.min(v, w.max);
+      var vv = Math.round(Math.min(v, w.max));
       p.writeins[w.key] = vv;
       got += vv;
       any = true;
@@ -45864,7 +45864,7 @@ function termComposite(cfg, utMark, utMax, examMark, examMax, wv) {
   full += cfg.exam;
   var e = num(examMark);
   if (e != null) {
-    p.exam = Math.round(e / (examMax || 100) * cfg.exam * 10) / 10;
+    p.exam = Math.round(e / (examMax || 100) * cfg.exam);
     got += p.exam;
     any = true;
   } else {
@@ -45874,8 +45874,8 @@ function termComposite(cfg, utMark, utMax, examMark, examMax, wv) {
   }
   var voided = p.exam === "AB";
   return {
-    total: voided ? null : Math.round(got * 10) / 10,
-    raw: Math.round(got * 10) / 10,
+    total: voided ? null : got,
+    raw: got,
     outOf: full,
     any: any,
     noResult: voided,
