@@ -1694,6 +1694,26 @@ function __edgeColor(im) {
     return "#fff";
   }
 }
+function __termExactTotal(cfg, utMark, utMax, examMark, examMax, wv) {
+  var isAb = function (v) {
+    return typeof v === "string" && /^a/i.test(v.trim());
+  };
+  var num = function (v) {
+    return v != null && v !== "" && !isNaN(Number(v)) ? Number(v) : null;
+  };
+  if (isAb(examMark) || num(examMark) == null) return null;
+  var got = 0;
+  if (cfg.ut > 0) {
+    var u = num(utMark);
+    if (u != null) got += Math.round(u / (utMax || 20) * cfg.ut * 10) / 10;
+  }
+  cfg.writeins.forEach(function (w) {
+    var v = num(wv && wv[w.key]);
+    if (v != null) got += Math.min(v, w.max);
+  });
+  got += Math.round(num(examMark) / (examMax || 100) * cfg.exam * 10) / 10;
+  return Math.round(got * 10) / 10;
+}
 function __frameClamp(nat, rot, zoom, vw, vh) {
   if (!nat) return {
     x: 0,
@@ -46052,6 +46072,7 @@ function Exams({
   }, [extraDraftDirty, cardStu]);
   const [rcTpl, setRcTpl] = useState("school");
   const [msSec, setMsSec] = useState("");
+  const [showDelta, setShowDelta] = useState(false);
   const [msInt, setMsInt] = useState(false);
   const [coDraft, setCoDraft] = useState({});
   const [coBusy, setCoBusy] = useState(false);
@@ -47696,6 +47717,64 @@ function Exams({
   const assessed = marked.filter(x => x.max > 0);
   const passCount = assessed.filter(x => !x.anyFail && x.pct >= 33).length;
   const fails = marked.filter(x => x.max > 0 && (x.anyFail || x.pct < 33)).sort((a, b) => a.pct - b.pct);
+  const roundingChanges = (() => {
+    if (!(exam && tab === "reports" && showDelta)) return null;
+    const out = [];
+    cr.forEach(x => {
+      const t = x.td;
+      if (!t || !t.n) return;
+      const adm = String(admOfExam(exam.cls, x.student) || "");
+      const _w = exam.weighted && exam.weighted[adm] || {};
+      let oldSum = 0;
+      const subs = [];
+      t.rows.forEach(row => {
+        if (row.total == null) return;
+        const tc = termSubjComposite(exam, row.name, x.student, adm);
+        const wv = _w[__subjKeyIn(_w, row.name) || row.name] || {};
+        const was = __termExactTotal(tc.cfg, tc.utMark, tc.utMax, tc.exMark, tc.exMax, wv);
+        if (was == null) {
+          oldSum += row.total;
+          return;
+        }
+        oldSum += was;
+        if (Math.abs(was - row.total) > 0.001) subs.push({
+          name: row.name,
+          was: was,
+          now: row.total
+        });
+      });
+      const wasPct = Math.round(oldSum / t.n),
+        nowPct = t.pct;
+      if (subs.length || Math.round(oldSum) !== Math.round(t.sum) || wasPct !== nowPct) out.push({
+        student: x.student,
+        adm: adm,
+        wasSum: Math.round(oldSum * 10) / 10,
+        nowSum: t.sum,
+        wasPct: wasPct,
+        nowPct: nowPct,
+        n: t.n,
+        subs: subs
+      });
+    });
+    return out;
+  })();
+  const exportDelta = () => {
+    const head = ["Admission", "Student", "Class", "Section", "Was (total)", "Now (total)", "Out of", "Was %", "Now %", "Subjects changed"];
+    const _sm = sectionsOf(exam.cls);
+    const rows = (roundingChanges || []).map(r => [r.adm, r.student, exam.cls, _sm[r.student] || "", r.wasSum, r.nowSum, r.n * 100, r.wasPct + "%", r.nowPct + "%", r.subs.map(x => x.name + " " + x.was + "\u2192" + x.now).join("; ")]);
+    const csv = [head, ...rows].map(r => r.map(c => {
+      c = String(c);
+      return /[",\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c;
+    }).join(",")).join("\n");
+    const blob = new Blob([csv], {
+      type: "text/csv;charset=utf-8;"
+    });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = (exam.name + "_" + exam.cls + (msSec ? "_Sec" + msSec : "") + "_totals_changed.csv").replace(/\s+/g, "_");
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
   const subjAvg = (() => {
     const m = {};
     marked.forEach(x => {
@@ -50271,7 +50350,183 @@ function Exams({
     icon: "warn",
     color: fails.length ? "#d2342a" : "#1f9d55",
     sub: fails.length ? "failed one or more papers" : "everyone passed"
-  })), (() => {
+  })), React.createElement("div", {
+    className: "ap-panel",
+    style: {
+      padding: "11px 16px",
+      marginBottom: 14,
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      flexWrap: "wrap"
+    }
+  }, React.createElement("div", {
+    style: {
+      flex: "1 1 260px",
+      minWidth: 0
+    }
+  }, React.createElement("div", {
+    style: {
+      fontSize: 13,
+      fontWeight: 700,
+      color: "var(--ap-ink)"
+    }
+  }, "Totals changed by whole-mark rounding"), React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: "var(--ap-muted)",
+      marginTop: 2
+    }
+  }, "A half mark inside a component used to be dropped from the totals while the cell already printed it rounded. Check which cards in this class were affected.")), React.createElement("button", {
+    onClick: function () {
+      setShowDelta(!showDelta);
+    },
+    style: {
+      border: "1px solid var(--c-d2)",
+      background: showDelta ? "var(--ap-accent-soft)" : "var(--c-fff)",
+      color: "var(--ap-ink2)",
+      borderRadius: 7,
+      padding: "7px 13px",
+      fontSize: 12.5,
+      fontWeight: 700,
+      cursor: "pointer",
+      fontFamily: "var(--ss-font)"
+    }
+  }, showDelta ? "Hide" : "Check this class"), showDelta && roundingChanges && roundingChanges.length > 0 && React.createElement(Btn, {
+    v: "ghost",
+    onClick: exportDelta
+  }, "\u2B07 Export CSV")), showDelta && roundingChanges && (roundingChanges.length === 0 ? React.createElement("div", {
+    className: "ap-panel",
+    style: {
+      padding: "13px 16px",
+      marginBottom: 14,
+      background: "var(--bg-grn)",
+      border: "1px solid var(--bd-grn)",
+      fontSize: 12.5,
+      fontWeight: 700,
+      color: "var(--tx-grn2)"
+    }
+  }, "No card in ", __uiClassLabel(exam.cls), msSec ? " · Section " + msSec : "", " changed. Nothing to reprint here.") : React.createElement("div", {
+    className: "ap-panel",
+    style: {
+      padding: 0,
+      marginBottom: 14,
+      overflow: "hidden"
+    }
+  }, React.createElement("div", {
+    style: {
+      padding: "12px 16px",
+      borderBottom: "1px solid var(--ap-line)",
+      display: "flex",
+      alignItems: "baseline",
+      gap: 9,
+      flexWrap: "wrap"
+    }
+  }, React.createElement("b", {
+    style: {
+      fontSize: 13.5,
+      color: "var(--ap-ink)"
+    }
+  }, roundingChanges.length, " of ", cr.filter(function (x) {
+    return x.td && x.td.n;
+  }).length, " cards changed"), React.createElement("span", {
+    style: {
+      fontSize: 12,
+      color: "var(--ap-muted)"
+    }
+  }, __uiClassLabel(exam.cls), msSec ? " · Section " + msSec : "", " \xB7 reprint these")), React.createElement("div", {
+    style: {
+      overflowX: "auto"
+    }
+  }, React.createElement("table", {
+    style: {
+      width: "100%",
+      borderCollapse: "collapse",
+      minWidth: 620,
+      fontSize: 12.5
+    }
+  }, React.createElement("thead", null, React.createElement("tr", {
+    style: {
+      background: "var(--c-f7)"
+    }
+  }, ["Admission", "Student", "Was", "Now", "Was %", "Now %", "Subjects affected"].map(function (h, i) {
+    return React.createElement("th", {
+      key: i,
+      style: {
+        ...th,
+        textAlign: i > 1 && i < 6 ? "center" : "left",
+        paddingLeft: i === 0 ? 16 : undefined
+      }
+    }, h);
+  }))), React.createElement("tbody", null, roundingChanges.slice(0, 300).map(function (r, i) {
+    return React.createElement("tr", {
+      key: r.adm || r.student || i,
+      style: {
+        borderTop: "1px solid var(--c-f0)"
+      }
+    }, React.createElement("td", {
+      style: {
+        ...td,
+        paddingLeft: 16,
+        fontFamily: "var(--ss-font)",
+        fontWeight: 600
+      }
+    }, r.adm || "—"), React.createElement("td", {
+      style: {
+        ...td,
+        fontWeight: 600,
+        color: "var(--ap-ink)"
+      }
+    }, r.student), React.createElement("td", {
+      style: {
+        ...td,
+        textAlign: "center",
+        color: "var(--ap-muted)",
+        fontFamily: "var(--ss-font)"
+      }
+    }, r.wasSum), React.createElement("td", {
+      style: {
+        ...td,
+        textAlign: "center",
+        fontWeight: 800,
+        fontFamily: "var(--ss-font)"
+      }
+    }, r.nowSum, React.createElement("span", {
+      style: {
+        fontWeight: 500,
+        color: "var(--c-94)"
+      }
+    }, "/", r.n * 100)), React.createElement("td", {
+      style: {
+        ...td,
+        textAlign: "center",
+        color: "var(--ap-muted)",
+        fontFamily: "var(--ss-font)"
+      }
+    }, r.wasPct, "%"), React.createElement("td", {
+      style: {
+        ...td,
+        textAlign: "center",
+        fontWeight: 800,
+        fontFamily: "var(--ss-font)",
+        color: r.nowPct !== r.wasPct ? "var(--tx-grn2)" : undefined
+      }
+    }, r.nowPct, "%"), React.createElement("td", {
+      style: {
+        ...td,
+        fontSize: 11.5,
+        color: "var(--ap-muted)"
+      }
+    }, r.subs.length ? r.subs.map(function (x) {
+      return x.name + " " + x.was + "→" + x.now;
+    }).join(" · ") : "rounding only"));
+  })))), roundingChanges.length > 300 && React.createElement("div", {
+    style: {
+      padding: "10px 16px",
+      fontSize: 11.5,
+      color: "var(--ap-muted)"
+    }
+  }, "Showing the first 300 \u2014 the CSV has them all."))), (() => {
     const gaps = {},
       noMarks = [],
       scho = (exam.subjects || []).filter(x => x && !x.graded);

@@ -4680,14 +4680,22 @@ function DirectorWorkspaceDashboard({user,studentsDB,staffAttDB,attendanceDB,lea
     Object.entries(_branchUsers(usersDB.data,__brDW)).forEach(([k,v])=>{if(!v||k.indexOf("__")===0)return;const id=safeId(k),p=m[id]||{};m[id]={username:p.username||k,name:v.name||p.name,role:v.role||p.role,left:v.left!==undefined?!!v.left:!!(p&&p.left)};});
     return Object.values(m).filter(s=>["teacher","vp","admin","office"].includes(s.role)&&!s.left);
   },[usersDB.data,__brDW]);
-  const staffStat=(u)=>{const rec=staffAttDB.data&&staffAttDB.data[safeId(safeId(u.username)+"__"+today)];
-    if(rec)return rec.status||"present";
-    const onLeave=Object.values(leaveDB.data||{}).some(l=>l&&l.status==="approved"&&__ttNorm(l.teacherName)===__ttNorm(u.name)&&l.from<=today&&l.to>=today); // title-agnostic: leave says "Ms. Priya Sharma", the account says "Priya Sharma"
-    return onLeave?"leave":"none";};
+  // This screen counted only explicitly marked records, so a teacher who simply never checked in read as
+  // "none" and appeared nowhere — an all-clear on the dashboard beside a register full of absentees. It now
+  // runs the register's own rule, through __staffDayStatus.
+  const _dwNowHM=new Date().toTimeString().slice(0,5); // the dashboard re-renders on its tick, so the cutoff is re-checked
+  // Every staff figure on this screen goes through the register's rule, from one place.
+  const _dwStat=(u)=>__staffDayStatus(u,today,{att:staffAttDB.data,leave:leaveDB.data,cal:calendarDB&&calendarDB.data,
+    noClock:(typeof __noClockList==="function")?__noClockList(staffAttDB.data):[],self:user&&user.username,
+    todayStr:_attTodayStr(),nowHM:_dwNowHM,lateAfter:(((staffAttDB.data&&staffAttDB.data["__config"])||{}).lateAfter)||""});
   const staff=useMemo(()=>{const c={present:0,late:0,absent:0,leave:0,none:0};const out=[];
-    staffRoster.forEach(u=>{const k=staffStat(u);c[k]++;if(k==="absent"||k==="leave"||k==="late")out.push({name:u.name,kind:k});});
+    staffRoster.forEach(u=>{
+      const r=_dwStat(u);
+      const k=r.key==="autoabs"?"absent":r.key;
+      if(c[k]===undefined)c[k]=0;
+      c[k]++;if(k==="absent"||k==="leave"||k==="late")out.push({name:u.name,kind:k,auto:!!r.auto});});
     return {c,flagged:out,total:staffRoster.length,inToday:c.present+c.late};
-  },[staffRoster,staffAttDB.data,leaveDB.data]);
+  },[staffRoster,staffAttDB.data,leaveDB.data,calendarDB&&calendarDB.data,today,_dwNowHM,user]);
 
   // Student attendance today — every numerator and denominator is a SECTION. The old roll-up counted saved
   // section documents but derived pending work from classes, so 18 marked + 5 unmarked classes became a false 18/23.
@@ -4767,15 +4775,18 @@ function DirectorWorkspaceDashboard({user,studentsDB,staffAttDB,attendanceDB,lea
   const visibleRooms=liveBoard.rows.filter(r=>roomFilter==="all"||(roomFilter==="issue"&&r.state==="issue")||(roomFilter==="cover"&&r.state==="cover"));
   const availableTeachers=useMemo(()=>{
     const teaching=new Set(liveBoard.rows.filter(r=>r.state!=="issue"&&r.teacher).map(r=>__ttNorm(r.teacher)));
-    return staffRoster.filter(u=>u.role==="teacher"&&["present","late"].includes(staffStat(u))&&!teaching.has(__ttNorm(u.name))).sort((a,b)=>String(a.name).localeCompare(String(b.name)));
-  },[liveBoard.rows,staffRoster,staffAttDB.data,leaveDB.data]);
+    return staffRoster.filter(u=>u.role==="teacher"&&["present","late"].includes(_dwStat(u).key)&&!teaching.has(__ttNorm(u.name))).sort((a,b)=>String(a.name).localeCompare(String(b.name)));
+  },[liveBoard.rows,staffRoster,staffAttDB.data,leaveDB.data,calendarDB&&calendarDB.data,today,_dwNowHM,user]);
   const selectedRoom=liveBoard.rows.find(r=>r.key===selectedRoomKey)||null;
   const selectedRoomContext=useMemo(()=>{
     if(!selectedRoom)return null;
     const clean=v=>String(v||"").replace(/^Class\s*/i,"").trim().toLowerCase();
     const attendance=Object.values(attendanceDB.data||{}).find(r=>r&&r.date===today&&clean(r.cls)===clean(selectedRoom.cls)&&(!r.section||!selectedRoom.section||String(r.section).toLowerCase()===String(selectedRoom.section).toLowerCase()));
     const teacherUser=staffRoster.find(u=>__ttNorm(u.name)===__ttNorm(selectedRoom.teacher));
-    const teacherState=teacherUser?staffStat(teacherUser):(selectedRoom.state==="issue"?"none":"present");
+    // Same rule as the staff counters above, so a room's teacher never reads present here while the register
+    // and the dashboard's own absent list both have them down as absent.
+    const _ts=teacherUser?_dwStat(teacherUser):null;
+    const teacherState=_ts?(_ts.key==="autoabs"?"absent":_ts.key):(selectedRoom.state==="issue"?"none":"present");
     return{attendanceMarked:!!(attendance&&attendance.status),teacherState};
   },[selectedRoom,attendanceDB.data,today,staffRoster,staffAttDB.data,leaveDB.data]);
   const pendingLeaves=useMemo(()=>Object.values(leaveDB.data||{}).filter(l=>l&&l.status==="pending").length,[leaveDB.data]);
@@ -5185,12 +5196,12 @@ function DirectorWorkspaceDashboard({user,studentsDB,staffAttDB,attendanceDB,lea
             <div style={{fontSize:11,fontWeight:700,letterSpacing:.6,textTransform:"uppercase",color:"var(--ap-muted)",margin:"4px 0 8px"}}>Absent / late / on leave</div>
             <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
               {staff.flagged.slice(0,12).map((s,i)=>(
-                <span key={i} style={{fontSize:12,fontWeight:600,color:STCOL[s.kind][0],background:STCOL[s.kind][1],borderRadius:8,padding:"4px 10px"}}>{s.name}<span style={{opacity:.7,fontWeight:500}}> · {STLAB[s.kind].toLowerCase()}</span></span>
+                <span key={i} title={s.auto?(s.name+" has not marked the register today"):""} style={{fontSize:12,fontWeight:600,color:STCOL[s.kind][0],background:STCOL[s.kind][1],borderRadius:8,padding:"4px 10px"}}>{s.name}<span style={{opacity:.7,fontWeight:500}}> · {STLAB[s.kind].toLowerCase()}{s.auto?" (not marked)":""}</span></span>
               ))}
               {staff.flagged.length>12&&<span style={{fontSize:12,color:"var(--c-94)",alignSelf:"center"}}>+{staff.flagged.length-12} more</span>}
             </div>
           </div>
-        ):<div style={{padding:"0 16px 16px",fontSize:13,color:"var(--tx-grn2)",fontWeight:600}}>✓ All marked staff are present.</div>}
+        ):<div style={{padding:"0 16px 16px",fontSize:13,color:"var(--tx-grn2)",fontWeight:600}}>✓ Every staff member is present.</div>}
       </div>
 
       {/* Student attendance by section */}
@@ -23317,6 +23328,26 @@ function __staffGreetingName(u){
   return n.replace(/^(mr|ms|mrs|miss|dr)\.?\s+/i,"").split(/[\s(]/)[0]||"there";
 }
 function _attId(username,date){return safeId(safeId(username)+"__"+date);}
+// ONE rule for a staff member's attendance on a day, shared by the Director's dashboards and the staff
+// register. Each screen used to carry its own copy and they drifted: the workspace dashboard — the main one —
+// never had the "unmarked = absent" rule at all, so it reported an all-clear while the register listed the
+// same teachers absent (director, 2026-10-13: "on the main dashboard it does not show any absent teacher now
+// when i open the register then it shows").
+// Order matters, and is the register's: an explicit record always wins, then approved leave, then the people
+// the rule must never libel (whoever is looking, and the Director, who do not clock in), then the staff
+// exempt from clocking at all, and only then the unmarked-is-absent rule.
+function __staffDayStatus(u,date,o){
+  o=o||{};
+  var rec=(o.att||{})[_attId(__staffKey(u),date)];
+  if(rec)return{key:rec.status||"present",rec:rec,auto:false};
+  var onLeave=Object.values(o.leave||{}).some(function(l){return l&&l.status==="approved"&&__ttNorm(l.teacherName)===__ttNorm(u.name)&&l.from<=date&&l.to>=date;});
+  if(onLeave)return{key:"leave",rec:null,auto:false};
+  if(o.self&&String(u.username)===String(o.self))return{key:"none",rec:null,auto:false};
+  if(u.role==="admin"&&(u.username==="director"||(typeof DEFAULT_USERS!=="undefined"&&DEFAULT_USERS[u.username]&&DEFAULT_USERS[u.username].fees!==false)))return{key:"none",rec:null,auto:false};
+  if((o.noClock||[]).indexOf(String(u.username))>=0)return{key:"present",rec:null,auto:false,noclock:true};
+  if(typeof __staffAutoAbsent==="function"&&__staffAutoAbsent(date,o.todayStr,o.nowHM,o.lateAfter,o.cal))return{key:"autoabs",rec:null,auto:true};
+  return{key:"none",rec:null,auto:false};
+}
 // Should an UNMARKED staff member (no record, no approved leave) be displayed ABSENT for `dateStr`?
 // Yes on working days once the day is underway — any past weekday, or today after the late-cutoff —
 // never on Sundays, calendar Holidays, or future dates. Used by the cockpit, the Register and Salary
@@ -23675,23 +23706,15 @@ function StaffAttendanceRegister({user,isDirector,setTab:goTab,sharedAttDB,share
   // Usernames exempt from the unmarked-is-absent rule. Config-driven, not hardcoded, so the Director can add or
   // remove a person when staffing changes instead of needing the file edited.
   const _noClock=useMemo(function(){return (typeof __noClockList==="function")?__noClockList(attDB.data):[];},[attDB.data]);
+  // The rule itself lives in __staffDayStatus, so the Director's dashboard shows exactly what this register
+  // shows. It used to be written out here and again on each dashboard, and the main dashboard's copy never got
+  // the unmarked-is-absent rule at all. Behaviour here is unchanged: explicit record, then approved leave, then
+  // never auto-absenting whoever is looking or the Director (they do not clock in), then the staff listed in
+  // __config.noClock who never mark the register, then the rule itself.
   function statusFor(u){
-    var rec=attDB.data&&attDB.data[_attId(__staffKey(u),date)];
-    if(rec)return{key:rec.status||"present",rec:rec};
-    var onLeave=Object.values(leaveDB.data||{}).some(function(l){return l&&l.status==="approved"&&__ttNorm(l.teacherName)===__ttNorm(u.name)&&l.from<=date&&l.to>=date;});
-    if(onLeave)return{key:"leave",rec:null};
-    // NEVER auto-absent the person running the register (you're obviously present) or the Director (they don't
-    // clock in) — the "unmarked = absent" rule is for teachers only. Without this the Director sees themselves ABSENT.
-    var _isHead=String(u.username)===String(user.username)||(u.role==="admin"&&(u.username==="director"||(DEFAULT_USERS[u.username]&&DEFAULT_USERS[u.username].fees!==false)));
-    if(_isHead)return{key:"none",rec:null};
-    // ── "Doesn't clock in" staff ── some teachers (e.g. those coming across from the ICSE campus) never mark the
-    // register, so the unmarked = absent rule libels them every single day. Listed in __config.noClock, they count
-    // as PRESENT unless the Director explicitly marks them otherwise — an explicit record above always wins, so
-    // marking them absent still works normally.
-    if(_noClock.indexOf(String(u.username))>=0)return{key:"present",rec:null,noclock:true};
-    // director's rule: still unmarked once the day is underway (or any past weekday) = ABSENT (auto)
-    if(typeof __staffAutoAbsent==="function"&&__staffAutoAbsent(date,_attTodayStr(),new Date().toTimeString().slice(0,5),(cfg&&cfg.lateAfter)||"",calDB.data))return{key:"autoabs",rec:null};
-    return{key:"none",rec:null};
+    return __staffDayStatus(u,date,{att:attDB.data,leave:leaveDB.data,cal:calDB.data,noClock:_noClock,
+      self:user&&user.username,todayStr:_attTodayStr(),nowHM:new Date().toTimeString().slice(0,5),
+      lateAfter:(cfg&&cfg.lateAfter)||""});
   }
   async function setStatus(u,status){
     if(!isDirector||statusBusy)return;
