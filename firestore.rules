@@ -364,6 +364,39 @@ service cloud.firestore {
     // Pre-admission registration enquiries — office, VP & admin
     match /registrations/{id}     { allow read, write: if isAny(['admin','vp','office']) && inGreencity(); }
 
+    // ── Online registration form (steppingstone.school/apply.html) ──────────────────────────────────────
+    // A parent who is NOT signed in may CREATE one registration on the campus they chose. No read, update or
+    // delete from the public, so a parent can never see another family's form. Every field is whitelisted and
+    // size-capped; status is always 'pending' and payVerified always false, so a submitted UPI reference is only
+    // a CLAIM until the office matches the bank credit (same model as paymentIntents).
+    function optStr(d, k, n) { return !(k in d) || (d[k] is string && d[k].size() <= n); }
+    function reqStr(d, k, n) { return (k in d) && d[k] is string && d[k].size() >= 1 && d[k].size() <= n; }
+    function isOnlineRegistration(campus) {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['name','classSought','dob','gender','father','mother','contact','address','prevSchool',
+                               'notes','regNo','status','by','at','source','campus','session','firstName','middleName',
+                               'lastName','fatherOcc','motherOcc','motherMobile','email','city','pin','prevBoard',
+                               'prevClass','transport','transportArea','sibling','heardFrom','photo','payAmount',
+                               'payRef','payerName','payVerified','createdAt'])
+        && d.keys().hasAll(['name','classSought','dob','gender','father','contact','address','regNo','status','by',
+                            'at','source','campus','session','payAmount','payRef','payVerified','createdAt'])
+        && d.source == 'Online form' && d.by == 'Online form' && d.status == 'pending' && d.payVerified == false
+        && d.campus == campus && d.createdAt == request.time
+        && d.payAmount == 500 && d.payRef is string && d.payRef.matches('^[A-Za-z0-9]{8,30}$')
+        && d.regNo is string && d.regNo.matches('^WEB-[A-Z0-9]{4}[A-Z]$')
+        && d.contact is string && d.contact.matches('^[6-9][0-9]{9}$')
+        && reqStr(d,'name',90) && reqStr(d,'classSought',20) && reqStr(d,'dob',10) && reqStr(d,'gender',10)
+        && reqStr(d,'father',80) && reqStr(d,'address',300) && reqStr(d,'at',40) && reqStr(d,'session',9)
+        && optStr(d,'mother',80) && optStr(d,'prevSchool',120) && optStr(d,'notes',1200) && optStr(d,'firstName',40)
+        && optStr(d,'middleName',40) && optStr(d,'lastName',40) && optStr(d,'fatherOcc',80) && optStr(d,'motherOcc',80)
+        && optStr(d,'motherMobile',10) && optStr(d,'email',120) && optStr(d,'city',60) && optStr(d,'pin',6)
+        && optStr(d,'prevBoard',30) && optStr(d,'prevClass',20) && optStr(d,'transport',5) && optStr(d,'transportArea',120)
+        && optStr(d,'sibling',120) && optStr(d,'heardFrom',40) && optStr(d,'payerName',80) && optStr(d,'photo',150000);
+    }
+    match /registrations/{rid}    { allow create: if isOnlineRegistration('greencity'); }
+    match /{brc}/{brid}           { allow create: if brc in ['allgirls_registrations','maniram_registrations','surajkund_registrations']
+                                                  && isOnlineRegistration(brc.split('_')[0]); }
+
     // Online UPI payment claims: a signed-in parent submits their own (create only, can't read others);
     // office/admin read the queue and confirm/reject. A claim is just a CLAIM — no money moves until the
     // office verifies the credit and records the receipt, so a spoofed admNo achieves nothing.
