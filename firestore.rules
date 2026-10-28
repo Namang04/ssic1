@@ -382,7 +382,7 @@ service cloud.firestore {
                             'at','source','campus','session','payAmount','payRef','payVerified','createdAt'])
         && d.source == 'Online form' && d.by == 'Online form' && d.status == 'pending' && d.payVerified == false
         && d.campus == campus && d.createdAt == request.time
-        && d.payAmount == 500 && d.payRef is string && d.payRef.matches('^[A-Za-z0-9]{8,30}$')
+        && d.payAmount == 500 && d.payRef is string && d.payRef.matches('^[0-9]{12}$')
         && d.regNo is string && d.regNo.matches('^WEB-[A-Z0-9]{4}[A-Z]$')
         && d.contact is string && d.contact.matches('^[6-9][0-9]{9}$')
         && reqStr(d,'name',90) && reqStr(d,'classSought',20) && reqStr(d,'dob',10) && reqStr(d,'gender',10)
