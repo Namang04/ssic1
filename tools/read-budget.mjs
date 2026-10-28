@@ -127,4 +127,7 @@ for (const role of ROLES) {
 }
 const daily = report.admin.total * 3 + report.office.total * 3 + report.teacher.total * 25;
 console.log(`  A day of ~3 Director, ~3 office and ~25 teacher sign-ins: ${daily.toLocaleString()} reads`);
-console.log(`  Free allowance: 50,000/day\n`);
+console.log(`  Free allowance: 50,000/day`);
+console.log(`\n  Note: attendance is windowed only while the dashboard is open \u2014 the figures above are a`);
+console.log(`  sign-in that stays there, which is what a re-open after 30 minutes away costs. Opening any`);
+console.log(`  other screen pulls the rest of the session once (${DOCS.attendance} documents).\n`);

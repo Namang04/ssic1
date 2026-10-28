@@ -2975,6 +2975,21 @@ function useFirestore(collName,enabled=true,opts){
     window.addEventListener("branchchange",onBranch);
     return()=>{window.removeEventListener("branchchange",onBranch);if(unsubRef.current)unsubRef.current();};
   },[collName,enabled,since,field,keepKey]);
+  // Pull in an older stretch that the live window does not cover, once, and merge it under the live data.
+  // A second call for a range already covered does nothing, so screens can ask freely.
+  const rangeRef=useRef(null);
+  const loadRange=useCallback(async(from,to)=>{
+    if(!from||!window.__db||!window.__fbGetDocs||!window.__fbQuery||!window.__fbWhere)return;
+    if(rangeRef.current&&rangeRef.current<=from)return;                 // already have this far back
+    rangeRef.current=from;
+    try{
+      const snap=await window.__fbGetDocs(window.__fbQuery(window.__fbCollection(window.__db,collName),
+        window.__fbWhere(field,">=",from),window.__fbWhere(field,"<=",to||"9999-12-31")));
+      const d={};snap.forEach(dc=>{d[dc.id]=dc.data();});
+      setData(prev=>Object.assign({},d,prev));                          // the live window wins on overlap
+    }catch(e){rangeRef.current=null;}                                    // a failure must not block a retry
+  },[collName,field]);
+
   // Every write goes through here, so the recovery lives here too: one retry on a shut-down client, and a
   // message a teacher can act on if it still will not go through.
   const __retry=useCallback(async(run)=>{
@@ -2997,7 +3012,7 @@ function useFirestore(collName,enabled=true,opts){
   const visible=useMemo(()=>{const o={};for(const k in data){const v=data[k];if(!(v&&v.deleted===true))o[k]=v;}return o;},[data]);
   const trash=useMemo(()=>{const o={};for(const k in data){const v=data[k];if(v&&v.deleted===true)o[k]=v;}return o;},[data]);
   const restore=useCallback(async(id)=>{const v=data[id];if(!v)return;const n=Object.assign({},v);delete n.deleted;delete n.deletedBy;delete n.deletedAt;n.restoredAt=new Date().toISOString();await set(id,n);logAudit("restore",collName,id,v,n);},[data,set,collName]);
-  return{data:visible,trash,allData:data,loading,set,patch,del,restore,collName};
+  return{data:visible,trash,allData:data,loading,set,patch,del,restore,collName,loadRange};
 }
 
 // Subscribe to ONE document (not the whole collection). Needed for shared config docs like
@@ -23334,6 +23349,10 @@ function AdmissionWelcome({user,studentsDB}){
 // STAFF SELF-ATTENDANCE (geofenced, once-per-day, director-controlled)
 // ══════════════════════════════════════════════════════
 function _attTodayStr(){return new Date().toLocaleDateString("en-CA",{timeZone:"Asia/Kolkata"});} // IST date key
+// The first day of a session: "2026-27" starts 1 April 2026. Used when a screen needs the whole year back.
+function __sessionStart(sess){var y=parseInt(String(sess||"").slice(0,4),10);
+  if(!y){var t=_attTodayStr();y=+t.slice(0,4);if(+t.slice(5,7)<4)y--;}
+  return y+"-04-01";}
 // The first day of the month N months back, IST. Used as the start of a subscription window.
 function __monthsBack(n){var t=_attTodayStr(),y=+t.slice(0,4),m=+t.slice(5,7)-1-(n||0);
   while(m<0){m+=12;y--;}
@@ -24404,7 +24423,12 @@ function App(){
   const syllabusDB=useFirestore("syllabus", _curric&&_onTab("syllabus","copies","testcenter"));
   const copyChecksDB=useFirestore("copyChecks", _curric&&_onTab("copies","syllabus","testcenter"));
   const studentsDB=useFirestore("students",!!user&&user.role!=="parent"); // ParentView reads exactly one class document
-  const attendanceDBraw=useFirestore("attendance",_heavyOK);
+  // Attendance grows every school day and every dashboard reads ONE day of it, so a sign-in starts with a
+  // two-month window. The moment any other screen is opened the rest of the session is pulled in one go (see
+  // the effect below), so nothing that works out a percentage or a trend ever sees a short history. Doing it
+  // in one place beats threading a loader through the fourteen screens that read back.
+  const _attWin=__monthsBack(1);
+  const attendanceDBraw=useFirestore("attendance",_heavyOK,{since:_attWin,field:"date"});
   const usersDB=useFirestore("users", !!user&&["admin","office","vp"].includes(user.role)); // every read branch of the users rule needs signedIn(), and only these roles may LIST the collection — the others were opening a query that is always denied, then silently falling back to the seeded stub
   // A student never reaches the tabbed shell — StudentPortal is returned before it — so a tab gate would
   // leave their practice history empty. They keep their subscription; staff load it with the screen.
@@ -24471,7 +24495,7 @@ function App(){
     return start+"-"+String((start+1)%100).padStart(2,"0");
   }
   function _fsess(data){var o={};Object.keys(data||{}).forEach(function(k){var d=data[k];if(String(k).indexOf("__")===0){o[k]=d;return;}if(((d&&d.session)||"2026-27")===vSess)o[k]=d;});return o;}
-  function _wrapSess(db){return{data:_fsess(db.data),trash:db.trash,allData:db.allData,loading:db.loading,collName:db.collName,patch:db.patch,set:function(id,v){return db.set(id,(String(id).indexOf("__")===0||(v&&v.session))?v:Object.assign({},v,{session:(v&&v.date)?__sessionForDate(v.date):curSession}));},del:db.del,restore:db.restore,raw:db};}
+  function _wrapSess(db){return{data:_fsess(db.data),trash:db.trash,allData:db.allData,loading:db.loading,collName:db.collName,loadRange:db.loadRange,patch:db.patch,set:function(id,v){return db.set(id,(String(id).indexOf("__")===0||(v&&v.session))?v:Object.assign({},v,{session:(v&&v.date)?__sessionForDate(v.date):curSession}));},del:db.del,restore:db.restore,raw:db};}
   useEffect(function(){
     try{ window.__DIAG={
       session:curSession, viewing:vSess,
@@ -24483,6 +24507,12 @@ function App(){
   const feesDB=_wrapSess(feesDBraw);
   const testsDB=__wrapMergedSubj(_wrapSess(testsDBraw)); // Cl 9/10: old Physics/Chemistry/Biology tests read back as Science
   const attendanceDB=_wrapSess(attendanceDBraw);
+  // Leaving the dashboard — or being a pupil or parent, who never reach the tabbed screens at all — means the
+  // whole session is needed. One fetch, merged under the live window; asking twice costs nothing.
+  useEffect(()=>{
+    const needsAll=tab!=="dashboard"||user.role==="student"||user.role==="parent";
+    if(needsAll&&attendanceDBraw.loadRange)attendanceDBraw.loadRange(__sessionStart(curSession),_attTodayStr());
+  },[tab,user.role,curSession,attendanceDBraw.loadRange]);
   const examsDB=_wrapSess(examsDBraw); // C7: term exams are session-scoped like fees/tests/attendance — the Apr 2027 rollover no longer mixes two years' exams & report cards
   const registrationsDB=useFirestore("registrations", !!user&&(user.role==="office"||user.role==="vp"||(user.role==="admin"&&user.fees!==false))); // office operates; Director + VP monitor the same owned pipeline
   const disciplineDB=useFirestore("discipline", !!user&&["admin","vp","office","teacher"].indexOf(user.role)>=0); // per-student behaviour incidents

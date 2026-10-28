@@ -6473,10 +6473,15 @@ function useBranchConfig() {
     loading: metaDB.loading
   };
 }
-function useFirestore(collName, enabled = true) {
+function useFirestore(collName, enabled = true, opts) {
+  const since = opts && opts.since,
+    field = opts && opts.field || "date",
+    keep = opts && opts.keep || null;
+  const keepKey = (keep || []).join(",");
   const [data, setData] = useState({});
   const [loading, setLoading] = useState(true);
   const unsubRef = useRef(null);
+  const keepRef = useRef({});
   useEffect(() => {
     if (!enabled) {
       if (unsubRef.current) {
@@ -6491,12 +6496,24 @@ function useFirestore(collName, enabled = true) {
       if (!window.__db) return;
       if (unsubRef.current) unsubRef.current();
       setLoading(true);
-      unsubRef.current = window.__fbOnSnapshot(window.__fbCollection(window.__db, collName), snap => {
+      if (keep && keep.length && window.__fbGetDoc && window.__fbDoc) {
+        Promise.all(keep.map(id => window.__fbGetDoc(window.__fbDoc(window.__db, collName, id)).then(sn => sn && sn.exists && sn.exists() ? [id, sn.data()] : null).catch(() => null))).then(rows => {
+          const k = {};
+          rows.forEach(r => {
+            if (r) k[r[0]] = r[1];
+          });
+          keepRef.current = k;
+          setData(prev => Object.assign({}, k, prev));
+        });
+      }
+      const ref = window.__fbCollection(window.__db, collName);
+      const src = since && window.__fbQuery && window.__fbWhere ? window.__fbQuery(ref, window.__fbWhere(field, ">=", since)) : ref;
+      unsubRef.current = window.__fbOnSnapshot(src, snap => {
         const d = {};
         snap.forEach(dc => {
           d[dc.id] = dc.data();
         });
-        setData(d);
+        setData(Object.assign({}, keepRef.current, d));
         setLoading(false);
       }, err => {
         setLoading(false);
@@ -6506,6 +6523,7 @@ function useFirestore(collName, enabled = true) {
       once: true
     });
     const onBranch = () => {
+      keepRef.current = {};
       setData({});
       setup();
     };
@@ -6514,7 +6532,7 @@ function useFirestore(collName, enabled = true) {
       window.removeEventListener("branchchange", onBranch);
       if (unsubRef.current) unsubRef.current();
     };
-  }, [collName, enabled]);
+  }, [collName, enabled, since, field, keepKey]);
   const __retry = useCallback(async run => {
     try {
       return await run();
@@ -81979,6 +81997,16 @@ function _attTodayStr() {
     timeZone: "Asia/Kolkata"
   });
 }
+function __monthsBack(n) {
+  var t = _attTodayStr(),
+    y = +t.slice(0, 4),
+    m = +t.slice(5, 7) - 1 - (n || 0);
+  while (m < 0) {
+    m += 12;
+    y--;
+  }
+  return y + "-" + String(m + 1).padStart(2, "0") + "-01";
+}
 function __attDateStrFrom(d) {
   return d.toLocaleDateString("en-CA", {
     timeZone: "Asia/Kolkata"
@@ -85639,7 +85667,12 @@ function App() {
   const noticesDB = useFirestore("notices");
   const calendarDB = useFirestore("calendar", !!user);
   const leaveDB = useFirestore("leaves", !!user && ["admin", "vp", "teacher", "office"].includes(user.role));
-  const staffAttDB = useFirestore("staffAttendance", !!user && (user.role === "admin" || user.role === "vp"));
+  const _staffWin = __monthsBack(1);
+  const staffAttDB = useFirestore("staffAttendance", !!user && (user.role === "admin" || user.role === "vp"), {
+    since: _staffWin,
+    field: "date",
+    keep: ["__config"]
+  });
   const admDB = useFirestore("admissions", !!user && user.role === "admin" && user.fees !== false);
   const ttDB = useFirestore("timetables", !!user && (user.role === "admin" || user.role === "teacher" || user.role === "vp"));
   const ttSetDB = useFirestore("timetableSettings", !!user && (user.role === "admin" || user.role === "teacher" || user.role === "vp"));
@@ -87145,7 +87178,7 @@ function App() {
     feeCloseDB: feeCloseDB
   }), tab === "salary" && canFees && React.createElement(SalaryPanel, {
     user: user,
-    sharedAttDB: isDirector ? staffAttDB : null,
+    sharedAttDB: null,
     sharedUsersDB: usersDB,
     sharedCalDB: calendarDB,
     sharedLeaveDB: leaveDB
@@ -87238,7 +87271,7 @@ function App() {
     user: user,
     isDirector: isDirector,
     setTab: setTab,
-    sharedAttDB: staffAttDB,
+    sharedAttDB: null,
     sharedUsersDB: usersDB,
     sharedLeaveDB: leaveDB,
     sharedCalDB: calendarDB,

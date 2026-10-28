@@ -81,4 +81,31 @@ ok('and so does thirteen',               __monthsBack(13) === "2024-12-01");
 globalThis._attTodayStr = () => "2026-10-28";
 ok('a mid-year month is right',          __monthsBack(1) === "2026-09-01");
 ok('the month is always two digits',     /^\d{4}-\d{2}-01$/.test(__monthsBack(2)));
+
+// ── attendance: windowed for the dashboard, whole session everywhere else ──
+// Fourteen screens read attendance further back than today — percentages, trends, the register browsing an
+// older date. Rather than thread a loader through all fourteen (fourteen chances to show a quietly wrong
+// percentage), the window is lifted in ONE place the moment anything other than the dashboard is opened.
+ok('attendance is windowed at App level', /const attendanceDBraw=useFirestore\("attendance",_heavyOK,\{since:_attWin,field:"date"\}\)/.test(app));
+ok('the window is two months',            /const _attWin=__monthsBack\(1\)/.test(app));
+ok('leaving the dashboard lifts it',      /tab!=="dashboard"[\s\S]{0,120}loadRange\(__sessionStart\(curSession\),_attTodayStr\(\)\)/.test(app));
+ok('pupils and parents get it too, having no tabs', /user\.role==="student"\|\|user\.role==="parent"/.test(app.slice(app.indexOf('needsAll'), app.indexOf('needsAll') + 200)));
+ok('the loader is offered by the hook',   /return\{data:visible,[^\n]*loadRange\}/.test(src));
+ok('and survives the session wrapper',    /_wrapSess\(db\)\{return\{[^\n]*loadRange:db\.loadRange/.test(src));
+ok('a range already fetched is not refetched', /if\(rangeRef\.current&&rangeRef\.current<=from\)return;/.test(hook));
+ok('live data wins where the two overlap', /setData\(prev=>Object\.assign\(\{\},d,prev\)\)/.test(hook));
+ok('a failed fetch can be retried',       /catch\(e\)\{rangeRef\.current=null;\}/.test(hook));
+
+// __sessionStart: the school year runs April to March.
+const ss = (() => { const i = src.search(/^function __sessionStart\(/m);
+  let d = 0, j = src.indexOf('{', src.indexOf(')', i));
+  for (;; j++) { const c = src[j]; if (c === '{') d++; else if (c === '}') { if (--d === 0) break; } }
+  return src.slice(i, j + 1); })();
+(0, eval)(ss.replace(/^function __sessionStart/, 'globalThis.__sessionStart = function __sessionStart'));
+ok('a session starts on 1 April',     __sessionStart("2026-27") === "2026-04-01");
+ok('an older session too',            __sessionStart("2024-25") === "2024-04-01");
+globalThis._attTodayStr = () => "2026-02-14";
+ok('no session named: February belongs to the year before', __sessionStart("") === "2025-04-01");
+globalThis._attTodayStr = () => "2026-10-28";
+ok('and October to the current one',  __sessionStart(null) === "2026-04-01");
 console.log(`\n  ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
