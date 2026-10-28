@@ -24370,13 +24370,23 @@ function App(){
   // Firestore free quota. ParentView fetches just its own child's class instead (scoped query below).
   const _heavyOK=!!user&&user.role!=="parent";
   const testsDBraw=useFirestore("tests",_heavyOK);
-  const topicsDB=useFirestore("topics", !!user&&["admin","vp","teacher"].includes(user.role)); // curriculum workspaces only — office, parent and student screens never consume this full collection
-  const syllabusDB=useFirestore("syllabus", !!user&&["admin","vp","teacher"].includes(user.role));
-  const copyChecksDB=useFirestore("copyChecks", !!user&&["admin","vp","teacher"].includes(user.role));
+  // ── Sign-in cost ──────────────────────────────────────────────────────────────────────────────────────
+  // Reads were running at ~815k a day against a 50k free allowance, because signing in downloaded whole
+  // collections that only one screen ever looks at. These four are needed by particular tabs and by nothing on
+  // the dashboard, so they load when that tab is opened and are dropped when it is left. Measured with
+  // `node tools/read-budget.mjs`. The tab lists below are the complete set of screens each one is handed to —
+  // ADD TO THEM if a new screen starts using that collection, or it will quietly read empty.
+  const _onTab=(...t)=>t.indexOf(tab)>=0;
+  const _curric=!!user&&["admin","vp","teacher"].includes(user.role);
+  const topicsDB=useFirestore("topics", _curric&&_onTab("topics","copies","syllabus","testcenter","enter","ai")); // curriculum workspaces only — office, parent and student screens never consume this full collection
+  const syllabusDB=useFirestore("syllabus", _curric&&_onTab("syllabus","copies","testcenter"));
+  const copyChecksDB=useFirestore("copyChecks", _curric&&_onTab("copies","syllabus","testcenter"));
   const studentsDB=useFirestore("students",!!user&&user.role!=="parent"); // ParentView reads exactly one class document
   const attendanceDBraw=useFirestore("attendance",_heavyOK);
   const usersDB=useFirestore("users", !!user&&["admin","office","vp"].includes(user.role)); // every read branch of the users rule needs signedIn(), and only these roles may LIST the collection — the others were opening a query that is always denied, then silently falling back to the seeded stub
-  const wrongDB=useFirestore("wrongAnswers", !!user&&user.role!=="parent"); // students practice + staff review — parents never read it
+  // A student never reaches the tabbed shell — StudentPortal is returned before it — so a tab gate would
+  // leave their practice history empty. They keep their subscription; staff load it with the screen.
+  const wrongDB=useFirestore("wrongAnswers", !!user&&user.role!=="parent"&&(user.role==="student"||_onTab("admin","directory","focusgroup","insights","profile")));
   const feesDBraw=useFirestore("fees", !!user&&((user.role==="admin"&&user.fees!==false)||user.role==="office"));
   const feeCloseDB=useFirestore("feeDayCloses", !!user&&((user.role==="admin"&&user.fees!==false)||user.role==="office"));
   const paymentIntentsDB=useFirestore("paymentIntents", !!user&&((user.role==="admin"&&user.fees!==false)||user.role==="office")); // one shared subscription powers office Home + Fees verification
