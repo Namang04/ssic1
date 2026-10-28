@@ -24510,9 +24510,12 @@ function App(){
   // Leaving the dashboard — or being a pupil or parent, who never reach the tabbed screens at all — means the
   // whole session is needed. One fetch, merged under the live window; asking twice costs nothing.
   useEffect(()=>{
-    const needsAll=tab!=="dashboard"||user.role==="student"||user.role==="parent";
+    // `user` is null until someone signs in, and a dependency array is read ON EVERY RENDER — including the
+    // first, at the login screen. Reading user.role unguarded here threw before the app could draw anything.
+    const _r=(user&&user.role)||"";
+    const needsAll=!!user&&(tab!=="dashboard"||_r==="student"||_r==="parent");
     if(needsAll&&attendanceDBraw.loadRange)attendanceDBraw.loadRange(__sessionStart(curSession),_attTodayStr());
-  },[tab,user.role,curSession,attendanceDBraw.loadRange]);
+  },[tab,user&&user.role,curSession,attendanceDBraw.loadRange]);
   const examsDB=_wrapSess(examsDBraw); // C7: term exams are session-scoped like fees/tests/attendance — the Apr 2027 rollover no longer mixes two years' exams & report cards
   const registrationsDB=useFirestore("registrations", !!user&&(user.role==="office"||user.role==="vp"||(user.role==="admin"&&user.fees!==false))); // office operates; Director + VP monitor the same owned pipeline
   const disciplineDB=useFirestore("discipline", !!user&&["admin","vp","office","teacher"].indexOf(user.role)>=0); // per-student behaviour incidents

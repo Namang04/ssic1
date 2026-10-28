@@ -6533,6 +6533,22 @@ function useFirestore(collName, enabled = true, opts) {
       if (unsubRef.current) unsubRef.current();
     };
   }, [collName, enabled, since, field, keepKey]);
+  const rangeRef = useRef(null);
+  const loadRange = useCallback(async (from, to) => {
+    if (!from || !window.__db || !window.__fbGetDocs || !window.__fbQuery || !window.__fbWhere) return;
+    if (rangeRef.current && rangeRef.current <= from) return;
+    rangeRef.current = from;
+    try {
+      const snap = await window.__fbGetDocs(window.__fbQuery(window.__fbCollection(window.__db, collName), window.__fbWhere(field, ">=", from), window.__fbWhere(field, "<=", to || "9999-12-31")));
+      const d = {};
+      snap.forEach(dc => {
+        d[dc.id] = dc.data();
+      });
+      setData(prev => Object.assign({}, d, prev));
+    } catch (e) {
+      rangeRef.current = null;
+    }
+  }, [collName, field]);
   const __retry = useCallback(async run => {
     try {
       return await run();
@@ -6594,7 +6610,8 @@ function useFirestore(collName, enabled = true, opts) {
     patch,
     del,
     restore,
-    collName
+    collName,
+    loadRange
   };
 }
 function useSharedDoc(collName, docId, enabled = true) {
@@ -81997,6 +82014,15 @@ function _attTodayStr() {
     timeZone: "Asia/Kolkata"
   });
 }
+function __sessionStart(sess) {
+  var y = parseInt(String(sess || "").slice(0, 4), 10);
+  if (!y) {
+    var t = _attTodayStr();
+    y = +t.slice(0, 4);
+    if (+t.slice(5, 7) < 4) y--;
+  }
+  return y + "-04-01";
+}
 function __monthsBack(n) {
   var t = _attTodayStr(),
     y = +t.slice(0, 4),
@@ -85657,7 +85683,11 @@ function App() {
   const syllabusDB = useFirestore("syllabus", _curric && _onTab("syllabus", "copies", "testcenter"));
   const copyChecksDB = useFirestore("copyChecks", _curric && _onTab("copies", "syllabus", "testcenter"));
   const studentsDB = useFirestore("students", !!user && user.role !== "parent");
-  const attendanceDBraw = useFirestore("attendance", _heavyOK);
+  const _attWin = __monthsBack(1);
+  const attendanceDBraw = useFirestore("attendance", _heavyOK, {
+    since: _attWin,
+    field: "date"
+  });
   const usersDB = useFirestore("users", !!user && ["admin", "office", "vp"].includes(user.role));
   const wrongDB = useFirestore("wrongAnswers", !!user && user.role !== "parent" && (user.role === "student" || _onTab("admin", "directory", "focusgroup", "insights", "profile")));
   const feesDBraw = useFirestore("fees", !!user && (user.role === "admin" && user.fees !== false || user.role === "office"));
@@ -85747,6 +85777,7 @@ function App() {
       allData: db.allData,
       loading: db.loading,
       collName: db.collName,
+      loadRange: db.loadRange,
       patch: db.patch,
       set: function (id, v) {
         return db.set(id, String(id).indexOf("__") === 0 || v && v.session ? v : Object.assign({}, v, {
@@ -85776,6 +85807,10 @@ function App() {
   const feesDB = _wrapSess(feesDBraw);
   const testsDB = __wrapMergedSubj(_wrapSess(testsDBraw));
   const attendanceDB = _wrapSess(attendanceDBraw);
+  useEffect(() => {
+    const needsAll = tab !== "dashboard" || user.role === "student" || user.role === "parent";
+    if (needsAll && attendanceDBraw.loadRange) attendanceDBraw.loadRange(__sessionStart(curSession), _attTodayStr());
+  }, [tab, user.role, curSession, attendanceDBraw.loadRange]);
   const examsDB = _wrapSess(examsDBraw);
   const registrationsDB = useFirestore("registrations", !!user && (user.role === "office" || user.role === "vp" || user.role === "admin" && user.fees !== false));
   const disciplineDB = useFirestore("discipline", !!user && ["admin", "vp", "office", "teacher"].indexOf(user.role) >= 0);
