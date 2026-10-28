@@ -33,14 +33,44 @@ let d = 0, appEnd = src.indexOf('{', appStart);
 for (let j = appEnd; ; j++) { const c = src[j]; if (c === '{') d++; else if (c === '}') { if (--d === 0) { appEnd = j; break; } } }
 const app = src.slice(appStart, appEnd);
 
-// useFirestore("name", <gate>) — the gate text tells us which roles actually subscribe.
-const subs = [];
-const re = /useFirestore\(\s*"([a-zA-Z]+)"\s*(?:,\s*([^\n]*?))?\)\s*[;,]/g;
-let m;
-while ((m = re.exec(app))) {
-  const gate = (m[2] || '').replace(/\/\/.*$/, '').trim();
-  subs.push({ coll: m[1], gate: gate || 'always' });
+// How fast each dated collection grows, so a windowed subscription can be costed rather than guessed.
+// Documents ÷ months of the session so far (April→October 2026 ≈ 7).
+const PER_MONTH = { staffAttendance: 512, attendance: 332, fees: 361, teacherLogs: 827 };
+
+// useFirestore("name", <gate>, <opts>) — the gate says who subscribes, the opts say how much they get.
+// Gates contain their own brackets, so the call is parsed by balancing them rather than by regex.
+function callsIn(text) {
+  const out = [];
+  const re = /useFirestore\(\s*"([a-zA-Z]+)"/g;
+  let m;
+  while ((m = re.exec(text))) {
+    let i = m.index + m[0].length, depth = 1, args = [], cur = '', q = null;
+    for (; i < text.length && depth > 0; i++) {
+      const c = text[i];
+      if (q) { cur += c; if (c === q && text[i - 1] !== '\\') q = null; continue; }
+      if (c === '"' || c === "'" || c === '`') { q = c; cur += c; continue; }
+      if ('([{'.includes(c)) depth++;
+      if (')]}'.includes(c)) { depth--; if (!depth) break; }
+      if (c === ',' && depth === 1) { args.push(cur); cur = ''; continue; }
+      cur += c;
+    }
+    args.push(cur);
+    out.push({ coll: m[1], args: args.map(a => a.replace(/\/\/.*$/gm, '').trim()).filter(Boolean) });
+  }
+  return out;
 }
+const subs = callsIn(app).map(c => {
+  const gate = c.args[0] || 'always';
+  const opts = c.args.slice(1).join(',');
+  let months = null;
+  if (/since:/.test(opts)) {
+    const varName = (opts.match(/since:\s*(\w+)/) || [])[1] || '';
+    const direct = opts.match(/__monthsBack\((\d+)\)/);
+    const viaVar = varName && app.match(new RegExp('const ' + varName + '=__monthsBack\\((\\d+)\\)'));
+    months = Number((direct && direct[1]) ?? (viaVar && viaVar[1]) ?? 1) + 1; // n months back, plus this one
+  }
+  return { coll: c.coll, gate, months, keeps: /keep:/.test(opts) };
+});
 
 const ROLES = ['admin', 'vp', 'office', 'teacher', 'parent', 'student'];
 // Does this gate let `role` through? The gates are plain role tests, so read them rather than eval them.
@@ -73,7 +103,12 @@ function subscribes(gate, role) {
 const report = {};
 for (const role of ROLES) {
   const rows = subs.filter(s => subscribes(s.gate, role))
-    .map(s => ({ coll: s.coll, docs: DOCS[s.coll] ?? 0, est: ESTIMATED.has(s.coll) }))
+    .map(s => {
+      const full = DOCS[s.coll] ?? 0;
+      const windowed = s.months != null && PER_MONTH[s.coll]
+        ? Math.min(full, s.months * PER_MONTH[s.coll] + (s.keeps ? 1 : 0)) : full;
+      return { coll: s.coll, docs: windowed, full, est: ESTIMATED.has(s.coll), win: s.months };
+    })
     .sort((a, b) => b.docs - a.docs);
   report[role] = { total: rows.reduce((a, r) => a + r.docs, 0), rows };
 }
@@ -87,7 +122,7 @@ for (const role of ROLES) {
   if (!r.rows.length) { console.log(`  ${role.padEnd(8)} —  nothing at App level`); continue; }
   console.log(`  ${role.padEnd(8)} ${String(r.total).padStart(7)} docs   from ${r.rows.length} collections`);
   r.rows.filter(x => x.docs >= 100).forEach(x =>
-    console.log(`           ${String(x.docs).padStart(7)}  ${x.coll}${x.est ? '  (est)' : ''}`));
+    console.log(`           ${String(x.docs).padStart(7)}  ${x.coll}${x.est ? '  (est)' : ''}${x.win != null ? `   \u2190 windowed to ${x.win} months, was ${x.full}` : ''}`));
   console.log('');
 }
 const daily = report.admin.total * 3 + report.office.total * 3 + report.teacher.total * 25;

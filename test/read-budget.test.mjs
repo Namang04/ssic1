@@ -42,4 +42,43 @@ ok('curriculum data stays with staff who teach',
    ['topicsDB', 'syllabusDB', 'copyChecksDB'].every(v => /_curric/.test(gated[v].gate)));
 ok('and _curric means admin, VP and teacher only',
    /const _curric=!!user&&\["admin","vp","teacher"\]\.includes\(user\.role\)/.test(app));
+
+// ── windowed subscriptions ──
+// A dated window costs a read per document, so the window IS the bill. Its trap: any document without that
+// date field — "__config", carrying the late cutoff and the no-clock list — falls outside the query and
+// vanishes with no error, which would quietly turn every exempt teacher absent.
+const hook = (() => { const i = src.search(/^function useFirestore\(/m);
+  let d = 0, j = src.indexOf('{', src.indexOf(')', i)); const st = j;
+  for (;; j++) { const c = src[j]; if (c === '{') d++; else if (c === '}') { if (--d === 0) break; } }
+  return src.slice(st, j + 1); })();
+ok('a window can be asked for',            /const since=opts&&opts\.since/.test(hook));
+ok('and it is a where() on the query',     /__fbWhere\(field,">=",since\)/.test(hook));
+ok('no window means the whole collection', /:ref;/.test(hook) && /src=\(since&&/.test(hook));
+ok('undated documents are named and kept', /keep=\(opts&&opts\.keep\)\|\|null/.test(hook));
+ok('they are read as single documents',    /__fbGetDoc\(window\.__fbDoc\(window\.__db,collName,id\)\)/.test(hook));
+ok('and merged under every snapshot',      /setData\(Object\.assign\(\{\},keepRef\.current,d\)\)/.test(hook));
+ok('a campus switch drops the old config', /keepRef\.current=\{\};setData\(\{\}\);setup\(\)/.test(hook));
+ok('the window is part of the dependencies', /\[collName,enabled,since,field,keepKey\]/.test(hook));
+
+const staffSub = app.match(/const staffAttDB=useFirestore\("staffAttendance",[^\n]*\);/);
+ok('staff attendance is windowed at App level', !!staffSub && /since:_staffWin/.test(staffSub[0]));
+ok('and keeps its config document',             !!staffSub && /keep:\["__config"\]/.test(staffSub[0]));
+// The two screens that look further back must NOT share the windowed subscription.
+ok('the salary run loads its own',   /<SalaryPanel user=\{user\} sharedAttDB=\{null\}/.test(app));
+ok('the staff register loads its own', /<StaffAttendanceRegister[^\n]*sharedAttDB=\{null\}/.test(app));
+ok('and both still fall back to subscribing', (src.match(/const ownAttDB=useFirestore\("staffAttendance",!sharedAttDB\);/g) || []).length === 2);
+
+// __monthsBack: the window's start date.
+const mb = (() => { const i = src.search(/^function __monthsBack\(/m);
+  let d = 0, j = src.indexOf('{', src.indexOf(')', i));
+  for (;; j++) { const c = src[j]; if (c === '{') d++; else if (c === '}') { if (--d === 0) break; } }
+  return src.slice(i, j + 1); })();
+globalThis._attTodayStr = () => "2026-01-07";          // January, to catch the year rolling back
+(0, eval)(mb.replace(/^function __monthsBack/, 'globalThis.__monthsBack = function __monthsBack'));
+ok('this month starts at its first day', __monthsBack(0) === "2026-01-01");
+ok('one month back crosses the year',    __monthsBack(1) === "2025-12-01");
+ok('and so does thirteen',               __monthsBack(13) === "2024-12-01");
+globalThis._attTodayStr = () => "2026-10-28";
+ok('a mid-year month is right',          __monthsBack(1) === "2026-09-01");
+ok('the month is always two digits',     /^\d{4}-\d{2}-01$/.test(__monthsBack(2)));
 console.log(`\n  ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);

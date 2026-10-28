@@ -13979,12 +13979,17 @@ function DirectorWorkspaceDashboard({
     });
     return Object.values(m).filter(s => ["teacher", "vp", "admin", "office"].includes(s.role) && !s.left);
   }, [usersDB.data, __brDW]);
-  const staffStat = u => {
-    const rec = staffAttDB.data && staffAttDB.data[safeId(safeId(u.username) + "__" + today)];
-    if (rec) return rec.status || "present";
-    const onLeave = Object.values(leaveDB.data || {}).some(l => l && l.status === "approved" && __ttNorm(l.teacherName) === __ttNorm(u.name) && l.from <= today && l.to >= today);
-    return onLeave ? "leave" : "none";
-  };
+  const _dwNowHM = new Date().toTimeString().slice(0, 5);
+  const _dwStat = u => __staffDayStatus(u, today, {
+    att: staffAttDB.data,
+    leave: leaveDB.data,
+    cal: calendarDB && calendarDB.data,
+    noClock: typeof __noClockList === "function" ? __noClockList(staffAttDB.data) : [],
+    self: user && user.username,
+    todayStr: _attTodayStr(),
+    nowHM: _dwNowHM,
+    lateAfter: (staffAttDB.data && staffAttDB.data["__config"] || {}).lateAfter || ""
+  });
   const staff = useMemo(() => {
     const c = {
       present: 0,
@@ -13995,11 +14000,14 @@ function DirectorWorkspaceDashboard({
     };
     const out = [];
     staffRoster.forEach(u => {
-      const k = staffStat(u);
+      const r = _dwStat(u);
+      const k = r.key === "autoabs" ? "absent" : r.key;
+      if (c[k] === undefined) c[k] = 0;
       c[k]++;
       if (k === "absent" || k === "leave" || k === "late") out.push({
         name: u.name,
-        kind: k
+        kind: k,
+        auto: !!r.auto
       });
     });
     return {
@@ -14008,7 +14016,7 @@ function DirectorWorkspaceDashboard({
       total: staffRoster.length,
       inToday: c.present + c.late
     };
-  }, [staffRoster, staffAttDB.data, leaveDB.data]);
+  }, [staffRoster, staffAttDB.data, leaveDB.data, calendarDB && calendarDB.data, today, _dwNowHM, user]);
   const attendanceSections = useMemo(() => __attendanceSections(dirDB, studentsDB, academicRosterDB), [dirDB && dirDB.data, studentsDB.data, academicRosterDB && academicRosterDB.data]);
   const stu = useMemo(() => {
     let present = 0,
@@ -14203,15 +14211,16 @@ function DirectorWorkspaceDashboard({
   const visibleRooms = liveBoard.rows.filter(r => roomFilter === "all" || roomFilter === "issue" && r.state === "issue" || roomFilter === "cover" && r.state === "cover");
   const availableTeachers = useMemo(() => {
     const teaching = new Set(liveBoard.rows.filter(r => r.state !== "issue" && r.teacher).map(r => __ttNorm(r.teacher)));
-    return staffRoster.filter(u => u.role === "teacher" && ["present", "late"].includes(staffStat(u)) && !teaching.has(__ttNorm(u.name))).sort((a, b) => String(a.name).localeCompare(String(b.name)));
-  }, [liveBoard.rows, staffRoster, staffAttDB.data, leaveDB.data]);
+    return staffRoster.filter(u => u.role === "teacher" && ["present", "late"].includes(_dwStat(u).key) && !teaching.has(__ttNorm(u.name))).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  }, [liveBoard.rows, staffRoster, staffAttDB.data, leaveDB.data, calendarDB && calendarDB.data, today, _dwNowHM, user]);
   const selectedRoom = liveBoard.rows.find(r => r.key === selectedRoomKey) || null;
   const selectedRoomContext = useMemo(() => {
     if (!selectedRoom) return null;
     const clean = v => String(v || "").replace(/^Class\s*/i, "").trim().toLowerCase();
     const attendance = Object.values(attendanceDB.data || {}).find(r => r && r.date === today && clean(r.cls) === clean(selectedRoom.cls) && (!r.section || !selectedRoom.section || String(r.section).toLowerCase() === String(selectedRoom.section).toLowerCase()));
     const teacherUser = staffRoster.find(u => __ttNorm(u.name) === __ttNorm(selectedRoom.teacher));
-    const teacherState = teacherUser ? staffStat(teacherUser) : selectedRoom.state === "issue" ? "none" : "present";
+    const _ts = teacherUser ? _dwStat(teacherUser) : null;
+    const teacherState = _ts ? _ts.key === "autoabs" ? "absent" : _ts.key : selectedRoom.state === "issue" ? "none" : "present";
     return {
       attendanceMarked: !!(attendance && attendance.status),
       teacherState
@@ -15802,6 +15811,7 @@ function DirectorWorkspaceDashboard({
     }
   }, staff.flagged.slice(0, 12).map((s, i) => React.createElement("span", {
     key: i,
+    title: s.auto ? s.name + " has not marked the register today" : "",
     style: {
       fontSize: 12,
       fontWeight: 600,
@@ -15815,7 +15825,7 @@ function DirectorWorkspaceDashboard({
       opacity: .7,
       fontWeight: 500
     }
-  }, " \xB7 ", STLAB[s.kind].toLowerCase()))), staff.flagged.length > 12 && React.createElement("span", {
+  }, " \xB7 ", STLAB[s.kind].toLowerCase(), s.auto ? " (not marked)" : ""))), staff.flagged.length > 12 && React.createElement("span", {
     style: {
       fontSize: 12,
       color: "var(--c-94)",
@@ -15828,7 +15838,7 @@ function DirectorWorkspaceDashboard({
       color: "var(--tx-grn2)",
       fontWeight: 600
     }
-  }, "\u2713 All marked staff are present.")), React.createElement("div", {
+  }, "\u2713 Every staff member is present.")), React.createElement("div", {
     className: "ap-panel"
   }, React.createElement("div", {
     className: "ap-panelh"
@@ -17373,6 +17383,8 @@ function Registration({
   const [followOwner, setFollowOwner] = useState("");
   const [followPriority, setFollowPriority] = useState("normal");
   const [followSaving, setFollowSaving] = useState(false);
+  const [formId, setFormId] = useState("");
+  const [payBusy, setPayBusy] = useState(false);
   const canEdit = !!user && (user.role === "admin" || user.role === "office");
   const canImp = canEdit;
   const stageOpts = ["new", "contacted", "visit scheduled", "application received", "documents pending", "ready to admit"];
@@ -17444,7 +17456,9 @@ function Registration({
     var age = Math.floor((new Date(_regToday + "T12:00:00") - new Date(created + "T12:00:00")) / 864e5);
     return !r.lastFollowUpAt && age >= 2;
   };
-  const shown = filt === "all" ? regs : filt === "due" ? regs.filter(followDue) : regs.filter(r => (r.status || "pending") === filt);
+  const isOnline = r => !!r && r.source === "Online form";
+  const payToVerify = r => isOnline(r) && Number(r.payAmount || 0) > 0 && r.payVerified !== true && !r.payIssue && (r.status || "pending") === "pending";
+  const shown = filt === "all" ? regs : filt === "due" ? regs.filter(followDue) : filt === "online" ? regs.filter(isOnline) : filt === "payverify" ? regs.filter(payToVerify) : regs.filter(r => (r.status || "pending") === filt);
   const counts = {
     pending: regs.filter(r => (r.status || "pending") === "pending").length,
     due: regs.filter(followDue).length,
@@ -17909,7 +17923,7 @@ function Registration({
       alignItems: "center",
       marginBottom: 12
     }
-  }, [["all", "All " + regs.length], ["due", "Follow-up due " + counts.due], ["pending", "Pending " + counts.pending], ["admitted", "Admitted " + counts.admitted], ["rejected", "Rejected " + counts.rejected]].map(([k, l]) => React.createElement("button", {
+  }, [["all", "All " + regs.length], ["due", "Follow-up due " + counts.due]].concat(regs.some(isOnline) ? [["online", "Online forms " + regs.filter(isOnline).length], ["payverify", "UPI to verify " + regs.filter(payToVerify).length]] : []).concat([["pending", "Pending " + counts.pending], ["admitted", "Admitted " + counts.admitted], ["rejected", "Rejected " + counts.rejected]]).map(([k, l]) => React.createElement("button", {
     key: k,
     className: "ap-pill" + (filt === k ? " on" : ""),
     onClick: () => setFilt(k)
@@ -18077,7 +18091,20 @@ function Registration({
         color: r.priority === "urgent" ? "var(--tx-red)" : "var(--ap-muted)",
         marginTop: 2
       }
-    }, stageLabel(r.pipelineStage), r.assignedTo ? " · " + r.assignedTo : " · unassigned", r.priority === "urgent" ? " · urgent" : "")), React.createElement("td", {
+    }, stageLabel(r.pipelineStage), r.assignedTo ? " · " + r.assignedTo : " · unassigned", r.priority === "urgent" ? " · urgent" : ""), isOnline(r) && Number(r.payAmount || 0) > 0 && React.createElement("div", {
+      style: {
+        marginTop: 4
+      }
+    }, React.createElement("span", {
+      style: {
+        fontSize: 10.5,
+        fontWeight: 700,
+        padding: "2px 7px",
+        borderRadius: 6,
+        background: r.payVerified === true ? "var(--bg-grn)" : r.payIssue ? "var(--bg-red)" : "var(--bg-amb)",
+        color: r.payVerified === true ? "var(--tx-grn)" : r.payIssue ? "var(--tx-red)" : "var(--tx-org2)"
+      }
+    }, "\u20B9", r.payAmount, " UPI \xB7 ", r.payVerified === true ? "received" : r.payIssue ? "not found" : "to verify"))), React.createElement("td", {
       style: td
     }, String(r.classSought || "").replace("Class ", "")), React.createElement("td", {
       style: td
@@ -18111,7 +18138,21 @@ function Registration({
         textAlign: "right",
         whiteSpace: "nowrap"
       }
-    }, canEdit ? React.createElement("div", {
+    }, isOnline(r) && React.createElement("button", {
+      onClick: () => setFormId(r.id),
+      title: "See the full online form",
+      style: {
+        background: "var(--ap-accent-soft)",
+        color: "var(--ap-accent)",
+        border: "none",
+        borderRadius: 6,
+        padding: "5px 9px",
+        fontSize: 11.5,
+        cursor: "pointer",
+        fontWeight: 700,
+        marginRight: 5
+      }
+    }, "Form"), canEdit ? React.createElement("div", {
       style: {
         display: "inline-flex",
         alignItems: "center",
@@ -18173,7 +18214,223 @@ function Registration({
         color: "var(--ap-muted)"
       }
     }, "View only")));
-  }))))), followId && (() => {
+  }))))), formId && (() => {
+    var r = regs.find(x => x.id === formId);
+    if (!r) return null;
+    const row = (k, v) => v ? React.createElement("div", {
+      key: k,
+      style: {
+        display: "grid",
+        gridTemplateColumns: "150px 1fr",
+        gap: 10,
+        padding: "6px 0",
+        borderTop: "1px solid var(--ap-line)",
+        fontSize: 12.5
+      }
+    }, React.createElement("div", {
+      style: {
+        color: "var(--ap-muted)"
+      }
+    }, k), React.createElement("div", {
+      style: {
+        color: "var(--ap-ink)",
+        fontWeight: 600,
+        wordBreak: "break-word"
+      }
+    }, v)) : null;
+    const markPay = async ok => {
+      if (!canEdit || payBusy) return;
+      if (ok && !window.confirm("Confirm you have seen ₹" + r.payAmount + " credited in the school account with reference " + r.payRef + "?")) return;
+      if (!ok && !window.confirm("Mark this payment as NOT found in the bank statement? The family should be called.")) return;
+      setPayBusy(true);
+      try {
+        const upd = ok ? {
+          payVerified: true,
+          payIssue: false,
+          payVerifiedBy: user.name,
+          payVerifiedAt: new Date().toISOString()
+        } : {
+          payVerified: false,
+          payIssue: true,
+          payVerifiedBy: user.name,
+          payVerifiedAt: new Date().toISOString()
+        };
+        await registrationsDB.set(r.id, Object.assign({}, r, upd));
+        logAudit(ok ? "registration-pay-verified" : "registration-pay-notfound", "registrations", r.id, {
+          payVerified: r.payVerified || false
+        }, upd);
+      } catch (e) {
+        alert("Could not save — " + (e && e.message || "try again"));
+      }
+      setPayBusy(false);
+    };
+    const pay = Number(r.payAmount || 0);
+    return React.createElement("div", {
+      onClick: () => setFormId(""),
+      style: {
+        position: "fixed",
+        inset: 0,
+        zIndex: 1200,
+        background: "rgba(13,23,38,.55)",
+        display: "grid",
+        placeItems: "center",
+        padding: 16
+      }
+    }, React.createElement("div", {
+      onClick: e => e.stopPropagation(),
+      style: {
+        width: "100%",
+        maxWidth: 640,
+        maxHeight: "92vh",
+        overflowY: "auto",
+        background: "var(--c-fff)",
+        borderRadius: 10,
+        padding: 20,
+        boxShadow: "0 22px 65px rgba(0,0,0,.25)"
+      }
+    }, React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 14,
+        alignItems: "flex-start"
+      }
+    }, r.photo ? React.createElement("img", {
+      src: r.photo,
+      alt: "",
+      style: {
+        width: 76,
+        height: 94,
+        objectFit: "cover",
+        borderRadius: 6,
+        border: "1px solid var(--ap-line)",
+        flex: "none"
+      }
+    }) : null, React.createElement("div", {
+      style: {
+        flex: 1
+      }
+    }, React.createElement("div", {
+      style: {
+        fontSize: 11,
+        fontWeight: 800,
+        color: "var(--ap-muted)",
+        textTransform: "uppercase",
+        letterSpacing: .55
+      }
+    }, "Online registration form \xB7 ", r.regNo), React.createElement("div", {
+      style: {
+        fontSize: 19,
+        fontWeight: 800,
+        color: "var(--ap-ink)",
+        marginTop: 3
+      }
+    }, r.name), React.createElement("div", {
+      style: {
+        fontSize: 12.5,
+        color: "var(--ap-muted)",
+        marginTop: 2
+      }
+    }, r.classSought, r.session ? " · session " + r.session : "", " \xB7 submitted ", r.at ? fmtDate(String(r.at).slice(0, 10)) : "")), React.createElement("button", {
+      onClick: () => setFormId(""),
+      "aria-label": "Close",
+      style: {
+        border: "none",
+        background: "none",
+        fontSize: 20,
+        cursor: "pointer",
+        color: "var(--ap-muted)"
+      }
+    }, "\xD7")), pay > 0 && React.createElement("div", {
+      style: {
+        marginTop: 14,
+        padding: "12px 14px",
+        borderRadius: 8,
+        background: r.payVerified === true ? "var(--bg-grn)" : r.payIssue ? "var(--bg-red)" : "var(--bg-amb)"
+      }
+    }, React.createElement("div", {
+      style: {
+        fontSize: 13,
+        fontWeight: 800,
+        color: r.payVerified === true ? "var(--tx-grn)" : r.payIssue ? "var(--tx-red)" : "var(--tx-org2)"
+      }
+    }, "Registration fee \u20B9", pay, " by UPI \xB7 ", r.payVerified === true ? "received" : r.payIssue ? "not found in bank" : "not yet verified"), React.createElement("div", {
+      style: {
+        fontSize: 12.5,
+        color: "var(--ap-ink2)",
+        marginTop: 4
+      }
+    }, "UPI reference ", React.createElement("b", {
+      style: {
+        fontFamily: "var(--ss-mono,monospace)"
+      }
+    }, r.payRef), r.payerName ? " · paid by " + r.payerName : "", r.payVerifiedBy ? " · checked by " + r.payVerifiedBy + " on " + fmtDate(String(r.payVerifiedAt || "").slice(0, 10)) : ""), canEdit && r.payVerified !== true && React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 8,
+        marginTop: 10,
+        flexWrap: "wrap"
+      }
+    }, React.createElement("button", {
+      disabled: payBusy,
+      onClick: () => markPay(true),
+      style: {
+        border: "none",
+        background: "var(--tx-grn)",
+        color: "#fff",
+        borderRadius: 6,
+        padding: "8px 13px",
+        fontSize: 12.5,
+        fontWeight: 750,
+        cursor: "pointer"
+      }
+    }, "Payment received"), !r.payIssue && React.createElement("button", {
+      disabled: payBusy,
+      onClick: () => markPay(false),
+      style: {
+        border: "1px solid var(--ap-line)",
+        background: "var(--c-fff)",
+        color: "var(--tx-red)",
+        borderRadius: 6,
+        padding: "8px 13px",
+        fontSize: 12.5,
+        fontWeight: 650,
+        cursor: "pointer"
+      }
+    }, "Not found in bank")), !canEdit && React.createElement("div", {
+      style: {
+        fontSize: 11.5,
+        color: "var(--ap-muted)",
+        marginTop: 6
+      }
+    }, "The office verifies payments.")), React.createElement("div", {
+      style: {
+        marginTop: 12
+      }
+    }, row("Date of birth", r.dob ? fmtDate(r.dob) : ""), row("Gender", r.gender), row("Father / guardian", [r.father, r.fatherOcc].filter(Boolean).join(" · ")), row("Mother", [r.mother, r.motherOcc].filter(Boolean).join(" · ")), row("Mobile", r.contact), row("Second mobile", r.motherMobile), row("Email", r.email), row("Address", r.address), row("School bus", r.transport ? r.transport + (r.transportArea ? " · " + r.transportArea : "") : ""), row("Previous school", [r.prevSchool, r.prevBoard, r.prevClass].filter(Boolean).join(" · ")), row("Sibling at school", r.sibling), row("Heard about us", r.heardFrom), row("Notes", r.notes)), React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 8,
+        justifyContent: "flex-end",
+        marginTop: 16,
+        flexWrap: "wrap"
+      }
+    }, React.createElement(CallWAButtons, {
+      phone: r.contact,
+      msg: "Hello, this is the admissions office at " + SCHOOL_NAME + ". We have received " + r.name + "'s online registration (" + r.regNo + ")."
+    }), React.createElement("button", {
+      onClick: () => setFormId(""),
+      style: {
+        border: "1px solid var(--ap-line)",
+        background: "var(--c-fff)",
+        color: "var(--ap-ink2)",
+        borderRadius: 6,
+        padding: "9px 14px",
+        fontSize: 12.5,
+        fontWeight: 650,
+        cursor: "pointer"
+      }
+    }, "Close"))));
+  })(), followId && (() => {
     var r = regs.find(x => x.id === followId);
     if (!r) return null;
     const mSt = {
@@ -81788,6 +82045,49 @@ function __staffGreetingName(u) {
 function _attId(username, date) {
   return safeId(safeId(username) + "__" + date);
 }
+function __staffDayStatus(u, date, o) {
+  o = o || {};
+  var rec = (o.att || {})[_attId(__staffKey(u), date)];
+  if (rec) return {
+    key: rec.status || "present",
+    rec: rec,
+    auto: false
+  };
+  var onLeave = Object.values(o.leave || {}).some(function (l) {
+    return l && l.status === "approved" && __ttNorm(l.teacherName) === __ttNorm(u.name) && l.from <= date && l.to >= date;
+  });
+  if (onLeave) return {
+    key: "leave",
+    rec: null,
+    auto: false
+  };
+  if (o.self && String(u.username) === String(o.self)) return {
+    key: "none",
+    rec: null,
+    auto: false
+  };
+  if (u.role === "admin" && (u.username === "director" || typeof DEFAULT_USERS !== "undefined" && DEFAULT_USERS[u.username] && DEFAULT_USERS[u.username].fees !== false)) return {
+    key: "none",
+    rec: null,
+    auto: false
+  };
+  if ((o.noClock || []).indexOf(String(u.username)) >= 0) return {
+    key: "present",
+    rec: null,
+    auto: false,
+    noclock: true
+  };
+  if (typeof __staffAutoAbsent === "function" && __staffAutoAbsent(date, o.todayStr, o.nowHM, o.lateAfter, o.cal)) return {
+    key: "autoabs",
+    rec: null,
+    auto: true
+  };
+  return {
+    key: "none",
+    rec: null,
+    auto: false
+  };
+}
 function __noClockList(staffAttData) {
   var c = staffAttData && staffAttData["__config"];
   var v = c && c.noClock || [];
@@ -82875,36 +83175,16 @@ function StaffAttendanceRegister({
     return typeof __noClockList === "function" ? __noClockList(attDB.data) : [];
   }, [attDB.data]);
   function statusFor(u) {
-    var rec = attDB.data && attDB.data[_attId(__staffKey(u), date)];
-    if (rec) return {
-      key: rec.status || "present",
-      rec: rec
-    };
-    var onLeave = Object.values(leaveDB.data || {}).some(function (l) {
-      return l && l.status === "approved" && __ttNorm(l.teacherName) === __ttNorm(u.name) && l.from <= date && l.to >= date;
+    return __staffDayStatus(u, date, {
+      att: attDB.data,
+      leave: leaveDB.data,
+      cal: calDB.data,
+      noClock: _noClock,
+      self: user && user.username,
+      todayStr: _attTodayStr(),
+      nowHM: new Date().toTimeString().slice(0, 5),
+      lateAfter: cfg && cfg.lateAfter || ""
     });
-    if (onLeave) return {
-      key: "leave",
-      rec: null
-    };
-    var _isHead = String(u.username) === String(user.username) || u.role === "admin" && (u.username === "director" || DEFAULT_USERS[u.username] && DEFAULT_USERS[u.username].fees !== false);
-    if (_isHead) return {
-      key: "none",
-      rec: null
-    };
-    if (_noClock.indexOf(String(u.username)) >= 0) return {
-      key: "present",
-      rec: null,
-      noclock: true
-    };
-    if (typeof __staffAutoAbsent === "function" && __staffAutoAbsent(date, _attTodayStr(), new Date().toTimeString().slice(0, 5), cfg && cfg.lateAfter || "", calDB.data)) return {
-      key: "autoabs",
-      rec: null
-    };
-    return {
-      key: "none",
-      rec: null
-    };
   }
   async function setStatus(u, status) {
     if (!isDirector || statusBusy) return;
@@ -85343,13 +85623,15 @@ function App() {
   };
   const _heavyOK = !!user && user.role !== "parent";
   const testsDBraw = useFirestore("tests", _heavyOK);
-  const topicsDB = useFirestore("topics", !!user && ["admin", "vp", "teacher"].includes(user.role));
-  const syllabusDB = useFirestore("syllabus", !!user && ["admin", "vp", "teacher"].includes(user.role));
-  const copyChecksDB = useFirestore("copyChecks", !!user && ["admin", "vp", "teacher"].includes(user.role));
+  const _onTab = (...t) => t.indexOf(tab) >= 0;
+  const _curric = !!user && ["admin", "vp", "teacher"].includes(user.role);
+  const topicsDB = useFirestore("topics", _curric && _onTab("topics", "copies", "syllabus", "testcenter", "enter", "ai"));
+  const syllabusDB = useFirestore("syllabus", _curric && _onTab("syllabus", "copies", "testcenter"));
+  const copyChecksDB = useFirestore("copyChecks", _curric && _onTab("copies", "syllabus", "testcenter"));
   const studentsDB = useFirestore("students", !!user && user.role !== "parent");
   const attendanceDBraw = useFirestore("attendance", _heavyOK);
   const usersDB = useFirestore("users", !!user && ["admin", "office", "vp"].includes(user.role));
-  const wrongDB = useFirestore("wrongAnswers", !!user && user.role !== "parent");
+  const wrongDB = useFirestore("wrongAnswers", !!user && user.role !== "parent" && (user.role === "student" || _onTab("admin", "directory", "focusgroup", "insights", "profile")));
   const feesDBraw = useFirestore("fees", !!user && (user.role === "admin" && user.fees !== false || user.role === "office"));
   const feeCloseDB = useFirestore("feeDayCloses", !!user && (user.role === "admin" && user.fees !== false || user.role === "office"));
   const paymentIntentsDB = useFirestore("paymentIntents", !!user && (user.role === "admin" && user.fees !== false || user.role === "office"));
