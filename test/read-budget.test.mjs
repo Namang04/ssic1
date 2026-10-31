@@ -57,7 +57,8 @@ ok('no window means the whole collection', /:ref;/.test(hook) && /src=\(since&&/
 ok('undated documents are named and kept', /keep=\(opts&&opts\.keep\)\|\|null/.test(hook));
 ok('they are read as single documents',    /__fbGetDoc\(window\.__fbDoc\(window\.__db,collName,id\)\)/.test(hook));
 ok('and merged under every snapshot',      /setData\(Object\.assign\(\{\},keepRef\.current,d\)\)/.test(hook));
-ok('a campus switch drops the old config', /keepRef\.current=\{\};setData\(\{\}\);setup\(\)/.test(hook));
+ok('a campus switch drops the old config', /keepRef\.current=\{\};rangeRef\.current=null;setData\(\{\}\);setup\(\)/.test(hook));
+ok('...and re-asks for the range it had',  /rangeArgs\.current&&rangeFn\.current\)rangeFn\.current\(/.test(hook));
 ok('the window is part of the dependencies', /\[collName,enabled,since,field,keepKey\]/.test(hook));
 
 const staffSub = app.match(/const staffAttDB=useFirestore\("staffAttendance",[^\n]*\);/);
@@ -88,14 +89,14 @@ ok('the month is always two digits',     /^\d{4}-\d{2}-01$/.test(__monthsBack(2)
 // percentage), the window is lifted in ONE place the moment anything other than the dashboard is opened.
 ok('attendance is windowed at App level', /const attendanceDBraw=useFirestore\("attendance",_heavyOK,\{since:_attWin,field:"date"\}\)/.test(app));
 ok('the window is two months',            /const _attWin=__monthsBack\(1\)/.test(app));
-ok('leaving the dashboard lifts it',      /tab!=="dashboard"[\s\S]{0,120}loadRange\(__sessionStart\(curSession\),_attTodayStr\(\)\)/.test(app));
+ok('leaving the dashboard lifts it',      /tab!=="dashboard"[\s\S]{0,160}loadRange\(__sessionStart\(vSess\),_attTodayStr\(\)\)/.test(app));
 ok('pupils and parents get it too, having no tabs', /_r==="student"\|\|_r==="parent"/.test(app.slice(app.indexOf('needsAll'), app.indexOf('needsAll') + 200)));
 // `user` is null until sign-in and a dependency array is evaluated on EVERY render, so reading user.role
 // there crashed the login screen for everyone. It must stay guarded on both lines.
 ok('the effect does nothing without a user', /const needsAll=!!user&&\(/.test(app));
-ok('and its dependencies survive a null user', /\[tab,user&&user\.role,curSession,attendanceDBraw\.loadRange\]/.test(app));
+ok('and its dependencies survive a null user', /\[tab,user&&user\.role,curSession,vSess,attendanceDBraw\.loadRange\]/.test(app));
 ok('the loader is offered by the hook',   /return\{data:visible,[^\n]*loadRange\}/.test(src));
-ok('and survives the session wrapper',    /_wrapSess\(db\)\{return\{[^\n]*loadRange:db\.loadRange/.test(src));
+ok('and survives the session wrapper',    /_wrapSess\(db\)\{[^\n]*return\{[^\n]*loadRange:db\.loadRange/.test(src));
 ok('a range already fetched is not refetched', /if\(rangeRef\.current&&rangeRef\.current<=from\)return;/.test(hook));
 ok('live data wins where the two overlap', /setData\(prev=>Object\.assign\(\{\},d,prev\)\)/.test(hook));
 ok('a failed fetch can be retried',       /catch\(e\)\{rangeRef\.current=null;\}/.test(hook));

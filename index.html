@@ -1568,7 +1568,7 @@ function __branchById(id){for(var i=0;i<BRANCHES.length;i++)if(BRANCHES[i].id===
 let BRANCH_LABEL=__BRANCH_NM||"Greencity Branch";
 let BRANCH_ADDR=__bget("__BRANCH_ADDR")||"Gorakhpur · CBSE Affiliated";
 if(typeof window!=="undefined"&&!window.__currentBranch)window.__currentBranch="greencity";
-function __applyBranch(id){var b=__branchById(id);BRANCH_LABEL=b.label;BRANCH_ADDR=b.addr;if(typeof window!=="undefined"){var changed=window.__currentBranch!==b.id;window.__currentBranch=b.id;if(changed)try{window.dispatchEvent(new Event("branchchange"));}catch(e){}}}
+function __applyBranch(id){var b=__branchById(id);BRANCH_LABEL=b.label;BRANCH_ADDR=b.addr;if(typeof window!=="undefined"){var changed=window.__currentBranch!==b.id;window.__currentBranch=b.id;if(changed)window.__storeTag=__loadLiveTag();if(changed)try{window.dispatchEvent(new Event("branchchange"));}catch(e){}}}
 
 // ── Phase 2: per-branch DATA separation (Option B — collection-name prefixes) ──
 // These collections are per-branch. Greencity stays UNPREFIXED (its existing data never moves); every OTHER branch
@@ -1576,12 +1576,35 @@ function __applyBranch(id){var b=__branchById(id);BRANCH_LABEL=b.label;BRANCH_AD
 // branch-scoped: one login pool, one audit trail. The prefix is applied centrally by wrapping __fbCollection/__fbDoc,
 // so every read, write, doc and transaction is scoped without touching the ~30 call sites individually.
 const __BRANCH_SCOPED=new Set(["studentDirectory","students","academicRoster","attendance","fees","feeDayCloses","counters","portalFees","salaries","exams","staffAttendance","leaves","complaints","discipline","registrations","admissions","paymentIntents","timetables","timetableSettings","notices","lessonPlans","teacherLogs","studentPhotos","studentLinks","tests","topics","syllabus","wrongAnswers","calendar","copyChecks"]);
-function _bcoll(base){var b=(typeof window!=="undefined"&&window.__currentBranch)||"greencity";return (b&&b!=="greencity"&&__BRANCH_SCOPED.has(base))?(b+"_"+base):base;}
+// ── A session after 2026-27 lives in its own collections, the way a campus does (2026-10-31) ──
+// Every read and write in the app passes through _bcoll, so this one choke point scopes the lot: screens, one-off
+// reads and portals alike, with nothing to remember per screen. 2026-27 stays exactly where it has always been,
+// so while that session is in use every name below comes out unchanged and nothing has moved. A later session is
+// "<branch>-2728_tests": next year cannot overwrite this year, because they are not the same collection. That
+// matters more than tidiness: test ids carry no year, so in one shared collection the first test of a new year
+// took the id of last year's and replaced it. Left out of the store on purpose: fees and UPI records (the server
+// function writes them by fixed name and they carry a session field); staff attendance, leave, salaries and the
+// calendar (March pay is worked out in April from March's register and holidays); registrations (own session
+// field, written by the website); photos and name links (they belong to the child, not the year).
+const __BASE_SESSION="2026-27";
+const __SESSION_STORE=new Set(["studentDirectory","students","academicRoster","attendance","exams","tests","topics","syllabus","copyChecks","lessonPlans","teacherLogs","wrongAnswers","timetables","timetableSettings","notices","complaints","discipline","admissions"]);
+function __sessTag(s){var m=String(s||"").match(/^20(\d{2})-(\d{2})$/);return (m&&String(s)>__BASE_SESSION)?(m[1]+m[2]):"";}
+function __storeName(base,tag){var b=(typeof window!=="undefined"&&window.__currentBranch)||"greencity",scoped=__BRANCH_SCOPED.has(base);if(tag&&scoped&&__SESSION_STORE.has(base))return b+"-"+tag+"_"+base;return (b&&b!=="greencity"&&scoped)?(b+"_"+base):base;}
+function _bcoll(base){return __storeName(base,(typeof window!=="undefined"&&window.__storeTag)||"");}
+function __storeColl(base,sess){return __storeName(base,__sessTag(sess));}
+// Fee structure and waivers are single documents shared by the fees collection. A later session reads its own
+// copy, "__structure__y2728", falling back to the nearest earlier year; 2026-27 only ever sees the plain document.
+const __SESSION_FEE_DOCS=["__structure","__waivers"];
+function __sessDocs(data,tag){var out={},best={};Object.keys(data||{}).forEach(function(k){if(k.indexOf("__")!==0)return;var m=k.match(/^(__.+)__y(\d{4})$/),b=m?m[1]:k,t=m?m[2]:"";if(t&&(!tag||t>tag))return;if(best[b]===undefined||t>best[b]){best[b]=t;out[b]=data[k];}});return out;}
+function __liveTagKey(){return "ssic_live_tag_"+((typeof window!=="undefined"&&window.__currentBranch)||"greencity");}
+function __loadLiveTag(){try{return localStorage.getItem(__liveTagKey())||"";}catch(e){return "";}}
+if(typeof window!=="undefined"&&window.__storeTag===undefined)window.__storeTag=__loadLiveTag();
 function __wrapFb(){
   if(typeof window==="undefined"||window.__bcollWrapped||!window.__fbCollection||!window.__fbDoc)return;
   var _c=window.__fbCollection,_d=window.__fbDoc;
   window.__fbCollection=function(db,path){if(typeof path==="string")path=_bcoll(path);return _c.apply(null,[db,path].concat([].slice.call(arguments,2)));};
   window.__fbDoc=function(db,path){var a=[].slice.call(arguments);if(typeof a[1]==="string")a[1]=_bcoll(a[1]);return _d.apply(null,a);};
+  window.__fbCollectionRaw=_c;window.__fbDocRaw=_d; // for naming one session's collection from inside another
   window.__bcollWrapped=true;
 }
 if(typeof window!=="undefined"){ if(window.__fbReady)__wrapFb(); else window.addEventListener("fbready",__wrapFb); }
@@ -2346,7 +2369,7 @@ function __testRepairPlan(tests,rosterOf,attendance,todayIso){
   // one already holding the class, so the original sat there without those marks and the class was split in
   // two. Same class, subject, week, DATE and maximum, and the twin carries no section at all: that is one
   // test, not two. Bring the fork's entries back into the whole-class record and drop the emptied fork. A
-  // different date or a different maximum is a different test and is left alone; a pupil the two copies
+  // different date, maximum or chapter is a different test and is left alone; a pupil the two copies
   // disagree about is never overwritten - it goes to review.
   Object.keys(docs).forEach(function(id){
     var t=docs[id];if(!t||!t.section||removed[id]||created[id])return;
@@ -2358,6 +2381,7 @@ function __testRepairPlan(tests,rosterOf,attendance,todayIso){
       if(String(u.week||"")!==String(t.week||""))return;
       if(String(u.testDate||"")!==String(t.testDate||""))return;
       if(String(u.total||"")!==String(t.total||""))return;
+      var tt=topicKey(t),tu=topicKey(u);if(tt&&tu&&tt!==tu)return;             // two named chapters are two papers
       twin=j;
     });
     if(!twin)return;
@@ -2984,6 +3008,9 @@ function useFirestore(collName,enabled=true,opts){
   const[loading,setLoading]=useState(true);
   const unsubRef=useRef(null);
   const keepRef=useRef({});
+  const rangeRef=useRef(null);
+  const rangeArgs=useRef(null);
+  const rangeFn=useRef(null);
   useEffect(()=>{
     if(!enabled){if(unsubRef.current){unsubRef.current();unsubRef.current=null;}setData({});setLoading(false);return;}
     const setup=()=>{
@@ -3006,15 +3033,17 @@ function useFirestore(collName,enabled=true,opts){
     if(window.__fbReady)setup();
     else window.addEventListener("fbready",setup,{once:true});
     // The director switching campus re-points _bcoll → drop the old branch's data and re-subscribe to the new one.
-    const onBranch=()=>{keepRef.current={};setData({});setup();};
+    // The range already pulled in belonged to the old collection: without clearing it, loadRange thinks it
+    // has that stretch and the new campus or session shows only the live window.
+    const onBranch=()=>{keepRef.current={};rangeRef.current=null;setData({});setup();if(rangeArgs.current&&rangeFn.current)rangeFn.current(rangeArgs.current[0],rangeArgs.current[1]);};
     window.addEventListener("branchchange",onBranch);
     return()=>{window.removeEventListener("branchchange",onBranch);if(unsubRef.current)unsubRef.current();};
   },[collName,enabled,since,field,keepKey]);
   // Pull in an older stretch that the live window does not cover, once, and merge it under the live data.
   // A second call for a range already covered does nothing, so screens can ask freely.
-  const rangeRef=useRef(null);
   const loadRange=useCallback(async(from,to)=>{
     if(!from||!window.__db||!window.__fbGetDocs||!window.__fbQuery||!window.__fbWhere)return;
+    rangeArgs.current=[from,to];
     if(rangeRef.current&&rangeRef.current<=from)return;                 // already have this far back
     rangeRef.current=from;
     try{
@@ -3024,6 +3053,7 @@ function useFirestore(collName,enabled=true,opts){
       setData(prev=>Object.assign({},d,prev));                          // the live window wins on overlap
     }catch(e){rangeRef.current=null;}                                    // a failure must not block a retry
   },[collName,field]);
+  rangeFn.current=loadRange;
 
   // Every write goes through here, so the recovery lives here too: one retry on a shut-down client, and a
   // message a teacher can act on if it still will not go through.
@@ -4989,7 +5019,7 @@ function DirectorWorkspaceDashboard({user,studentsDB,staffAttDB,attendanceDB,lea
             <div className="dir-command-greeting">{greet}, {firstName}.</div>
             <div className="dir-command-copy">Your school at this moment — what is running well, what needs action, and what is coming next.</div>
           </div>
-          <div className="dir-command-clock"><div className="dir-command-time">{clockNow.toLocaleTimeString("en-IN",{hour:"numeric",minute:"2-digit"})}</div><div className="dir-command-date">{niceDate} · Session 2026–27</div></div>
+          <div className="dir-command-clock"><div className="dir-command-time">{clockNow.toLocaleTimeString("en-IN",{hour:"numeric",minute:"2-digit"})}</div><div className="dir-command-date">{niceDate} · Session {String(window.__SESSION||__BASE_SESSION).replace("-","–")}</div></div>
         </div>
         <div className="dir-command-strip">
           <div className="dir-command-stat"><div className="dir-command-label">Students on roll</div><div className="dir-command-value">{enroll.students.toLocaleString("en-IN")}</div><div className="dir-command-note">{enroll.sections} active sections</div></div>
@@ -5081,7 +5111,7 @@ function DirectorWorkspaceDashboard({user,studentsDB,staffAttDB,attendanceDB,lea
 
       {/* School at a glance */}
       <div className="ap-panel">
-        <div className="ap-panelh"><div className="ttl">School at a glance</div><span style={{fontSize:11.5,color:"var(--ap-faint)"}}>Session 2026–27 · all classes</span></div>
+        <div className="ap-panelh"><div className="ttl">School at a glance</div><span style={{fontSize:11.5,color:"var(--ap-faint)"}}>Session {String(window.__SESSION||__BASE_SESSION).replace("-","–")} · all classes</span></div>
         <div style={{padding:"10px 18px 22px",display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(210px,1fr))",gap:18}}>
           {[
             {ic:ICN.cap,bg:"var(--bg-pur)",fg:"var(--tx-pur)",n:enroll.students,l:"Current students",s:enroll.classesWith+" classes · "+enroll.sections+" sections"+(enroll.left?" · "+enroll.left+" left (excluded)":"")},
@@ -5592,16 +5622,17 @@ function AdmitCard({user, dirDB, setTab}){
 // sends one; records saved before this existed have none and read as the live session, so nothing is
 // retro-labelled and nothing disappears from the list.
 function __nextSession(s){var m=String(s||"").match(/^(\d{4})-(\d{2})$/);if(!m)return "";var a=Number(m[1])+1;return a+"-"+String((a+1)%100).padStart(2,"0");}
-function __liveSession(){return String((typeof window!=="undefined"&&window.__SESSION)||"2026-27");}
+function __liveSession(){return String((typeof window!=="undefined"&&(window.__LIVE_SESSION||window.__SESSION))||__BASE_SESSION);}
+function __workSession(){return String((typeof window!=="undefined"&&window.__SESSION)||__liveSession());}
 // The session a NEW enquiry is filed under by default: next year, because that is what admissions are for.
 function __admSession(){return __nextSession(__liveSession())||__liveSession();}
-function __regSession(r){return String((r&&r.session)||__liveSession());}
+function __regSession(r){return String((r&&r.session)||__BASE_SESSION);}
 function __regPrefix(sess){return "REG/"+String(sess||__admSession()).replace(/^20/,"")+"/";}
 // Every session that has registrations, newest first, always including the live one and next year's.
 function __regSessions(regs){var m={};m[__liveSession()]=1;m[__admSession()]=1;
   (regs||[]).forEach(function(r){var v=__regSession(r);if(v)m[v]=1;});
   return Object.keys(m).sort(function(a,b){return b.localeCompare(a);});}
-function Registration({user, registrationsDB, usersDB, setTab}){
+function Registration({user, registrationsDB, usersDB, setTab, session}){
   const[view,setView]=useState("list"); // 'list' | 'new'
   const blank={name:"",classSought:SCHOOL.classes[0],dob:"",gender:"",father:"",mother:"",contact:"",address:"",prevSchool:"",notes:"",source:"Walk-in",preferredContact:"WhatsApp",nextFollowUp:""};
   const[f,setF]=useState(blank);
@@ -5610,7 +5641,8 @@ function Registration({user, registrationsDB, usersDB, setTab}){
   const[saving,setSaving]=useState(false);
   const[msg,setMsg]=useState("");
   const[filt,setFilt]=useState(function(){try{var j=window.__regJump;if(j){window.__regJump=null;if(j.filt)return j.filt;}}catch(_){}return "all";}); // all | pending | admitted | rejected (+ __regJump one-shot)
-  const[regSess,setRegSess]=useState(()=>__admSession()); // the session being registered FOR
+  const[regSess,setRegSess]=useState(()=>(session&&session!==__liveSession())?session:__admSession()); // the session being registered FOR
+  useEffect(()=>{if(session&&session!==__liveSession())setRegSess(session);},[session]); // the session menu at the top of the screen leads
   const[impOpen,setImpOpen]=useState(false);
   const[followId,setFollowId]=useState("");
   const[followNote,setFollowNote]=useState("");
@@ -5677,7 +5709,10 @@ function Registration({user, registrationsDB, usersDB, setTab}){
   const setStatus=async(r,status)=>{
     if(!canEdit)return;
     if(status==="admitted"){
-      if(!window.confirm("Start the full admission for "+r.name+"?\n\nThe enquiry stays OPEN until the admission form is successfully saved, so it can never disappear from follow-up by mistake."))return;
+      // A family registered for next year is admitted into next year, so the admission happens in that session.
+      var _rs=__regSession(r),_ws=__workSession();
+      if(!window.confirm("Start the full admission for "+r.name+"?\n\nThe enquiry stays OPEN until the admission form is successfully saved, so it can never disappear from follow-up by mistake."+(_rs!==_ws?("\n\nThis family registered for "+_rs+", so the app will switch to "+_rs+" and the admission will not appear in "+_ws+"."):"")))return;
+      if(_rs!==_ws&&!(window.__setWorkSession&&window.__setWorkSession(_rs)))return;
       // Prefill first; AdmissionForm marks this enquiry admitted only AFTER the student record + roster caches save.
       try{var _nm=String(r.name||"").trim().split(/\s+/).filter(Boolean);var _fa=String(r.father||"").trim().split(/\s+/).filter(Boolean);var _mo=String(r.mother||"").trim().split(/\s+/).filter(Boolean);
         var _cn=String(__clsNum(r.classSought)||"");var _rom={"1":"I","2":"II","3":"III","4":"IV","5":"V","6":"VI","7":"VII","8":"VIII","9":"IX","10":"X"};
@@ -7409,6 +7444,19 @@ function BackupCenter({dirDB,feesDB,usersDB,testsDB,attendanceDB,metaDB,curSessi
     var _delN=_fDel.length+_mDel.length+_aDel.length;
     setMsg("✓ Full backup downloaded — "+all.reduce(function(a,x){return a+x.rows.length;},0)+" rows across "+all.length+" sheets (all sessions"+(_delN?"; incl. "+_delN+" deleted records kept in separate “(deleted)” sheets":"")+").");
   }
+  // The Excel book is re-importable but carries only five record types. This carries every collection of the
+  // session in use, plus staff and config, as a single file. Photos are left out: they are large, and they stay
+  // in place across sessions.
+  async function everythingBackup(){
+    if(!window.__fbGetDocs||!window.__fbCollectionRaw){setMsg("Not connected.");return;}
+    setMsg("Reading every collection…");
+    var names=Array.from(__BRANCH_SCOPED).filter(function(n){return n!=="studentPhotos";}).concat(["users","meta"]),out={session:sess,branch:window.__currentBranch||"greencity",exportedAt:new Date().toISOString(),collections:{}},failed=[],docs=0;
+    for(var i=0;i<names.length;i++){var c=__storeColl(names[i],sess);setMsg("Reading "+(i+1)+" of "+names.length+": "+names[i]+"…");
+      try{var snap=await window.__fbGetDocs(window.__fbCollectionRaw(window.__db,c)),m={};snap.forEach(function(d){m[d.id]=d.data();docs++;});out.collections[c]=m;}catch(e){failed.push(names[i]);}}
+    var url=URL.createObjectURL(new Blob([JSON.stringify(out)],{type:"application/json"})),a=document.createElement("a");a.href=url;a.download="SSIC_everything_"+stamp+".json";document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+    await stampBackup(curSession);
+    setMsg(failed.length?("Downloaded "+docs+" records, but these could not be read: "+failed.join(", ")+"."):("✓ Downloaded "+docs+" records across "+names.length+" collections."));
+  }
   return(
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       <div style={card}>
@@ -7417,7 +7465,7 @@ function BackupCenter({dirDB,feesDB,usersDB,testsDB,attendanceDB,metaDB,curSessi
           <span style={{fontSize:12.5,fontWeight:600,color:bkpStale?"var(--tx-org2)":"var(--tx-grn2)"}}>{bkpStale?("No full backup of "+curSession+" in the last week — last: "+(lastBkp?__dcRelDate(lastBkp):"never")):("✓ Last full backup "+__dcRelDate(lastBkp))}</span>
         </div>
         <div style={{fontSize:12.5,color:"var(--c-64)",lineHeight:1.6,marginBottom:14}}>Download an Excel backup of all your data. The full backup is one workbook with a sheet per record type, and the column headers match the import templates — so a backup can be re-uploaded to restore.</div>
-        <Btn onClick={fullBackup}>Download full backup (.xlsx)</Btn>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}><Btn onClick={fullBackup}>Download full backup (.xlsx)</Btn><Btn v="ghost" onClick={everythingBackup}>Download everything (.json)</Btn></div>
       </div>
       <div style={card}>
         <div style={{fontWeight:700,fontSize:14,color:"var(--ap-ink)",marginBottom:4}}>Export one record type</div>
@@ -7464,7 +7512,7 @@ function DataCenter({user, dirDB, studentsDB, testsDB, usersDB, feesDB, examsDB,
         {imp==="registrations"&&<ImportRegistrations registrationsDB={registrationsDB} user={user}/>}
       </div>}
       {view==="backup"&&<BackupCenter dirDB={dirDB} feesDB={feesDB} usersDB={usersDB} testsDB={testsDB} attendanceDB={attendanceDB} metaDB={metaDB} curSession={curSession} viewSession={viewSession} card={card}/>}
-      {view==="session"&&<SessionPromote user={user} dirDB={dirDB} usersDB={usersDB} studentsDB={studentsDB} testsDB={testsDB} feesDB={feesDB} attendanceDB={attendanceDB} academicRosterDB={academicRosterDB} metaDB={metaDB} curSession={curSession} viewSession={viewSession} setViewSession={setViewSession} allSessions={allSessions} card={card} btn={btn} setView={dhSetView}/>}
+      {view==="session"&&<SessionPromote user={user} dirDB={dirDB} usersDB={usersDB} studentsDB={studentsDB} testsDB={testsDB} feesDB={feesDB} attendanceDB={attendanceDB} academicRosterDB={academicRosterDB} examsDB={examsDB} metaDB={metaDB} curSession={curSession} viewSession={viewSession} setViewSession={setViewSession} allSessions={allSessions} card={card} btn={btn} setView={dhSetView}/>}
       {view==="trash"&&<RecentlyDeleted feesDB={feesDB} examsDB={examsDB} testsDB={testsDB} noticesDB={noticesDB}/>}
     </div>
   );
@@ -7790,105 +7838,217 @@ function ImportRegistrations({registrationsDB, user, session}){
 
 // Session master-switch: promote everyone to the next class and start a fresh session (archiving this year).
 
-function SessionPromote({user, dirDB, usersDB, studentsDB, testsDB, feesDB, attendanceDB, academicRosterDB, metaDB, curSession, viewSession, setViewSession, allSessions, card, btn, setView}){
-  const[msg,setMsg]=useState(""); const[busy,setBusy]=useState(false); const[confirmText,setConfirmText]=useState("");
-  function nextSession(s){var m=String(s).match(/(\d{4})\D+(\d{2,4})/);if(!m)return s+" (next)";var a=parseInt(m[1])+1;var b=(parseInt(m[2])%100)+1;return a+"-"+String(b).padStart(2,"0");}
-  const nxt=nextSession(curSession);
+// ── Moving a year on (2026-10-31) ── Pure, so it can be tested and previewed. Reads THIS year's directory and
+// next year's as it stands, and returns next year's. Nothing in this year changes, so it can run as often as
+// needed: each run rebuilds the promoted pupils from the same source and can never push anyone up a second class.
+// A pupil already admitted into next year (no promotedFrom) stays in the class they were admitted to.
+function __promotionPlan(liveDir,nextDir,live,nxt,uniqueName){
+  var ladder={nursery:"LKG",lkg:"UKG",ukg:"1"},byTok={},counts={promoted:0,passout:0,left:0,intake:0,unmoved:0},conflicts=[],intake=[],intakeAdm={};
+  Object.keys(nextDir||{}).forEach(function(k){if(k.indexOf("dir_")!==0)return;((nextDir[k]||{}).students||[]).forEach(function(s){if(!s||s.promotedFrom)return;intake.push({tok:String(s.clsNum||k.slice(4)),s:s});if(s.admNo)intakeAdm[String(s.admNo)]=s;});});
+  counts.intake=intake.length;
+  var put=function(tok,st){(byTok[tok]=byTok[tok]||[]).push(st);};
+  Object.keys(liveDir||{}).forEach(function(k){if(k.indexOf("dir_")!==0)return;((liveDir[k]||{}).students||[]).forEach(function(s){if(!s)return;
+    var stat=String(s.status||"").toLowerCase();
+    if(stat==="left"){counts.left++;return;}
+    if(stat==="passed out")return;
+    var tok=String(s.clsNum||__clsNum(s.cls)),n=parseInt(tok,10),to="";
+    if(n===12){counts.passout++;return;}
+    if(n>=1&&n<=11&&String(n)===tok)to=String(n+1);else if(ladder[tok.toLowerCase()])to=ladder[tok.toLowerCase()];
+    if(!to){counts.unmoved++;to=tok;}else counts.promoted++;
+    var clash=s.admNo&&intakeAdm[String(s.admNo)];
+    if(clash)conflicts.push({admNo:String(s.admNo),student:s.name||"",admitted:clash.name||""});
+    var st=Object.assign({},s,{clsNum:to,cls:to,promotedFrom:live,prevCls:tok});
+    if(String(st.oldNew||"").toLowerCase()==="new")st.oldNew="Old";          // only a first year pays the new-admission heads
+    put(to,st);});});
+  intake.forEach(function(x){var st=x.s;if(uniqueName&&byTok[x.tok])st=Object.assign({},st,{name:uniqueName(byTok[x.tok],st.name,st.father,st.admNo)});put(x.tok,st);});
+  var docs={},now=new Date().toISOString();
+  Object.keys(byTok).forEach(function(t){docs["dir_"+t]={cls:t,clsNum:t,students:byTok[t],updatedAt:now};});
+  Object.keys(nextDir||{}).forEach(function(k){if(k.indexOf("dir_")===0&&!docs[k]){var t=k.slice(4);docs[k]={cls:t,clsNum:t,students:[],updatedAt:now};}}); // a class emptied by a re-run
+  return{docs:docs,counts:counts,conflicts:conflicts};
+}
+// What each pupil was billed in the year ending. The balance is worked out when it is shown, from this and the
+// receipts of that year, so a payment taken later in that session lowers it at once. It has to be recorded here:
+// the class and fee structure of last year are what the bill was, whatever they become.
+function __openingDoc(liveDir,feesData,live,nxt){
+  var structure=Object.assign({},__feeClasses(),(feesData&&feesData.__structure&&feesData.__structure.classes)||{}),byAdm={};
+  Object.keys(liveDir||{}).forEach(function(k){if(k.indexOf("dir_")!==0)return;var tok=k.slice(4),lbl=__clsTokLabel(tok);if(tok==="12")return;
+    ((liveDir[k]||{}).students||[]).forEach(function(s){if(!s||!s.admNo)return;var st=String(s.status||"").toLowerCase();if(st==="left"||st==="passed out")return;
+      var billed=studentAnnualFee(lbl,s.section,s.oldNew,structure)-waiverFor(feesData,s.admNo);
+      if(billed>0)byAdm[String(s.admNo)]={billed:billed,cls:lbl,name:s.name||""};});});
+  return{session:nxt,from:live,byAdm:byAdm,at:new Date().toISOString()};
+}
+// Last year's balances as they stand now: billed, less every receipt and concession of that session.
+function __prevYearDues(feesData,rawData,session){
+  var doc=feesData&&feesData["__open"+__sessTag(session)];if(!doc||!doc.byAdm)return null;
+  var pays=[];Object.keys(rawData||{}).forEach(function(k){if(k.indexOf("__")===0)return;var p=rawData[k];if(p&&p.deleted!==true&&(p.session||__BASE_SESSION)===doc.from)pays.push(p);});
+  var idx=__payIndex(pays),byAdm={},total=0,count=0;
+  Object.keys(doc.byAdm).forEach(function(adm){var r=doc.byAdm[adm],paid=__payHitsIdx(idx,adm,r.cls,r.name).reduce(function(a,p){return a+Number(p.amount||0);},0),bal=Math.max(0,Number(r.billed||0)-paid);if(bal>0){byAdm[adm]=bal;total+=bal;count++;}});
+  return{from:doc.from,byAdm:byAdm,total:total,count:count};
+}
+// Roster + class cache for one class, shared by Sync academic roster and the promotion.
+function __rosterCaches(students,lbl){
+  var cur=(students||[]).filter(function(s){return s&&String(s.status||"").toLowerCase()!=="left";}),list=[],secs={},adm={},now=new Date().toISOString();
+  var studs=cur.map(function(s){return{admNo:String(s.admNo||"").trim(),name:s.name,section:_rosterSec(s.section,lbl),contact:_attPhone(s)};});
+  cur.forEach(function(s){if(!s.name)return;list.push(s.name);secs[s.name]=s.section||"";adm[s.name]=String(s.admNo||"");});
+  return{roster:{cls:lbl,students:studs,updatedAt:now},cache:{cls:lbl,list:list,sections:secs,admNo:adm,updatedAt:now}};
+}
+// What a new year starts from instead of a blank page. Syllabus progress does not carry, only chapters a teacher
+// added by hand; nothing already in next year's store is overwritten.
+function __carryDoc(coll,d){
+  if(coll!=="syllabus")return d;
+  var a=(d&&d.copyChapters)||[],b=(d&&d.hiddenCopyChapters)||[];
+  return (a.length||b.length)?{cls:d.cls||"",subj:d.subj||"",copyChapters:a,hiddenCopyChapters:b}:null;
+}
+async function __carryForward(from,to){
+  var n=0,colls=["timetables","timetableSettings","topics","syllabus"];
+  for(var c=0;c<colls.length;c++){
+    var coll=colls[c],src=await window.__fbGetDocs(window.__fbCollectionRaw(window.__db,__storeColl(coll,from))),dst=await window.__fbGetDocs(window.__fbCollectionRaw(window.__db,__storeColl(coll,to))),have={},rows=[];
+    dst.forEach(function(d){have[d.id]=1;});src.forEach(function(d){rows.push([d.id,d.data()]);});
+    for(var i=0;i<rows.length;i++){if(have[rows[i][0]])continue;var v=__carryDoc(coll,rows[i][1]);if(!v)continue;await window.__fbSetDoc(window.__fbDocRaw(window.__db,__storeColl(coll,to),rows[i][0]),v);n++;}
+  }
+  return n;
+}
+async function __readDirectory(sess){var snap=await window.__fbGetDocs(window.__fbCollectionRaw(window.__db,__storeColl("studentDirectory",sess))),out={};snap.forEach(function(d){out[d.id]=d.data();});return out;}
+function __clsByAdm(dir){var m={};Object.keys(dir||{}).forEach(function(k){if(k.indexOf("dir_")!==0)return;((dir[k]||{}).students||[]).forEach(function(s){if(!s||!s.admNo)return;var st=String(s.status||"").toLowerCase();if(st==="left"||st==="passed out")return;m[String(s.admNo)]=String(s.clsNum||k.slice(4));});});return m;}
+// Records dated in the new year but entered before anyone went live belong to the new year. Fees stay in their
+// one collection and just change session; the rest are copied across and hidden from the year they left.
+async function __moveLateRecords(sets,feesDB,to){
+  var from=__sessionStart(to),n=0;
+  for(var i=0;i<sets.length;i++){var coll=sets[i][0],db=sets[i][1],raw=(db&&db.raw)||db,data=(raw&&raw.data)||{},ids=Object.keys(data);
+    for(var j=0;j<ids.length;j++){var id=ids[j],d=data[id];if(id.indexOf("__")===0||!d||d.deleted===true)continue;var when=String(d.date||d.testDate||"");if(!when||when<from||d.session===to)continue;
+      var doc=Object.assign({},d,{session:to});await window.__fbSetDoc(window.__fbDocRaw(window.__db,__storeColl(coll,to),id),doc);await raw.set(id,doc);n++;}}
+  var fr=(feesDB&&feesDB.raw)||feesDB,fd=(fr&&fr.data)||{};
+  for(var k in fd){if(k.indexOf("__")===0)continue;var p=fd[k];if(p&&p.deleted!==true&&String(p.date||"")>=from&&p.session!==to){await fr.set(k,Object.assign({},p,{session:to}));n++;}}
+  return n;
+}
+
+function SessionPromote({user, dirDB, usersDB, studentsDB, testsDB, feesDB, attendanceDB, academicRosterDB, examsDB, metaDB, curSession, viewSession, setViewSession, allSessions, card, btn, setView}){
+  const[msg,setMsg]=useState(""); const[busy,setBusy]=useState(false); const[confirmText,setConfirmText]=useState(""); const[liveText,setLiveText]=useState("");
+  const[nextDir,setNextDir]=useState(null);
+  const nxt=__nextSession(curSession);
   const cfg=(metaDB.data&&metaDB.data[__bMeta("config")])||{};
   const lastBkp=(cfg.lastBackupAt&&cfg.lastBackupAt[curSession])||"";
   const bkpStale=!lastBkp||(Date.now()-new Date(lastBkp).getTime())>6048e5;
-  const alreadyPromoted=(cfg.promotedSessions||[]).indexOf(curSession)>=0;   // keyed on the SOURCE session, survives the session bump
-  // Preview promotion counts from the directory
-  const plan=useMemo(function(){var promote=0,passout=0;Object.keys(dirDB.data||{}).forEach(function(k){((dirDB.data[k]||{}).students||[]).forEach(function(s){if(String(s.status||"").toLowerCase()==="left")return;var cn=parseInt(s.clsNum||__clsNum(s.cls));if(cn===12)passout++;else if(cn>=1&&cn<=11)promote++;});});return {promote:promote,passout:passout};},[dirDB.data]);
-  async function advance(){
+  const onLive=!viewSession||viewSession===curSession;
+  const promoted=cfg.promotedTo===nxt&&cfg.promotedFrom===curSession;   // students are sitting in next year's store
+  const canGoBack=cfg.promotedTo===curSession&&!!cfg.promotedFrom;      // this session was made live here and can be undone
+  const loadNext=useCallback(function(){return __readDirectory(nxt).then(function(d){setNextDir(d);return d;}).catch(function(){setNextDir({});return {};});},[nxt]);
+  useEffect(function(){loadNext();},[loadNext]);
+  const plan=useMemo(function(){return __promotionPlan(dirDB.data,nextDir||{},curSession,nxt,__uniqueNameIn);},[dirDB.data,nextDir,curSession,nxt]);
+  const writeConfig=function(patch){return metaDB.set(__bMeta("config"),Object.assign({},(metaDB.data&&metaDB.data[__bMeta("config")])||{},patch));};
+  // Parent and pupil logins carry the child's class, which powers their whole portal. A family whose child is not
+  // in the new year stays on the last year that child was here.
+  async function relabelLogins(dir,pin){
+    var byAdm=__clsByAdm(dir),merged=_branchUsers((usersDB&&usersDB.data)||{},(typeof window!=="undefined"&&window.__currentBranch)||"greencity"),keys=Object.keys(merged),n=0;
+    for(var i=0;i<keys.length;i++){var uk=keys[i],uv=merged[uk]||{};if(uv.role!=="parent"&&uv.role!=="student")continue;
+      var adm=String(uv.admNo||uv.childAdmNo||"");if(!adm)continue;
+      var tok=byAdm[adm];
+      if(tok){var lbl=__clsTokLabel(tok);if(String(uv.cls||"")!==lbl||uv.archiveSession){var nv=Object.assign({},uv,{cls:lbl});delete nv.archiveSession;await usersDB.set(uk,nv);n++;}}
+      else if(pin&&uv.archiveSession!==pin){await usersDB.set(uk,Object.assign({},uv,{archiveSession:pin}));n++;}
+      else if(!pin&&uv.archiveSession){var nv2=Object.assign({},uv);delete nv2.archiveSession;await usersDB.set(uk,nv2);n++;}
+    }
+    return n;
+  }
+  async function promote(){
     if(confirmText.trim().toUpperCase()!=="PROMOTE"){setMsg("Type PROMOTE in the box to confirm.");return;}
-    if(alreadyPromoted){setMsg("Already promoted from "+curSession+" (on "+__dcRelDate(cfg.promotedAt)+"). Re-running would push everyone up a second class. If this is intentional, ask support.");return;}
-    if(bkpStale&&!window.confirm("You haven't downloaded a full backup of "+curSession+" in over a week (last: "+(lastBkp?__dcRelDate(lastBkp):"never")+").\n\nPromotion is a big, irreversible change. Promote WITHOUT a fresh backup?"))return;
-    if(!window.confirm("Advance to "+nxt+"?\n\n• "+plan.promote+" students move up one class\n• "+plan.passout+" Class 12 students → Passed Out (archived)\n• This year's attendance, fees & marks are archived; the new session starts clean\n\nThis is a big change. Make sure you have a current export. Continue?"))return;
-    setBusy(true);setMsg("Promoting students to "+nxt+"…");
+    if(!onLive){setMsg("Switch back to "+curSession+" first. Students are promoted from the live session.");return;}
+    if(nextDir===null){setMsg("Still reading "+nxt+". Try again in a moment.");return;}
+    if(plan.conflicts.length){setMsg("Stopped. "+plan.conflicts.length+" admission number"+(plan.conflicts.length===1?" is":"s are")+" used by both a current student and a child admitted for "+nxt+": "+plan.conflicts.slice(0,3).map(function(c){return c.admNo+" ("+c.student+" / "+c.admitted+")";}).join(", ")+". Correct the admission in "+nxt+" first. Nothing was changed.");return;}
+    if(bkpStale&&!window.confirm("You haven't downloaded a backup of "+curSession+" in over a week (last: "+(lastBkp?__dcRelDate(lastBkp):"never")+").\n\nContinue without a fresh backup?"))return;
+    if(!window.confirm("Move students into "+nxt+"?\n\n• "+plan.counts.promoted+" students move up one class\n• "+plan.counts.passout+" Class 12 students stay in "+curSession+" as the outgoing batch\n• "+plan.counts.left+" left students stay in "+curSession+"\n• "+plan.counts.intake+" already admitted for "+nxt+" stay in their class\n\nNothing in "+curSession+" changes and nobody is moved to "+nxt+" until you press Make live. You can run this again at any time before that."))return;
+    setBusy(true);setMsg("Moving students into "+nxt+"…");
     try{
-      // Promote the directory (clsNum +1; 12 → Passed Out). Last year's fees/attendance/marks are tagged to the
-      // old session (legacy untagged = 2026-27) and stay viewable via the session selector — NOTHING is deleted.
-      // New data written from now on is automatically tagged with the new session.
-      var docKeys=Object.keys(dirDB.data||{}).filter(function(k){return k.indexOf("dir_")===0;});
-      // collect promoted students, regroup by new clsNum
-      var newDocs={};
-      docKeys.forEach(function(k){((dirDB.data[k]||{}).students||[]).forEach(function(s){
-        var st=Object.assign({},s); var cn=parseInt(s.clsNum||__clsNum(s.cls));
-        if(String(s.status||"").toLowerCase()==="left"){ var dest0=s.clsNum||__clsNum(s.cls); (newDocs[dest0]=newDocs[dest0]||[]).push(st); return; }
-        if(cn===12){ st.status="Passed Out"; (newDocs["12"]=newDocs["12"]||[]).push(st); return; }
-        if(cn>=1&&cn<=11){ st.clsNum=String(cn+1); st.cls=String(cn+1); (newDocs[String(cn+1)]=newDocs[String(cn+1)]||[]).push(st); return; }
-        var __preLadder={Nursery:"LKG",LKG:"UKG",UKG:"1"}; var __pk=String(s.clsNum||__clsNum(s.cls)); // preschool ladder (Nur→LKG→UKG→Class 1)
-        if(__preLadder[__pk]){ var __nd=__preLadder[__pk]; st.clsNum=__nd; st.cls=__nd; (newDocs[__nd]=newDocs[__nd]||[]).push(st); return; }
-        var dest=s.clsNum||__clsNum(s.cls); (newDocs[dest]=newDocs[dest]||[]).push(st);
-      })});
-      var nk=Object.keys(newDocs);
-      for(var i=0;i<nk.length;i++){var cn=nk[i];await dirDB.set("dir_"+cn,{cls:cn,clsNum:cn,students:newDocs[cn],updatedAt:new Date().toISOString()});}
-      // GUARD FIRST: the class move above is the irreversible part — stamp promotedSessions NOW, before the
-      // cleanup loops, so a failure below can NEVER lead to a re-run that promotes everyone a second class.
-      var _cfg0=(metaDB.data&&metaDB.data[__bMeta("config")])||{};
-      var _ps=((_cfg0.promotedSessions||[]).indexOf(curSession)>=0)?(_cfg0.promotedSessions||[]):((_cfg0.promotedSessions||[]).concat([curSession]));
-      await metaDB.set(__bMeta("config"),Object.assign({},_cfg0,{promotedAt:new Date().toISOString(),promotedFrom:curSession,promotedSessions:_ps}));
-      // 2b) BLANK the vacated class docs — a class whose whole roster moved up (e.g. Nursery when nobody new
-      // has joined yet) would otherwise keep LAST YEAR'S students and the school counts them twice.
-      for(var vj=0;vj<docKeys.length;vj++){var vOld=docKeys[vj].slice(4);if(!newDocs[vOld]){await dirDB.set(docKeys[vj],{cls:vOld,clsNum:vOld,students:[],updatedAt:new Date().toISOString()});}}
-      // 2c) move PARENT/STUDENT logins up with the child — their stored cls powers the whole portal
-      // (roster, marks, fee link, class-targeted announcements). Marks/attendance are admNo-first, so only
-      // the class label needs the bump. Passed-out/left children are skipped (their portal shows the archive).
-      setMsg("Updating parent & student logins…");
-      var newClsByAdm={};
-      Object.keys(newDocs).forEach(function(cn2){newDocs[cn2].forEach(function(st){var stat=String(st.status||"").toLowerCase();if(stat==="left"||stat==="passed out")return;if(st.admNo)newClsByAdm[String(st.admNo)]=cn2;});});
-      var _uMerged=_branchUsers((usersDB&&usersDB.data)||{},(typeof window!=="undefined"&&window.__currentBranch)||"greencity");
-      var _uKeys=Object.keys(_uMerged);
-      for(var uu=0;uu<_uKeys.length;uu++){var uk=_uKeys[uu],uv=_uMerged[uk]||{};
-        if(uv.role!=="parent"&&uv.role!=="student")continue;
-        var _adm=String(uv.admNo||uv.childAdmNo||"");var _nc=_adm&&newClsByAdm[_adm]?newClsByAdm[_adm]:null; // admNo ONLY — a name fallback re-pointed same-name/left-child parents at strangers
-        if(!_nc)continue;var _lbl=__clsTokLabel(_nc); // canonical token→label ("Class 10", "Class SIP", "LKG") — an inline ternary broke SIP
-        if(String(uv.cls||"")===_lbl)continue;
-        await usersDB.set(uk,Object.assign({},uv,{cls:_lbl}));
-      }
-      // 3) bump session (_ps already holds the deduped promoted list — the local snapshot may not have
-      // caught the guard write above yet, so recomputing from metaDB.data here could double-append)
-      await metaDB.set(__bMeta("config"),Object.assign({},(metaDB.data&&metaDB.data[__bMeta("config")])||_cfg0,{session:nxt,promotedAt:new Date().toISOString(),promotedFrom:curSession,promotedSessions:_ps}));
-      setMsg("✓ Advanced to "+nxt+". Promoted "+plan.promote+", passed out "+plan.passout+". The new session starts clean; last year stays viewable via the session selector. Now open Student Records → ⟳ Sync academic roster.");
-      setConfirmText("");
-    }catch(e){setMsg("Stopped — "+((e&&e.message)||"error")+". Do NOT simply re-run: the class move may already be complete (the promotion lock will block a double-run). Check Student Records — if classes look right, reload this page to pick up the new session, then re-check parent logins in Accounts.");}
+      var ids=Object.keys(plan.docs),db=window.__db,dc=__storeColl("studentDirectory",nxt),ac=__storeColl("academicRoster",nxt),sc=__storeColl("students",nxt);
+      for(var i=0;i<ids.length;i++){var id=ids[i],doc=plan.docs[id],lbl=__clsTokLabel(id.slice(4)),rc=__rosterCaches(doc.students,lbl);
+        await window.__fbSetDoc(window.__fbDocRaw(db,dc,safeId(id)),doc);
+        await window.__fbSetDoc(window.__fbDocRaw(db,ac,safeId(lbl)),rc.roster);
+        await window.__fbSetDoc(window.__fbDocRaw(db,sc,safeId(lbl)),rc.cache);}
+      setMsg("Carrying the timetable and chapter lists across…");
+      var carried=await __carryForward(curSession,nxt);
+      await ((feesDB&&feesDB.raw)||feesDB).set("__open"+__sessTag(nxt),__openingDoc(dirDB.data,feesDB.data,curSession,nxt));
+      var known=cfg.sessions||[];
+      await writeConfig({promotedTo:nxt,promotedFrom:curSession,promotedAt:new Date().toISOString(),sessions:known.indexOf(nxt)>=0?known:known.concat([nxt])});
+      await loadNext();
+      try{logAudit("session-promote","meta",nxt,null,plan.counts);}catch(e){}
+      setConfirmText("");setMsg("✓ "+plan.counts.promoted+" students moved into "+nxt+", with "+carried+" timetable and chapter records carried across. "+curSession+" has not changed. Choose "+nxt+" at the top of the screen to check it, then press Make live when you are ready.");
+    }catch(e){setMsg("Stopped: "+((e&&e.message)||"error")+". "+curSession+" has not changed. It is safe to run this again.");}
     setBusy(false);
   }
+  async function goLive(){
+    if(liveText.trim().toUpperCase()!=="GO LIVE"){setMsg("Type GO LIVE in the box to confirm.");return;}
+    if(!onLive){setMsg("Switch back to "+curSession+" first.");return;}
+    if(!promoted){setMsg("Promote students into "+nxt+" first.");return;}
+    if(!window.confirm("Make "+nxt+" the live session for everyone?\n\nEvery teacher, parent and student moves to "+nxt+" the next time the app refreshes. "+curSession+" stays complete and you can still work in it from the session menu.\n\nYou can undo this from this page."))return;
+    setBusy(true);setMsg("Bringing across anything dated after the new session began…");
+    try{
+      var moved=await __moveLateRecords([["attendance",attendanceDB],["tests",testsDB],["exams",examsDB]],feesDB,nxt);
+      setMsg("Updating parent and student logins…");
+      var dir=await __readDirectory(nxt),n=await relabelLogins(dir,curSession);
+      await writeConfig({session:nxt,liveAt:new Date().toISOString()});
+      try{logAudit("session-go-live","meta",nxt,{session:curSession},{session:nxt,moved:moved,logins:n});}catch(e){}
+      setLiveText("");setMsg("✓ "+nxt+" is live. "+n+" logins updated"+(moved?(", "+moved+" late records moved across"):"")+". Now press Publish sign-in list in Accounts & Roles.");
+    }catch(e){setMsg("Stopped: "+((e&&e.message)||"error")+". The live session has not changed. It is safe to press this again.");}
+    setBusy(false);
+  }
+  async function goBack(){
+    var prev=cfg.promotedFrom;
+    if(!window.confirm("Make "+prev+" the live session again?\n\n"+curSession+" stays as it is and can be made live again later. Parent and student logins go back to their "+prev+" class."))return;
+    setBusy(true);setMsg("Going back to "+prev+"…");
+    try{
+      var dir=await __readDirectory(prev),n=await relabelLogins(dir,"");
+      await writeConfig({session:prev,promotedTo:curSession,promotedFrom:prev,wentBackAt:new Date().toISOString()});
+      try{logAudit("session-go-back","meta",prev,{session:curSession},{session:prev,logins:n});}catch(e){}
+      setMsg("✓ "+prev+" is live again. "+n+" logins updated.");
+    }catch(e){setMsg("Stopped: "+((e&&e.message)||"error")+". Check the live session at the top of this page.");}
+    setBusy(false);
+  }
+  const box={padding:"9px 12px",borderRadius:6,border:"1px solid var(--c-d2)",fontSize:13,width:160,background:"var(--c-fff)",color:"var(--ap-ink)"};
   return(<div style={{display:"flex",flexDirection:"column",gap:14}}>
     <div style={card}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:14,flexWrap:"wrap"}}>
         <div>
-          <div style={{fontSize:12.5,fontWeight:700,letterSpacing:.5,textTransform:"uppercase",color:"var(--ap-muted)"}}>Current session</div>
+          <div style={{fontSize:12.5,fontWeight:700,letterSpacing:.5,textTransform:"uppercase",color:"var(--ap-muted)"}}>Live session</div>
           <div style={{fontSize:30,fontWeight:800,color:"var(--ap-ink)",letterSpacing:"-.02em",margin:"2px 0 4px"}}>{curSession}</div>
-          <div style={{fontSize:13,color:"var(--c-64)"}}>{plan.promote} students in Classes 1–11 · {plan.passout} in Class 12</div>
+          <div style={{fontSize:13,color:"var(--c-64)"}}>{plan.counts.promoted} students move up · {plan.counts.passout} in Class 12 · {plan.counts.intake} admitted for {nxt}</div>
         </div>
         <div style={{textAlign:"right"}}>
-          <div style={{fontSize:11,fontWeight:700,textTransform:"uppercase",color:"var(--ap-muted)",marginBottom:4}}>Viewing data for</div>
-          <select value={viewSession||curSession} onChange={function(e){setViewSession&&setViewSession(e.target.value);}} className="ss-input" style={{padding:"8px 12px",borderRadius:6,border:"1px solid var(--c-d2)",fontSize:14,fontWeight:700,background:"var(--c-fff)",color:"var(--ap-ink)"}}>
+          <div style={{fontSize:11,fontWeight:700,textTransform:"uppercase",color:"var(--ap-muted)",marginBottom:4}}>Working in</div>
+          <select value={viewSession||curSession} onChange={function(e){window.__setWorkSession&&window.__setWorkSession(e.target.value);}} className="ss-input" style={{padding:"8px 12px",borderRadius:6,border:"1px solid var(--c-d2)",fontSize:14,fontWeight:700,background:"var(--c-fff)",color:"var(--ap-ink)"}}>
             {(allSessions||[curSession]).map(function(s){return <option key={s} value={s}>{s}</option>;})}
           </select>
-          {(viewSession&&viewSession!==curSession)?<div style={{fontSize:11,color:"var(--tx-org)",marginTop:4,maxWidth:150}}>showing past session — fees, attendance & marks are last year's</div>:<div style={{fontSize:11,color:"var(--c-94)",marginTop:4}}>live session</div>}
         </div>
       </div>
     </div>
     <div style={Object.assign({},card,{border:"1px solid var(--bg-amb)",background:"var(--c-fff)"})}>
-      <div style={{fontWeight:700,fontSize:15,color:"var(--ap-ink)"}}>Advance to {nxt}</div>
+      <div style={{fontWeight:700,fontSize:15,color:"var(--ap-ink)"}}>Step 1. Promote students into {nxt}</div>
       <ul style={{fontSize:13,color:"var(--c-64)",lineHeight:1.8,margin:"8px 0 12px 18px",padding:0}}>
-        <li><b>{plan.promote}</b> students move up one class (sections kept)</li>
-        <li><b>{plan.passout}</b> Class 12 students become <b>Passed Out</b> (archived to records)</li>
-        <li>Last year's <b>attendance, fees & marks stay viewable</b> (choose the session above) — the new session starts clean</li>
+        <li><b>{plan.counts.promoted}</b> students move up one class in {nxt}, sections kept. Class 10 pupils will need their Class 11 stream set.</li>
+        <li><b>{plan.counts.passout}</b> Class 12 students and <b>{plan.counts.left}</b> left students stay in {curSession} and do not go forward. Mark every leaver before this step.</li>
+        <li><b>{plan.counts.intake}</b> children already admitted for {nxt} keep the class they were admitted to.</li>
+        {plan.counts.unmoved>0&&<li><b>{plan.counts.unmoved}</b> in a class with no next class stay where they are.</li>}
+        <li>Each student starts {nxt} fresh. What they still owe for {curSession} shows beside their name in Fees.</li>
+        <li><b>Nothing in {curSession} changes</b>, and you can run this again until you make {nxt} live.</li>
       </ul>
-      {alreadyPromoted&&<div style={{background:"var(--bg-red)",color:"var(--tx-red)",borderRadius:6,padding:"9px 12px",fontSize:12.5,fontWeight:600,marginBottom:10}}>✓ Already promoted from {curSession} ({__dcRelDate(cfg.promotedAt)}). Promotion is locked to prevent double-promoting.</div>}
+      {plan.conflicts.length>0&&<div style={{background:"var(--bg-red)",color:"var(--tx-red)",borderRadius:6,padding:"9px 12px",fontSize:12.5,fontWeight:600,marginBottom:10}}>{plan.conflicts.length} admission number{plan.conflicts.length===1?" is":"s are"} shared by a current student and a child admitted for {nxt}: {plan.conflicts.slice(0,4).map(function(c){return c.admNo+" ("+c.student+" / "+c.admitted+")";}).join(", ")}. Correct these in {nxt} before promoting.</div>}
       <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",borderRadius:6,padding:"9px 12px",marginBottom:10,background:bkpStale?"var(--bg-amb)":"var(--bg-grn)",color:bkpStale?"var(--tx-org2)":"var(--tx-grn2)",fontSize:12.5,fontWeight:600}}>
-        <span>{bkpStale?("No full backup of "+curSession+" in the last week (last: "+(lastBkp?__dcRelDate(lastBkp):"never")+"). Back it up before promoting."):("✓ Backed up "+__dcRelDate(lastBkp)+" — safe to promote.")}</span>
+        <span>{bkpStale?("No backup of "+curSession+" in the last week (last: "+(lastBkp?__dcRelDate(lastBkp):"never")+")."):("✓ Backed up "+__dcRelDate(lastBkp)+".")}</span>
         {bkpStale&&setView&&<button onClick={function(){setView("backup");}} style={{background:"var(--c-fff)",border:"1px solid var(--c-d2)",color:"var(--ap-ink)",borderRadius:6,padding:"5px 12px",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Back up now</button>}
       </div>
-      <div style={{fontSize:12,color:"var(--tx-red)",fontWeight:600,marginBottom:10}}>Do this once a year, after results. To confirm, type <b>PROMOTE</b>:</div>
       <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
-        <input value={confirmText} onChange={function(e){setConfirmText(e.target.value);}} placeholder="Type PROMOTE" disabled={alreadyPromoted} className="ss-input" style={{padding:"9px 12px",borderRadius:6,border:"1px solid var(--c-d2)",fontSize:13,width:160,background:"var(--c-fff)",color:"var(--ap-ink)"}}/>
-        <button onClick={advance} disabled={busy||alreadyPromoted} style={Object.assign({},btn(confirmText.trim().toUpperCase()==="PROMOTE"&&!alreadyPromoted?"#d2342a":"var(--c-94)"),{opacity:alreadyPromoted?.5:1})}>{busy?"Working…":"Advance session & promote"}</button>
+        <input aria-label="Type PROMOTE to confirm" value={confirmText} onChange={function(e){setConfirmText(e.target.value);}} placeholder="Type PROMOTE" className="ss-input" style={box}/>
+        <button onClick={promote} disabled={busy||!onLive} style={btn(confirmText.trim().toUpperCase()==="PROMOTE"?"#d2342a":"var(--c-94)")}>{busy?"Working…":(promoted?"Promote again":"Promote students")}</button>
+        {promoted&&<span style={{fontSize:12.5,fontWeight:600,color:"var(--tx-grn2)"}}>✓ Done {__dcRelDate(cfg.promotedAt)}</span>}
       </div>
+    </div>
+    <div style={card}>
+      <div style={{fontWeight:700,fontSize:15,color:"var(--ap-ink)"}}>Step 2. Make {nxt} the live session</div>
+      <div style={{fontSize:13,color:"var(--c-64)",lineHeight:1.7,margin:"8px 0 12px"}}>Teachers, parents and students move to {nxt}. Until then only people who choose it at the top of the screen can see it. Do this at the start of the new session: anything dated after 1 April is brought across when you press it.</div>
+      <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
+        <input aria-label="Type GO LIVE to confirm" value={liveText} onChange={function(e){setLiveText(e.target.value);}} placeholder="Type GO LIVE" disabled={!promoted} className="ss-input" style={box}/>
+        <button onClick={goLive} disabled={busy||!promoted||!onLive} style={Object.assign({},btn(promoted&&liveText.trim().toUpperCase()==="GO LIVE"?"#d2342a":"var(--c-94)"),{opacity:promoted?1:.5})}>{busy?"Working…":"Make "+nxt+" live"}</button>
+        {!promoted&&<span style={{fontSize:12.5,color:"var(--c-64)"}}>Promote students first.</span>}
+      </div>
+      {canGoBack&&<div style={{marginTop:14,paddingTop:12,borderTop:"1px solid var(--c-f0)"}}><button onClick={goBack} disabled={busy} style={{background:"var(--c-fff)",border:"1px solid var(--bd-red)",color:"var(--tx-red)",borderRadius:6,padding:"8px 14px",fontSize:12.5,fontWeight:700,cursor:busy?"default":"pointer",fontFamily:"var(--ss-font)"}}>Go back to {cfg.promotedFrom}</button></div>}
       {msg&&<div style={{marginTop:12,fontSize:12.5,fontWeight:600,color:msg.charAt(0)==="✓"?"var(--tx-grn2)":__isErrMsg(msg)?"var(--tx-red)":"var(--c-64)"}}>{msg}</div>}
     </div>
   </div>);
@@ -14842,6 +15002,10 @@ function Fees({user,session,feesDB,studentsDB,academicRosterDB,dirDB,metaDB,inte
 
   const annual=annualForStu(cls,selStu.section,selStu.oldNew);
   const myInfo=student?payInfo(cls,{admNo:selAdm,name:student,section:selStu.section,oldNew:selStu.oldNew}):{annual,cash:0,conc:0,bal:annual,status:"unpaid"};
+  // What is still owed for last year. Each student starts the new session fresh; this is shown beside it, and is
+  // collected by working in last year's session, so it lowers as soon as the receipt is cut.
+  const prevYr=useMemo(()=>__prevYearDues(feesDB.data,(feesDB.raw&&feesDB.raw.data)||{},session),[feesDB.data,feesDB.raw,session]);
+  const prevOf=adm=>(prevYr&&adm&&prevYr.byAdm[String(adm)])||0;
   const paid=myInfo.cash;const concGiven=myInfo.conc;const balance=myInfo.bal;
   const collectSig=JSON.stringify({student,cls,amount,mode,note,payDate,payRef,isConc});
   const collectDirty=!!(sub==="collect"&&collectBase&&collectSig!==collectBase&&!lastReceipt);
@@ -15039,9 +15203,9 @@ td.r,th.r{text-align:right}
     if(dueFilter==="overdue"&&ageFilter&&!_inB(__feeAgeDays(structure[pc.cls]||[],r.cash+r.conc+(r.waiver||0),_t)))return;
     out.push(r);});});return out;};
   const exportDefaulters=()=>{
-    const rows=[["Student","Class","Annual","Waiver","Paid (cash)","Concession","Overdue now","Balance (full year)","Status"],
-      ...pendingRows().map(r=>[r.student,r.cls,r.annual,r.waiver||0,r.cash,r.conc,r.overdue,r.bal,r.status]),
-      ...(agg.leftRows||[]).map(r=>[r.student,r.cls,r.annual,r.waiver||0,r.cash,r.conc,0,0,"left"])];
+    const rows=[["Student","Class","Annual","Waiver","Paid (cash)","Concession","Overdue now","Balance (full year)","Status"].concat(prevYr?["Due from "+prevYr.from]:[]),
+      ...pendingRows().map(r=>[r.student,r.cls,r.annual,r.waiver||0,r.cash,r.conc,r.overdue,r.bal,r.status].concat(prevYr?[prevOf(r.admNo)]:[])),
+      ...(agg.leftRows||[]).map(r=>[r.student,r.cls,r.annual,r.waiver||0,r.cash,r.conc,0,0,"left"].concat(prevYr?[prevOf(r.admNo)]:[]))];
     const csv=rows.map(r=>r.map(x=>'"'+String(x).replace(/"/g,'""')+'"').join(",")).join("\r\n");
     const blob=new Blob(["﻿"+csv],{type:"text/csv;charset=utf-8;"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="fee_pending.csv";document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
   };
@@ -15058,12 +15222,13 @@ td.r,th.r{text-align:right}
     <div style={{maxWidth:1180,margin:"0 auto"}}>
       <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",flexWrap:"wrap",gap:12,marginBottom:16}}>
         <div><div className="ap-hi" style={{margin:0}}>Fees</div><p className="ap-hisub" style={{margin:"4px 0 0"}}>Fee structure, collection, receipts and dues · Session {window.__SESSION||"2026-27"}</p></div>
+        {prevYr&&prevYr.total>0&&<div style={{flex:"1 1 100%",order:9,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",background:"var(--bg-amb)",border:"1px solid var(--bd-amb)",color:"var(--tx-org2)",borderRadius:7,padding:"9px 13px",fontSize:12.8,fontWeight:650}}><span>{inr(prevYr.total)} is still due from {prevYr.from}, across {prevYr.count} student{prevYr.count===1?"":"s"}. Collect it in {prevYr.from}.</span><button className="ss-press" onClick={()=>window.__setWorkSession&&window.__setWorkSession(prevYr.from)} style={{background:"var(--c-fff)",border:"1px solid var(--bd-amb)",color:"var(--tx-org2)",borderRadius:6,padding:"4px 11px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Open {prevYr.from}</button></div>}
         <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
           {canImp&&sub==="collect"&&<button onClick={()=>setImpOpen(true)} style={{background:"var(--c-f5)",border:"1px solid var(--c-d2)",borderRadius:6,padding:"8px 14px",fontSize:12.5,fontWeight:600,cursor:"pointer",color:"var(--ap-ink)",fontFamily:"var(--ss-font)"}}><Icon name="upload" size={16}/> Upload Excel (day-end)</button>}
           <div className="ap-subnav">{TABS.map(t=><button key={t.id} className={"ap-pill"+(sub===t.id?" on":"")} onClick={()=>changeFeeSub(t.id)}>{t.label}</button>)}</div>
         </div>
       </div>
-      {canImp&&<ImportModal open={impOpen} onClose={()=>setImpOpen(false)}><ImportFees feesDB={feesDB} dirDB={dirDB} curSession={"2026-27"} viewSession={"2026-27"} card={__impCard()} btn={__impBtn} canReplace={isDirector}/></ImportModal>}
+      {canImp&&<ImportModal open={impOpen} onClose={()=>setImpOpen(false)}><ImportFees feesDB={feesDB} dirDB={dirDB} curSession={session} viewSession={session} card={__impCard()} btn={__impBtn} canReplace={isDirector}/></ImportModal>}
 
       {sub==="overview"&&<div className="fee-desk">
         <div className="fee-desk-intro"><div className="fee-desk-kicker">Money desk · {fmtDate(feeDesk.date)}</div><div className="fee-desk-title">Collect, verify and close the day.</div><div className="fee-desk-sub">The office starts here; annual collection analysis continues below.</div></div>
@@ -15313,6 +15478,7 @@ td.r,th.r{text-align:right}
                   </div>
                   <div style={{display:"flex",gap:7,flexWrap:"wrap",padding:"0 18px 12px"}}>
                     {balance<=0&&annual>0?tag("Fully paid ✓","var(--bg-grn)","var(--tx-grn2)"):null}
+                    {prevOf(selAdm)>0?tag(inr(prevOf(selAdm))+" due from "+prevYr.from,"var(--bg-amb)","var(--tx-org2)"):null}
                     {myInfo.overdue>0?tag(inr(myInfo.overdue)+" due now","var(--bg-red)","#d2342a"):null}
                     {myInfo.fine>0?tag("Late fine "+inr(myInfo.fine),"var(--bg-amb)","var(--tx-org2)"):null}
                     {concGiven>0?tag("Concession "+inr(concGiven),"rgba(0,113,227,.10)","var(--ap-accent)"):null}
@@ -15566,7 +15732,7 @@ td.r,th.r{text-align:right}
             <tbody>{groups.map(g=>[
               <tr key={g.cls+"_h"}><td colSpan={5} style={{padding:"8px 18px",background:"var(--c-f7)",borderTop:"1px solid var(--c-f0)",fontSize:12,fontWeight:700,color:"var(--ap-ink)"}}>{g.cls} · {g.rows.length} student{g.rows.length===1?"":"s"}{g.due?" · "+inr(g.due)+" due":""}</td></tr>,
               ...g.rows.map((r,i)=><tr key={g.cls+"#"+(r.admNo||r.student)+"#"+i}>
-                <td style={{...td,paddingLeft:18,fontWeight:600,color:"var(--ap-ink)"}}>{r.student}{r.conc?<span style={{marginLeft:6,fontSize:11.5,color:"var(--ap-accent)",fontWeight:700}}>conc {inrShort(r.conc)}</span>:null}</td>
+                <td style={{...td,paddingLeft:18,fontWeight:600,color:"var(--ap-ink)"}}>{r.student}{r.conc?<span style={{marginLeft:6,fontSize:11.5,color:"var(--ap-accent)",fontWeight:700}}>conc {inrShort(r.conc)}</span>:null}{prevOf(r.admNo)>0?<span style={{marginLeft:6,fontSize:11.5,color:"var(--tx-org2)",fontWeight:700}}>{inrShort(prevOf(r.admNo))} from {prevYr.from}</span>:null}</td>
                 <td style={{...td,textAlign:"right",color:"var(--c-64)",...mono}}>{inr(r.annual)}</td>
                 <td style={{...td,textAlign:"right",color:r.cash>0?"var(--tx-grn)":"var(--c-ae)",...mono}}>{inr(r.cash)}</td>
                 <td style={{...td,textAlign:"right"}}><span style={{background:amtOf(r)>0?"var(--bg-red)":"var(--bg-grn)",color:amtOf(r)>0?"var(--tx-red)":"var(--tx-grn)",padding:"3px 10px",borderRadius:8,fontSize:12.5,fontWeight:700,...mono}}>{inr(amtOf(r))}</span>{r.fine>0?<span style={{marginLeft:6,fontSize:11.5,color:"#b45309",fontWeight:700}} title="Includes late fee">+{inrShort(r.fine)} fine</span>:null}</td>
@@ -16504,19 +16670,15 @@ function StudentDirectory({user, dirDB, testsDB, examsDB, studentsDB, attendance
     for(var _ki=0;_ki<_dirKeys.length;_ki++){
       var _lbl=__clsTokLabel(_dirKeys[_ki].slice(4));
       var d=dirDB.data[_dirKeys[_ki]];if(!d||!Array.isArray(d.students))continue;
-      var studs=d.students.filter(function(s){return String(s.status||"").toLowerCase()!=="left";}).map(function(s){
-        return {admNo:String(s.admNo||"").trim(),name:s.name,section:_rosterSec(s.section,_lbl),contact:_attPhone(s)};
-      });
-      try{await academicRosterDB.set(_lbl,{cls:_lbl,students:studs,updatedAt:new Date().toISOString()});}
+      var _rc=__rosterCaches(d.students,_lbl);
+      try{await academicRosterDB.set(_lbl,_rc.roster);}
       catch(e){setSyncMsg(""+((e&&e.message)||"write failed")+" — is the academicRoster rule published?");return;}
       /* Rebuild the class CACHE too (list + sections + name→admission-no. map) — the student portal,
          photos, fees and rank all key off this map, and a legacy fee-panel write used to wipe it. */
       try{
-        var _list=[],_secs={},_adm={};
-        d.students.forEach(function(s){if(!s||!s.name||String(s.status||"").toLowerCase()==="left")return;_list.push(s.name);_secs[s.name]=s.section||"";_adm[s.name]=String(s.admNo||"");});
-        if(studentsDB&&studentsDB.set)await studentsDB.set(_lbl,{cls:_lbl,list:_list,sections:_secs,admNo:_adm,updatedAt:new Date().toISOString()});
+        if(studentsDB&&studentsDB.set)await studentsDB.set(_lbl,_rc.cache);
       }catch(e){}
-      total+=studs.length;done++;
+      total+=_rc.roster.students.length;done++;
     }
     setSyncMsg("✓ Synced "+total+" current students across "+done+" classes — roster AND class caches (names, sections, admission numbers). Attendance, Fees and the student portal now run off this.");
   }
@@ -17046,6 +17208,39 @@ service cloud.firestore {
     // Pre-admission registration enquiries — office, VP & admin
     match /registrations/{id}     { allow read, write: if isAny(['admin','vp','office']) && inGreencity(); }
 
+    // ── Online registration form (steppingstone.school/apply.html) ──────────────────────────────────────
+    // A parent who is NOT signed in may CREATE one registration on the campus they chose. No read, update or
+    // delete from the public, so a parent can never see another family's form. Every field is whitelisted and
+    // size-capped; status is always 'pending' and payVerified always false, so a submitted UPI reference is only
+    // a CLAIM until the office matches the bank credit (same model as paymentIntents).
+    function optStr(d, k, n) { return !(k in d) || (d[k] is string && d[k].size() <= n); }
+    function reqStr(d, k, n) { return (k in d) && d[k] is string && d[k].size() >= 1 && d[k].size() <= n; }
+    function isOnlineRegistration(campus) {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['name','classSought','dob','gender','father','mother','contact','address','prevSchool',
+                               'notes','regNo','status','by','at','source','campus','session','firstName','middleName',
+                               'lastName','fatherOcc','motherOcc','motherMobile','email','city','pin','prevBoard',
+                               'prevClass','transport','transportArea','sibling','heardFrom','photo','payAmount',
+                               'payRef','payerName','payVerified','createdAt'])
+        && d.keys().hasAll(['name','classSought','dob','gender','father','contact','address','regNo','status','by',
+                            'at','source','campus','session','payAmount','payRef','payVerified','createdAt'])
+        && d.source == 'Online form' && d.by == 'Online form' && d.status == 'pending' && d.payVerified == false
+        && d.campus == campus && d.createdAt == request.time
+        && d.payAmount == 500 && d.payRef is string && d.payRef.matches('^[0-9]{12}$')
+        && d.regNo is string && d.regNo.matches('^WEB-[A-Z0-9]{4}[A-Z]$')
+        && d.contact is string && d.contact.matches('^[6-9][0-9]{9}$')
+        && reqStr(d,'name',90) && reqStr(d,'classSought',20) && reqStr(d,'dob',10) && reqStr(d,'gender',10)
+        && reqStr(d,'father',80) && reqStr(d,'address',300) && reqStr(d,'at',40) && reqStr(d,'session',9)
+        && optStr(d,'mother',80) && optStr(d,'prevSchool',120) && optStr(d,'notes',1200) && optStr(d,'firstName',40)
+        && optStr(d,'middleName',40) && optStr(d,'lastName',40) && optStr(d,'fatherOcc',80) && optStr(d,'motherOcc',80)
+        && optStr(d,'motherMobile',10) && optStr(d,'email',120) && optStr(d,'city',60) && optStr(d,'pin',6)
+        && optStr(d,'prevBoard',30) && optStr(d,'prevClass',20) && optStr(d,'transport',5) && optStr(d,'transportArea',120)
+        && optStr(d,'sibling',120) && optStr(d,'heardFrom',40) && optStr(d,'payerName',80) && optStr(d,'photo',150000);
+    }
+    match /registrations/{rid}    { allow create: if isOnlineRegistration('greencity'); }
+    match /{brc}/{brid}           { allow create: if brc in ['allgirls_registrations','maniram_registrations','surajkund_registrations']
+                                                  && isOnlineRegistration(brc.split('_')[0]); }
+
     // Online UPI payment claims: a signed-in parent submits their own (create only, can't read others);
     // office/admin read the queue and confirm/reject. A claim is just a CLAIM — no money moves until the
     // office verifies the credit and records the receipt, so a spoofed admNo achieves nothing.
@@ -17183,6 +17378,92 @@ service cloud.firestore {
     function inBranch(coll) { return isDirector() || myBranches().hasAny([coll.split('_')[0]]); }
     function baseOf(coll) { return coll.split('_').size() == 2 ? coll.split('_')[1] : ''; }
 
+    // ── Sessions after 2026-27 ──────────────────────────────────────────────────────────────────────────
+    // A later session lives in its own collections, "<branch>-<yyyy>_<base>" (greencity-2728_tests). This mirrors
+    // the GREENCITY rules above, not the looser per-branch blocks below: a session must not lose a protection the
+    // school already has (a teacher cannot create or delete an exam, or edit the timetable).
+    // It is one block and it sits ABOVE the branch blocks on purpose. Firestore stops a request at 1000 evaluated
+    // expressions, and the branch blocks spend all of that on a name they do not recognise, so anything placed
+    // after them is refused for everyone but the Director. Existing collections pay for one name check here.
+    function sessBase(c) { return c.matches('^[a-z]+-[0-9]{4}_[A-Za-z]+$') ? c.split('_')[1] : ''; }
+    function sessBranch(c) { return c.split('-')[0]; }
+    function inSession(c) {
+      return role() == 'admin' || myBranches().hasAny([sessBranch(c)])
+        || (sessBranch(c) == 'greencity' && myBranches().hasAny(['all']));
+    }
+    function sessRead(b) {
+      return (b in ['tests','topics','syllabus','students','academicRoster','timetables','timetableSettings','notices','lessonPlans','teacherLogs','attendance','wrongAnswers'] && signedIn())
+        || (b == 'studentDirectory' && isAny(['admin','vp','office']))
+        || (b == 'admissions' && isAny(['admin','office']))
+        || (b == 'copyChecks' && isAny(['admin','vp','teacher']))
+        || (b in ['exams','discipline'] && isAny(['admin','vp','office','teacher']))
+        || (b == 'complaints' && (isAny(['admin','vp','office'])
+          || (isAny(['teacher']) && resource.data.get('category','') == 'Absence note' && (isCoordinatorRole() || ownsClassSection(resource.data)))
+          || (isAny(['parent']) && resource.data.admNo == string(myAdmNo()))));
+    }
+    function sessPlainWrite(b) {
+      return (b in ['tests','topics','syllabus','copyChecks'] && isAny(['admin','vp','teacher']))
+        || (b == 'students' && isAny(['admin','vp','office','teacher']))
+        || (b == 'academicRoster' && isAny(['admin','vp','office']))
+        || (b in ['studentDirectory','admissions'] && isAny(['admin','office']))
+        || (b in ['timetables','timetableSettings'] && isAny(['admin','vp']));
+    }
+    function teacherRecord(d) { return d.teacherId == myUsername(); }
+    function sessCreate(b) {
+      return sessPlainWrite(b)
+        || (b == 'attendance' && (isAny(['admin','vp']) || (isAny(['teacher']) && (isCoordinatorRole() || ownsClassSection(request.resource.data)))))
+        || (b == 'exams' && isAny(['admin','vp']))
+        || (b == 'notices' && isAny(['admin','vp','office']))
+        || (b == 'discipline' && (isAny(['admin','vp','office']) || (isAny(['teacher']) && request.resource.data.reportedById == myUsername())))
+        || (b == 'complaints' && (isAny(['admin','vp','office'])
+          || (isAny(['parent']) && request.resource.data.admNo == string(myAdmNo()) && request.resource.data.status == 'open' && request.resource.data.source == 'parent-portal')))
+        || (b == 'lessonPlans' && (isAny(['admin','vp']) || (isAny(['teacher']) && teacherRecord(request.resource.data) && ownsTeachingPair(request.resource.data))))
+        || (b == 'teacherLogs' && (isAny(['admin','vp']) || (isAny(['teacher']) && teacherRecord(request.resource.data) && (request.resource.data.get('isSubstitute',false) == true || ownsTeachingPair(request.resource.data)))))
+        || (b == 'wrongAnswers' && signedIn());
+    }
+    function sessUpdate(b) {
+      return sessPlainWrite(b)
+        || (b == 'attendance' && (isAny(['admin','vp']) || (isAny(['teacher']) && (isCoordinatorRole() || (ownsClassSection(resource.data) && ownsClassSection(request.resource.data))))))
+        || (b == 'exams' && (isAny(['admin','vp'])
+          || (isAny(['office','teacher'])
+            && resource.data.get('published',false) != true
+            && !request.resource.data.diff(resource.data).affectedKeys()
+                 .hasAny(['subjects','published','publishedAt','publishedBy','publishedRevision','unpublishedAt','name','cls','term','date'])
+            && (isCoordinatorRole()
+              || (request.resource.data.get('reviewStatus','needs-review') == 'needs-review'
+                && request.resource.data.get('reviewedAt','') == ''
+                && request.resource.data.get('reviewedBy','') == '')))))
+        || (b == 'notices' && (isAny(['admin','vp','office'])
+          || (isAny(['teacher','office','parent','student']) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readBy','ackAt']))))
+        || (b == 'discipline' && (isAny(['admin','vp']) || isCoordinatorRole()
+          || (isAny(['teacher'])
+            && (resource.data.get('reportedById','') == myUsername() || resource.data.get('assignedToId','') == myUsername()
+              || resource.data.get('by','') == myAccountName() || resource.data.get('assignedTo','') == myAccountName())
+            && request.resource.data.get('status','open') in ['open','review','action']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['actions','status','updatedAt','updatedBy','lastActionAt']))
+          || (isAny(['office'])
+            && request.resource.data.get('status','open') in ['open','review','action']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['parentNoticeId','actions','status','updatedAt','updatedBy','lastActionAt']))))
+        || (b == 'complaints' && isAny(['admin','vp','office']))
+        || (b == 'lessonPlans' && (isAny(['admin','vp']) || (isAny(['teacher']) && teacherRecord(resource.data) && teacherRecord(request.resource.data) && ownsTeachingPair(request.resource.data))))
+        || (b == 'teacherLogs' && (isAny(['admin','vp']) || (isAny(['teacher']) && teacherRecord(resource.data) && teacherRecord(request.resource.data) && (request.resource.data.get('isSubstitute',false) == true || ownsTeachingPair(request.resource.data)))))
+        || (b == 'wrongAnswers' && isAny(['admin','vp','teacher']));
+    }
+    function sessDelete(b) {
+      return sessPlainWrite(b)
+        || (b in ['attendance','exams'] && isAny(['admin','vp']))
+        || (b in ['notices','complaints'] && isAny(['admin','vp','office']))
+        || (b == 'discipline' && isAny(['admin']))
+        || (b in ['lessonPlans','teacherLogs'] && (isAny(['admin','vp']) || (isAny(['teacher']) && teacherRecord(resource.data))))
+        || (b == 'wrongAnswers' && isAny(['admin','vp','teacher']));
+    }
+    match /{sess}/{sessId} {
+      allow read:   if sessBase(sess) != '' && signedIn() && inSession(sess) && sessRead(sessBase(sess));
+      allow create: if sessBase(sess) != '' && signedIn() && inSession(sess) && sessCreate(sessBase(sess));
+      allow update: if sessBase(sess) != '' && signedIn() && inSession(sess) && sessUpdate(sessBase(sess));
+      allow delete: if sessBase(sess) != '' && signedIn() && inSession(sess) && sessDelete(sessBase(sess));
+    }
+
     // Money + full-PII for a branch — that branch's Director/Office only (Director reaches any branch)
     match /{bc}/{id} {
       allow read, write: if signedIn() && inBranch(bc)
@@ -17318,7 +17599,8 @@ service cloud.firestore {
     // ── (6) Everything else: locked ──────────────────────────────────────────
     match /{document=**} { allow read, write: if false; }
   }
-}`;
+}
+`;
 
 // ─────────────────────────────────────────────────────────────
 //  ACCOUNTS  ·  Director-only user management (add / role / disable)
@@ -23021,7 +23303,14 @@ function AdmissionForm({user, studentsDB, dirDB, academicRosterDB, registrations
   ];
   const docPending=DOCS.filter(d=>!f[d[0]]).map(d=>d[1]);
   const COUNTRIES=["India","Afghanistan","Australia","Bangladesh","Bhutan","Brazil","Canada","China","Egypt","France","Germany","Indonesia","Iran","Iraq","Italy","Japan","Kuwait","Malaysia","Maldives","Mauritius","Nepal","New Zealand","Nigeria","Oman","Pakistan","Philippines","Qatar","Russia","Saudi Arabia","Singapore","South Africa","Sri Lanka","Thailand","UAE","UK","USA","Other"];
-  const lastReg=useMemo(()=>{var m=((typeof window!=="undefined"&&window.__currentBranch)||"greencity")==="greencity"?2402:0;Object.values(dirDB.data||{}).forEach(function(d){((d&&d.students)||[]).forEach(function(s){var n=parseInt(s.admNo);if(!isNaN(n)&&n>m)m=n;});});return m;},[dirDB.data]);
+  // Admitting into another session, that session's directory holds only its own intake. Admission numbers run
+  // across years, so the live session's pupils must still count: otherwise numbering restarts and a new child
+  // collides with an existing one at promotion.
+  const admLive=__liveSession(),admWork=__workSession(),admNext=__admSession();
+  const[otherYear,setOtherYear]=useState([]);
+  useEffect(()=>{if(admWork===admLive){setOtherYear([]);return;}let dead=false;__readDirectory(admLive).then(d=>{if(dead)return;var out=[];Object.values(d||{}).forEach(x=>{((x&&x.students)||[]).forEach(s=>{if(s)out.push(s);});});setOtherYear(out);}).catch(()=>{});return()=>{dead=true;};},[admWork,admLive]);
+  const[admYearChosen,setAdmYearChosen]=useState(false);
+  const lastReg=useMemo(()=>{var m=((typeof window!=="undefined"&&window.__currentBranch)||"greencity")==="greencity"?2402:0;Object.values(dirDB.data||{}).forEach(function(d){((d&&d.students)||[]).forEach(function(s){var n=parseInt(s.admNo);if(!isNaN(n)&&n>m)m=n;});});otherYear.forEach(function(s){var n=parseInt(s.admNo);if(!isNaN(n)&&n>m)m=n;});return m;},[dirDB.data,otherYear]);
   useEffect(()=>{setF(p=>p.regNo?p:Object.assign({},p,{regNo:String(lastReg+1)}));},[lastReg]);
   // Prefill from a just-admitted registration enquiry (set by Registration → Admit). Fills only the safe direct
   // fields; the office confirms class/section etc. The student carries `fromRegNo` so the funnel stays traceable.
@@ -23062,8 +23351,9 @@ function AdmissionForm({user, studentsDB, dirDB, academicRosterDB, registrations
       if(rn&&String(s.admNo)===rn)reg=s;
       if(_fullName&&ck&&__clsNum(String(s.clsNum||s.cls||""))===ck&&nmKey(s.name)===nmKey(_fullName)&&String(s.admNo)!==rn)nm=s;
     });});
+    if(!reg&&rn)otherYear.forEach(function(s){if(String(s.admNo)===rn)reg=s;});
     return {reg:reg,nm:nm};
-  },[dirDB.data,f.regNo,_fullName,_clsNum]);
+  },[dirDB.data,otherYear,f.regNo,_fullName,_clsNum]);
   const dupSig=(dup.reg?("R"+dup.reg.admNo):"")+"|"+(dup.nm?("N"+dup.nm.admNo):"");
   async function submit(){
     setAttempted(true);
@@ -23130,6 +23420,20 @@ function AdmissionForm({user, studentsDB, dirDB, academicRosterDB, registrations
       setTab("student");window.scrollTo(0,0);
     }catch(e){setMsg("Could not save — "+((e&&e.message)||"check connection / Firestore rules"));}
     setSaving(false);
+  }
+  // From September, a new form could be for this year or next. Ask once rather than file it in the wrong year:
+  // an admission in the wrong session puts the child in the wrong class. A form opened from a registration has
+  // already been taken to the right session.
+  const _admMonth=+today().slice(5,7);
+  if(admWork===admLive&&!admYearChosen&&!f.fromRegNo&&(_admMonth>=9||_admMonth<=3)&&admNext!==admLive){
+    return <div style={{maxWidth:640,margin:"0 auto"}}>
+      <div className="ap-hi">Complete admission</div>
+      <p className="ap-hisub" style={{margin:"4px 0 16px"}}>Which session is this admission for?</p>
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        <button className="ss-press" onClick={()=>{window.__setWorkSession&&window.__setWorkSession(admNext);}} style={{textAlign:"left",background:"var(--btn-pri-bg)",color:"var(--btn-pri-tx)",border:0,borderRadius:8,padding:"14px 16px",cursor:"pointer",fontFamily:"var(--ss-font)"}}><div style={{fontSize:15,fontWeight:750}}>{admNext} (next year)</div><div style={{fontSize:12.5,opacity:.85,marginTop:3}}>The child goes straight into {admNext} and does not appear in {admLive}.</div></button>
+        <button className="ss-press" onClick={()=>setAdmYearChosen(true)} style={{textAlign:"left",background:"var(--c-fff)",color:"var(--ap-ink)",border:"1px solid var(--ap-line2)",borderRadius:8,padding:"14px 16px",cursor:"pointer",fontFamily:"var(--ss-font)"}}><div style={{fontSize:15,fontWeight:750}}>{admLive} (this year)</div><div style={{fontSize:12.5,color:"var(--ap-muted)",marginTop:3}}>The child joins now, in the session running today.</div></button>
+      </div>
+    </div>;
   }
   const TABS=[["student","Student Details"],["parent","Parent Details"],["previous","Previous Details"],["documents","Documents & Readiness"],["hindi","Hindi Detail"],["emergency","Emergency Contact"]];
   return(
@@ -24543,7 +24847,7 @@ function App(){
   // Populate the synchronous per-branch config cache so module code (termWeights / subject resolver / remedial) can read it.
   useEffect(()=>{var m={};Object.keys(metaDB.data||{}).forEach(function(k){if(k.indexOf("branchcfg_")===0)m[k.slice(10)]=metaDB.data[k];});window.__branchCfg=m;},[metaDB.data]);
   const curSession=(metaDB.data&&metaDB.data[__bMeta("config")]&&metaDB.data[__bMeta("config")].session)||"2026-27";
-  window.__SESSION=curSession; /* publish for cross-block labels — REG/ prefix + print headers read it */
+  window.__LIVE_SESSION=curSession;
   // ── Per-session view: fees/attendance/marks are tagged with a session; the director can switch which
   // session's data they're looking at. Untagged (legacy) docs belong to the founding session 2026–27.
   // The installed app's shortcuts (manifest.json) open "/?src=app&go=attendance" and the like. Nothing read
@@ -24560,8 +24864,23 @@ function App(){
   },[user&&user.username]);
 
   const[viewSession,setViewSession]=useState(null);
-  const vSess=viewSession||curSession;
-  const allSessions=useMemo(function(){var s={};s[curSession]=1;[feesDBraw,testsDBraw,attendanceDBraw,examsDBraw].forEach(function(db){Object.keys(db.data||{}).forEach(function(k){var d=db.data[k];if(d&&d.session)s[d.session]=1;});});return Object.keys(s).sort();},[curSession,feesDBraw.data,testsDBraw.data,attendanceDBraw.data,examsDBraw.data]);
+  // Director, VP and office may work in any session; a teacher, parent or pupil is always in the live one. A family
+  // whose child has left or passed out stays on the last year that child was here (set at go-live).
+  const canSwitchSession=!!user&&["admin","vp","office"].indexOf(user.role)>=0;
+  const pinSession=(user&&(user.role==="parent"||user.role==="student")&&user.archiveSession)||"";
+  const vSess=(canSwitchSession&&viewSession)||pinSession||curSession;
+  window.__SESSION=vSess; /* publish for cross-block labels — REG/ prefix + print headers read it */
+  // The store follows the session in use. The tag is set here, during render, so every subscription made after
+  // this render already points the right way; a change on screen re-points the live ones just below. Before the
+  // config doc has arrived the tag stays as it was (this device's last known live session).
+  const cfgDocLoaded=!!(metaDB.data&&metaDB.data[__bMeta("config")]);
+  if(cfgDocLoaded||viewSession){var _tagNow=__sessTag(vSess);if(_tagNow!==(window.__storeTag||"")){window.__storeTag=_tagNow;window.__storeTagMoved=true;}}
+  useEffect(()=>{
+    if(window.__storeTagMoved){window.__storeTagMoved=false;try{window.dispatchEvent(new Event("branchchange"));}catch(e){}}
+    if(cfgDocLoaded){var t=__sessTag(curSession);try{if(t)localStorage.setItem(__liveTagKey(),t);else localStorage.removeItem(__liveTagKey());}catch(e){}}
+  });
+  window.__setWorkSession=function(s){if(!canSwitchSession)return false;if(!__confirmUnsavedWork())return false;setViewSession(s===curSession?null:s);return true;};
+  const allSessions=useMemo(function(){var s={};s[curSession]=1;s[__BASE_SESSION]=1;var nx=__nextSession(curSession);if(nx)s[nx]=1;((metaDB.data&&metaDB.data[__bMeta("config")]&&metaDB.data[__bMeta("config")].sessions)||[]).forEach(function(x){if(x)s[x]=1;});[feesDBraw,testsDBraw,attendanceDBraw,examsDBraw].forEach(function(db){Object.keys(db.data||{}).forEach(function(k){var d=db.data[k];if(d&&d.session)s[d.session]=1;});});return Object.keys(s).sort();},[curSession,metaDB.data,feesDBraw.data,testsDBraw.data,attendanceDBraw.data,examsDBraw.data]);
   // The session a record belongs to is decided by its DATE, not by whatever config.session happened to say
   // when someone pressed save. The config flag is flipped by hand, and until it was flipped in June every test
   // saved in April and May - genuinely part of 2026-27 - was stamped 2025-26 and vanished from every teacher's
@@ -24574,8 +24893,21 @@ function App(){
     var start=(mo>=4)?y:(y-1);
     return start+"-"+String((start+1)%100).padStart(2,"0");
   }
-  function _fsess(data){var o={};Object.keys(data||{}).forEach(function(k){var d=data[k];if(String(k).indexOf("__")===0){o[k]=d;return;}if(((d&&d.session)||"2026-27")===vSess)o[k]=d;});return o;}
-  function _wrapSess(db){return{data:_fsess(db.data),trash:db.trash,allData:db.allData,loading:db.loading,collName:db.collName,loadRange:db.loadRange,patch:db.patch,set:function(id,v){return db.set(id,(String(id).indexOf("__")===0||(v&&v.session))?v:Object.assign({},v,{session:(v&&v.date)?__sessionForDate(v.date):curSession}));},del:db.del,restore:db.restore,raw:db};}
+  // In a session's own store everything belongs to that session; in the shared collections (2026-27's, and
+  // fees for every year) the record's session field decides.
+  function _fsess(data,coll){var tag=__sessTag(vSess),own=!!tag&&__SESSION_STORE.has(coll),o=__sessDocs(data,tag);Object.keys(data||{}).forEach(function(k){if(String(k).indexOf("__")===0)return;var d=data[k];if(own||((d&&d.session)||__BASE_SESSION)===vSess)o[k]=d;});return o;}
+  // Which session a new record is filed under. Working in another session, that session: a fee taken today for a
+  // 2027-28 admission is a 2027-28 receipt whatever its date. In the live session the date decides, as it always
+  // has, but never later than the session in use: a register marked on 2 April before the rollover must stay on
+  // screen rather than file itself under a year nobody is looking at (go-live carries such records across).
+  function _stampFor(coll,v){if(__sessTag(vSess)&&__SESSION_STORE.has(coll))return vSess;if(vSess!==curSession)return vSess;var d=v&&v.date;if(!d)return vSess;var st=__sessionForDate(d);return st>vSess?vSess:st;}
+  function _wrapSess(db){var coll=db.collName,tag=__sessTag(vSess);return{data:_fsess(db.data,coll),trash:db.trash,allData:db.allData,loading:db.loading,collName:db.collName,loadRange:db.loadRange,patch:db.patch,set:function(id,v){
+    var sid=String(id);
+    if(sid.indexOf("__")===0)return db.set((tag&&coll==="fees"&&__SESSION_FEE_DOCS.indexOf(sid)>=0)?(sid+"__y"+tag):id,v); // next year's fee structure never rewrites this year's balances
+    var doc=(v&&v.session)?v:Object.assign({},v,{session:_stampFor(coll,v)});
+    var ex=(tag&&coll==="fees")?db.data[sid]:null;                                                                        // fees share one collection across years: never replace another year's receipt
+    return db.set((ex&&(ex.session||__BASE_SESSION)!==doc.session)?(sid+"__y"+tag):id,doc);
+  },del:db.del,restore:db.restore,raw:db};}
   useEffect(function(){
     try{ window.__DIAG={
       session:curSession, viewing:vSess,
@@ -24593,9 +24925,9 @@ function App(){
     // `user` is null until someone signs in, and a dependency array is read ON EVERY RENDER — including the
     // first, at the login screen. Reading user.role unguarded here threw before the app could draw anything.
     const _r=(user&&user.role)||"";
-    const needsAll=!!user&&(tab!=="dashboard"||_r==="student"||_r==="parent");
-    if(needsAll&&attendanceDBraw.loadRange)attendanceDBraw.loadRange(__sessionStart(curSession),_attTodayStr());
-  },[tab,user&&user.role,curSession,attendanceDBraw.loadRange]);
+    const needsAll=!!user&&(tab!=="dashboard"||_r==="student"||_r==="parent"||vSess!==curSession);
+    if(needsAll&&attendanceDBraw.loadRange)attendanceDBraw.loadRange(__sessionStart(vSess),_attTodayStr());
+  },[tab,user&&user.role,curSession,vSess,attendanceDBraw.loadRange]);
   const examsDB=_wrapSess(examsDBraw); // C7: term exams are session-scoped like fees/tests/attendance — the Apr 2027 rollover no longer mixes two years' exams & report cards
   const registrationsDB=useFirestore("registrations", !!user&&(user.role==="office"||user.role==="vp"||(user.role==="admin"&&user.fees!==false))); // office operates; Director + VP monitor the same owned pipeline
   const disciplineDB=useFirestore("discipline", !!user&&["admin","vp","office","teacher"].indexOf(user.role)>=0); // per-student behaviour incidents
@@ -24783,7 +25115,7 @@ function App(){
   const jumpStudent=(adm,name)=>{if(!__guardTab("directory"))return;setJumpAdm(String(adm||name||""));window.scrollTo(0,0);};
 
   return(
-    <div className="ap-shell"><ToastHost/><ConfirmHost/><OfflineBanner/><ReadOnlySessionBanner user={user}/><StaffPhonePrompt user={user} onSaved={ph=>setUser(u=>u?{...u,phone:ph}:u)}/>
+    <div className="ap-shell"><ToastHost/><ConfirmHost/><OfflineBanner/><ReadOnlySessionBanner user={user}/>{vSess!==curSession&&canSwitchSession&&<div role="status" style={{background:"var(--bg-amb)",borderBottom:"1px solid var(--bd-amb)",color:"var(--tx-org2)",padding:"8px 16px",fontSize:12.8,fontWeight:650,display:"flex",alignItems:"center",justifyContent:"center",gap:12,flexWrap:"wrap"}}><span>You are working in session {vSess}. Everything you enter here stays in {vSess} and does not appear in {curSession}.</span><button className="ss-press" onClick={()=>window.__setWorkSession(curSession)} style={{background:"var(--c-fff)",border:"1px solid var(--bd-amb)",color:"var(--tx-org2)",borderRadius:6,padding:"4px 11px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Back to {curSession}</button></div>}<StaffPhonePrompt user={user} onSaved={ph=>setUser(u=>u?{...u,phone:ph}:u)}/>
       <div className={"ap-scrim"+(navOpen?" open":"")} onClick={()=>setNavOpen(false)}/>
       {/* Mobile quick-bar — the five most-used screens, one thumb-tap away (phone widths only; parents keep their own nav) */}
       {!isParent&&(()=>{
@@ -24854,7 +25186,7 @@ function App(){
               </div>}
             </div>
           ):<div style={{flex:1}}/>}
-          {(viewSession&&viewSession!==curSession)?<span className="ap-tchip ap-topchip" onClick={()=>setViewSession(null)} title="Data Center is showing an archived year. New receipts & registers still save to the live session. Click to return to live view." style={{cursor:"pointer",borderColor:"var(--tx-org2)",color:"var(--tx-org2)",background:"var(--bg-amb)"}}>Viewing {viewSession} · archived — tap for live</span>:<span className="ap-tchip ap-topchip">Session {curSession}</span>}
+          {canSwitchSession&&<label className="ap-tchip" title="Change session. What you enter stays in the session shown here." style={{cursor:"pointer",position:"relative",...(vSess!==curSession?{borderColor:"var(--tx-org2)",color:"var(--tx-org2)",background:"var(--bg-amb)"}:{})}}><select aria-label="Session" value={vSess} onChange={e=>{window.__setWorkSession(e.target.value);}} style={{border:0,background:"transparent",color:"inherit",font:"inherit",fontWeight:700,cursor:"pointer",outline:"none",padding:0}}>{allSessions.slice().reverse().map(v=><option key={v} value={v}>{v}{v===curSession?" · live":v>curSession?" · next":" · past"}</option>)}</select></label>}
           <label className="ap-tchip ap-datechip" title="Pick a date to view that day's data" style={{cursor:"pointer",position:"relative",...(viewDate!==_todayStr?{borderColor:"var(--ap-accent)",color:"var(--ap-accent)"}:{})}}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4.5" width="18" height="17" rx="2"/><path d="M3 9h18M8 2.5v4M16 2.5v4"/></svg>{new Date(viewDate+"T00:00").toLocaleDateString("en-IN",{day:"numeric",month:"short"})}<input type="date" value={viewDate} max={_todayStr} onChange={e=>setViewDate(e.target.value||_todayStr)} style={{position:"absolute",inset:0,width:"100%",height:"100%",opacity:0,cursor:"pointer"}}/></label>
           {viewDate!==_todayStr&&<button className="ap-tchip ap-datechip" onClick={()=>setViewDate(_todayStr)} title="Back to today" style={{cursor:"pointer",color:"var(--ap-accent)",fontWeight:600}}>Today</button>}
           <div className="ap-viewtog ap-topchip">
@@ -24920,14 +25252,14 @@ function App(){
         {tab==="testschedule"&&!isParent&&<TestSchedulePanel user={user} ttSetDB={ttSetDB} usersDB={usersDB} setTab={setTab}/>}
         {tab==="focusgroup"&&(isAdmin||isVP)&&<FocusGroupPanel usersDB={usersDB} wrongDB={wrongDB} dirDB={dirDB}/>}
         {tab==="insights"&&(isAdmin||isVP||user.coordinator===true)&&<Insights testsDB={testsDB} studentsDB={studentsDB} attendanceDB={attendanceDB} wrongDB={wrongDB} usersDB={usersDB} dirDB={dirDB} academicRosterDB={academicRosterDB}/>} 
-        {tab==="fees"&&canFees&&<Fees user={user} session={viewSession||curSession} feesDB={feesDB} studentsDB={studentsDB} academicRosterDB={academicRosterDB} dirDB={dirDB} metaDB={metaDB} intentsDB={paymentIntentsDB} feeCloseDB={feeCloseDB}/>} 
+        {tab==="fees"&&canFees&&<Fees user={user} session={vSess} feesDB={feesDB} studentsDB={studentsDB} academicRosterDB={academicRosterDB} dirDB={dirDB} metaDB={metaDB} intentsDB={paymentIntentsDB} feeCloseDB={feeCloseDB}/>} 
         {/* sharedAttDB={null} on the next two: the App subscription is windowed to the last two months for the
             dashboards, and both of these look further back — salary is run for past months, and the register
             browses any date. They subscribe to the whole collection themselves, when opened. */}
         {tab==="salary"&&canFees&&<SalaryPanel user={user} sharedAttDB={null} sharedUsersDB={usersDB} sharedCalDB={calendarDB} sharedLeaveDB={leaveDB}/>} 
         {tab==="admission"&&(isDirector||isOffice)&&<AdmissionForm user={user} studentsDB={studentsDB} dirDB={dirDB} academicRosterDB={academicRosterDB} registrationsDB={registrationsDB} openModule={setTab}/>}
         {tab==="directory"&&(isAdmin||isOffice||user.role==="vp")&&<StudentDirectory user={user} dirDB={dirDB} testsDB={testsDB} examsDB={examsDB} studentsDB={studentsDB} attendanceDB={attendanceDB} wrongDB={wrongDB} feesDB={feesDB} canFees={canFees} academicRosterDB={academicRosterDB} studentLinksDB={studentLinksDB} jumpAdm={jumpAdm} onJumpDone={()=>setJumpAdm("")}/>}
-        {tab==="registration"&&(isDirector||isOffice||isVP)&&<Registration user={user} registrationsDB={registrationsDB} usersDB={usersDB} setTab={setTab}/>} 
+        {tab==="registration"&&(isDirector||isOffice||isVP)&&<Registration user={user} registrationsDB={registrationsDB} usersDB={usersDB} setTab={setTab} session={vSess}/>} 
         {tab==="admitcard"&&(isAdmin||isVP||isOffice)&&<AdmitCard user={user} dirDB={dirDB} setTab={setTab}/>}
         {tab==="exams"&&(isAdmin||isTeacher||isOffice||user.role==="vp")&&<Exams user={user} studentsDB={studentsDB} examsDB={examsDB} attendanceDB={attendanceDB} dirDB={dirDB} academicRosterDB={academicRosterDB} examClasses={(isOffice||isAdmin||user.role==="vp")?__academicClasses():getTeacherClasses(user)} reportsOnly={isOffice}/>} 
         {tab==="ai"&&isDirector&&<AIPanel testsDB={testsDB} studentsDB={studentsDB} topicsDB={topicsDB} dirDB={dirDB} feesDB={feesDB} attendanceDB={attendanceDB} usersDB={usersDB} academicRosterDB={academicRosterDB} examsDB={examsDB} canFees={canFees}/>}

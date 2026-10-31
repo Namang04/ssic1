@@ -121,6 +121,14 @@ const pdis=__testRepairPlan(dis,rosterOf,{},"2026-10-31");
 ok('a disagreement is listed, not resolved',           pdis.review.some(r=>/whole-class record of the same test/.test(r.reason)));
 ok('...and neither mark is changed',                   !pdis.removes.some(r=>r.id==="s") && (pdis.writes.find(w=>w.id==="w")||{doc:{rowsByAdm:{"13":4}}}).doc.rowsByAdm["13"]===4);
 
+// two named chapters are two papers, however alike the date and maximum (Class 10 Hindi, 28 July 2026)
+const otherCh={w:{...fork.whole},s:{...fork.secB,topics:["A different chapter"]}};
+const poc=__testRepairPlan(otherCh,rosterOf,{},"2026-10-31");
+ok('a copy on another chapter is not merged',          !poc.removes.some(r=>r.id==="s") && !(poc.writes.find(w=>w.id==="w")||{doc:{rowsByAdm:{}}}).doc.rowsByAdm["13"]);
+const noCh={w:{...fork.whole,topics:[]},s:{...fork.secB}};
+const pnc=__testRepairPlan(noCh,rosterOf,{},"2026-10-31");
+ok('a copy is still rejoined when one side names no chapter', pnc.removes.some(r=>r.id==="s"));
+
 // an empty per-section copy of a whole-class test is just noise and is removed
 const emptyFork={w:{...fork.whole},s:{...fork.secB,rows:{},rowsByAdm:{}}};
 const pef=__testRepairPlan(emptyFork,rosterOf,{},"2026-10-31");

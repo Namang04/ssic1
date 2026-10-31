@@ -534,6 +534,92 @@ service cloud.firestore {
     function inBranch(coll) { return isDirector() || myBranches().hasAny([coll.split('_')[0]]); }
     function baseOf(coll) { return coll.split('_').size() == 2 ? coll.split('_')[1] : ''; }
 
+    // ── Sessions after 2026-27 ──────────────────────────────────────────────────────────────────────────
+    // A later session lives in its own collections, "<branch>-<yyyy>_<base>" (greencity-2728_tests). This mirrors
+    // the GREENCITY rules above, not the looser per-branch blocks below: a session must not lose a protection the
+    // school already has (a teacher cannot create or delete an exam, or edit the timetable).
+    // It is one block and it sits ABOVE the branch blocks on purpose. Firestore stops a request at 1000 evaluated
+    // expressions, and the branch blocks spend all of that on a name they do not recognise, so anything placed
+    // after them is refused for everyone but the Director. Existing collections pay for one name check here.
+    function sessBase(c) { return c.matches('^[a-z]+-[0-9]{4}_[A-Za-z]+$') ? c.split('_')[1] : ''; }
+    function sessBranch(c) { return c.split('-')[0]; }
+    function inSession(c) {
+      return role() == 'admin' || myBranches().hasAny([sessBranch(c)])
+        || (sessBranch(c) == 'greencity' && myBranches().hasAny(['all']));
+    }
+    function sessRead(b) {
+      return (b in ['tests','topics','syllabus','students','academicRoster','timetables','timetableSettings','notices','lessonPlans','teacherLogs','attendance','wrongAnswers'] && signedIn())
+        || (b == 'studentDirectory' && isAny(['admin','vp','office']))
+        || (b == 'admissions' && isAny(['admin','office']))
+        || (b == 'copyChecks' && isAny(['admin','vp','teacher']))
+        || (b in ['exams','discipline'] && isAny(['admin','vp','office','teacher']))
+        || (b == 'complaints' && (isAny(['admin','vp','office'])
+          || (isAny(['teacher']) && resource.data.get('category','') == 'Absence note' && (isCoordinatorRole() || ownsClassSection(resource.data)))
+          || (isAny(['parent']) && resource.data.admNo == string(myAdmNo()))));
+    }
+    function sessPlainWrite(b) {
+      return (b in ['tests','topics','syllabus','copyChecks'] && isAny(['admin','vp','teacher']))
+        || (b == 'students' && isAny(['admin','vp','office','teacher']))
+        || (b == 'academicRoster' && isAny(['admin','vp','office']))
+        || (b in ['studentDirectory','admissions'] && isAny(['admin','office']))
+        || (b in ['timetables','timetableSettings'] && isAny(['admin','vp']));
+    }
+    function teacherRecord(d) { return d.teacherId == myUsername(); }
+    function sessCreate(b) {
+      return sessPlainWrite(b)
+        || (b == 'attendance' && (isAny(['admin','vp']) || (isAny(['teacher']) && (isCoordinatorRole() || ownsClassSection(request.resource.data)))))
+        || (b == 'exams' && isAny(['admin','vp']))
+        || (b == 'notices' && isAny(['admin','vp','office']))
+        || (b == 'discipline' && (isAny(['admin','vp','office']) || (isAny(['teacher']) && request.resource.data.reportedById == myUsername())))
+        || (b == 'complaints' && (isAny(['admin','vp','office'])
+          || (isAny(['parent']) && request.resource.data.admNo == string(myAdmNo()) && request.resource.data.status == 'open' && request.resource.data.source == 'parent-portal')))
+        || (b == 'lessonPlans' && (isAny(['admin','vp']) || (isAny(['teacher']) && teacherRecord(request.resource.data) && ownsTeachingPair(request.resource.data))))
+        || (b == 'teacherLogs' && (isAny(['admin','vp']) || (isAny(['teacher']) && teacherRecord(request.resource.data) && (request.resource.data.get('isSubstitute',false) == true || ownsTeachingPair(request.resource.data)))))
+        || (b == 'wrongAnswers' && signedIn());
+    }
+    function sessUpdate(b) {
+      return sessPlainWrite(b)
+        || (b == 'attendance' && (isAny(['admin','vp']) || (isAny(['teacher']) && (isCoordinatorRole() || (ownsClassSection(resource.data) && ownsClassSection(request.resource.data))))))
+        || (b == 'exams' && (isAny(['admin','vp'])
+          || (isAny(['office','teacher'])
+            && resource.data.get('published',false) != true
+            && !request.resource.data.diff(resource.data).affectedKeys()
+                 .hasAny(['subjects','published','publishedAt','publishedBy','publishedRevision','unpublishedAt','name','cls','term','date'])
+            && (isCoordinatorRole()
+              || (request.resource.data.get('reviewStatus','needs-review') == 'needs-review'
+                && request.resource.data.get('reviewedAt','') == ''
+                && request.resource.data.get('reviewedBy','') == '')))))
+        || (b == 'notices' && (isAny(['admin','vp','office'])
+          || (isAny(['teacher','office','parent','student']) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readBy','ackAt']))))
+        || (b == 'discipline' && (isAny(['admin','vp']) || isCoordinatorRole()
+          || (isAny(['teacher'])
+            && (resource.data.get('reportedById','') == myUsername() || resource.data.get('assignedToId','') == myUsername()
+              || resource.data.get('by','') == myAccountName() || resource.data.get('assignedTo','') == myAccountName())
+            && request.resource.data.get('status','open') in ['open','review','action']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['actions','status','updatedAt','updatedBy','lastActionAt']))
+          || (isAny(['office'])
+            && request.resource.data.get('status','open') in ['open','review','action']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['parentNoticeId','actions','status','updatedAt','updatedBy','lastActionAt']))))
+        || (b == 'complaints' && isAny(['admin','vp','office']))
+        || (b == 'lessonPlans' && (isAny(['admin','vp']) || (isAny(['teacher']) && teacherRecord(resource.data) && teacherRecord(request.resource.data) && ownsTeachingPair(request.resource.data))))
+        || (b == 'teacherLogs' && (isAny(['admin','vp']) || (isAny(['teacher']) && teacherRecord(resource.data) && teacherRecord(request.resource.data) && (request.resource.data.get('isSubstitute',false) == true || ownsTeachingPair(request.resource.data)))))
+        || (b == 'wrongAnswers' && isAny(['admin','vp','teacher']));
+    }
+    function sessDelete(b) {
+      return sessPlainWrite(b)
+        || (b in ['attendance','exams'] && isAny(['admin','vp']))
+        || (b in ['notices','complaints'] && isAny(['admin','vp','office']))
+        || (b == 'discipline' && isAny(['admin']))
+        || (b in ['lessonPlans','teacherLogs'] && (isAny(['admin','vp']) || (isAny(['teacher']) && teacherRecord(resource.data))))
+        || (b == 'wrongAnswers' && isAny(['admin','vp','teacher']));
+    }
+    match /{sess}/{sessId} {
+      allow read:   if sessBase(sess) != '' && signedIn() && inSession(sess) && sessRead(sessBase(sess));
+      allow create: if sessBase(sess) != '' && signedIn() && inSession(sess) && sessCreate(sessBase(sess));
+      allow update: if sessBase(sess) != '' && signedIn() && inSession(sess) && sessUpdate(sessBase(sess));
+      allow delete: if sessBase(sess) != '' && signedIn() && inSession(sess) && sessDelete(sessBase(sess));
+    }
+
     // Money + full-PII for a branch — that branch's Director/Office only (Director reaches any branch)
     match /{bc}/{id} {
       allow read, write: if signedIn() && inBranch(bc)

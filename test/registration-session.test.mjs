@@ -6,6 +6,7 @@ const src = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const grab = (name) => { const i = src.search(new RegExp('^function ' + name + '\\(', 'm')); if (i < 0) { console.error('  missing ' + name); process.exit(2); }
   let d = 0, j = i; for (;; j++) { const c = src[j]; if (c === '{') d++; else if (c === '}') { if (--d === 0) break; } } return src.slice(i, j + 1); };
 globalThis.window = { __SESSION: '2026-27' };
+globalThis.__BASE_SESSION = '2026-27';
 (0, eval)([grab('__nextSession'), grab('__liveSession'), grab('__admSession'), grab('__regSession'), grab('__regPrefix'), grab('__regSessions')].join('\n') +
   '\nglobalThis.__nextSession=__nextSession;globalThis.__liveSession=__liveSession;globalThis.__admSession=__admSession;' +
   'globalThis.__regSession=__regSession;globalThis.__regPrefix=__regPrefix;globalThis.__regSessions=__regSessions;');
@@ -26,7 +27,8 @@ ok('the live session is what the school runs', __liveSession() === '2026-27');
 // ── a record's own session ──
 ok('a record carries its session',             __regSession({ session: '2027-28' }) === '2027-28');
 ok('the website form\'s session is honoured',  __regSession({ source: 'Online form', session: '2027-28' }) === '2027-28');
-ok('a record saved before this reads as live', __regSession({ name: 'Old enquiry' }) === '2026-27');
+ok('a record saved before this reads as 2026-27', __regSession({ name: 'Old enquiry' }) === '2026-27');
+ok('...even once a later session is live',       (() => { window.__LIVE_SESSION = '2027-28'; const r = __regSession({ name: 'Old enquiry' }) === '2026-27'; delete window.__LIVE_SESSION; return r; })());
 ok('...and so does an empty one',              __regSession({ session: '' }) === '2026-27' && __regSession(null) === '2026-27');
 
 // ── Reg No prefix ──
