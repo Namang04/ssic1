@@ -5584,6 +5584,23 @@ function AdmitCard({user, dirDB, setTab}){
 }
 
 // ── REGISTRATION ── pre-admission intake + form list (separate from confirmed admissions)
+// ── Which SESSION a registration belongs to (2026-10-31) ──
+// Admissions for the next academic year open months before that year starts, so enquiries and registration
+// forms for 2027-28 arrive while the school is still running 2026-27. A registration therefore carries its
+// own session and is never filed under whichever year the school happens to be running: the Reg No year and
+// the admissions desk both follow the session being registered FOR. The website form (apply.html) already
+// sends one; records saved before this existed have none and read as the live session, so nothing is
+// retro-labelled and nothing disappears from the list.
+function __nextSession(s){var m=String(s||"").match(/^(\d{4})-(\d{2})$/);if(!m)return "";var a=Number(m[1])+1;return a+"-"+String((a+1)%100).padStart(2,"0");}
+function __liveSession(){return String((typeof window!=="undefined"&&window.__SESSION)||"2026-27");}
+// The session a NEW enquiry is filed under by default: next year, because that is what admissions are for.
+function __admSession(){return __nextSession(__liveSession())||__liveSession();}
+function __regSession(r){return String((r&&r.session)||__liveSession());}
+function __regPrefix(sess){return "REG/"+String(sess||__admSession()).replace(/^20/,"")+"/";}
+// Every session that has registrations, newest first, always including the live one and next year's.
+function __regSessions(regs){var m={};m[__liveSession()]=1;m[__admSession()]=1;
+  (regs||[]).forEach(function(r){var v=__regSession(r);if(v)m[v]=1;});
+  return Object.keys(m).sort(function(a,b){return b.localeCompare(a);});}
 function Registration({user, registrationsDB, usersDB, setTab}){
   const[view,setView]=useState("list"); // 'list' | 'new'
   const blank={name:"",classSought:SCHOOL.classes[0],dob:"",gender:"",father:"",mother:"",contact:"",address:"",prevSchool:"",notes:"",source:"Walk-in",preferredContact:"WhatsApp",nextFollowUp:""};
@@ -5593,6 +5610,7 @@ function Registration({user, registrationsDB, usersDB, setTab}){
   const[saving,setSaving]=useState(false);
   const[msg,setMsg]=useState("");
   const[filt,setFilt]=useState(function(){try{var j=window.__regJump;if(j){window.__regJump=null;if(j.filt)return j.filt;}}catch(_){}return "all";}); // all | pending | admitted | rejected (+ __regJump one-shot)
+  const[regSess,setRegSess]=useState(()=>__admSession()); // the session being registered FOR
   const[impOpen,setImpOpen]=useState(false);
   const[followId,setFollowId]=useState("");
   const[followNote,setFollowNote]=useState("");
@@ -5624,12 +5642,17 @@ function Registration({user, registrationsDB, usersDB, setTab}){
   const followDue=r=>{if(!r||(r.status||"pending")!=="pending")return false;if(r.nextFollowUp)return String(r.nextFollowUp)<=_regToday;var created=String(r.at||"").slice(0,10);if(!created)return true;var age=Math.floor((new Date(_regToday+"T12:00:00")-new Date(created+"T12:00:00"))/864e5);return !r.lastFollowUpAt&&age>=2;};
   const isOnline=r=>!!r&&r.source==="Online form";
   const payToVerify=r=>isOnline(r)&&Number(r.payAmount||0)>0&&r.payVerified!==true&&!r.payIssue&&(r.status||"pending")==="pending";
-  const shown=filt==="all"?regs:filt==="due"?regs.filter(followDue):filt==="online"?regs.filter(isOnline):filt==="payverify"?regs.filter(payToVerify):regs.filter(r=>(r.status||"pending")===filt);
-  const counts={pending:regs.filter(r=>(r.status||"pending")==="pending").length,due:regs.filter(followDue).length,admitted:regs.filter(r=>r.status==="admitted").length,rejected:regs.filter(r=>r.status==="rejected").length};
+  // The desk works on ONE session at a time: next year's enquiries never mix with the year in progress.
+  const sessRegs=useMemo(()=>regs.filter(r=>__regSession(r)===regSess),[regs,regSess]);
+  const otherSess=useMemo(()=>__regSessions(regs).filter(v=>v!==regSess)
+    .map(v=>({sess:v,open:regs.filter(r=>__regSession(r)===v&&(r.status||"pending")==="pending").length}))
+    .filter(x=>x.open>0),[regs,regSess]);
+  const shown=filt==="all"?sessRegs:filt==="due"?sessRegs.filter(followDue):filt==="online"?sessRegs.filter(isOnline):filt==="payverify"?sessRegs.filter(payToVerify):sessRegs.filter(r=>(r.status||"pending")===filt);
+  const counts={pending:sessRegs.filter(r=>(r.status||"pending")==="pending").length,due:sessRegs.filter(followDue).length,admitted:sessRegs.filter(r=>r.status==="admitted").length,rejected:sessRegs.filter(r=>r.status==="rejected").length};
   const submit=async()=>{
     if(!canEdit)return;
     if(!f.name.trim()||!f.contact.trim()){setMsg("Student name and contact number are required.");return;}
-    if(!editId){const nm=nmKey(f.name),ph=String(f.contact||"").replace(/\D/g,"").slice(-10);const dup=regs.find(r=>(r.status||"pending")==="pending"&&nmKey(r.name)===nmKey(f.name)&&String(r.contact||"").replace(/\D/g,"").slice(-10)===ph);if(dup){setMsg((dup.regNo||"An open enquiry")+" already has the same student name and contact number. Open that record instead of creating a duplicate.");setView("list");setFilt("pending");return;}}
+    if(!editId){const nm=nmKey(f.name),ph=String(f.contact||"").replace(/\D/g,"").slice(-10);const dup=sessRegs.find(r=>(r.status||"pending")==="pending"&&nmKey(r.name)===nmKey(f.name)&&String(r.contact||"").replace(/\D/g,"").slice(-10)===ph);if(dup){setMsg((dup.regNo||"An open enquiry")+" already has the same student name and contact number. Open that record instead of creating a duplicate.");setView("list");setFilt("pending");return;}}
     setSaving(true);setMsg("");
     if(editId){
       var old=regs.find(r=>r.id===editId);
@@ -5640,12 +5663,12 @@ function Registration({user, registrationsDB, usersDB, setTab}){
     }
     // Reg No: year prefix from the session + sequence from the MAX existing number (not the count) so deletions
     // or manual entries can't make the next enquiry reuse an existing Reg No.
-    const _regPfx="REG/"+String(window.__SESSION||"2026-27").replace(/^20/,"")+"/";
-    const _maxReg=regs.reduce((m,r)=>{var mm=String(r.regNo||"").match(/(\d+)\s*$/);var k=mm?parseInt(mm[1],10):0;return k>m?k:m;},0);
+    const _regPfx=__regPrefix(regSess);
+    const _maxReg=sessRegs.reduce((m,r)=>{var mm=String(r.regNo||"").match(/(\d+)\s*$/);var k=mm?parseInt(mm[1],10):0;return k>m?k:m;},0);
     const regNo=_regPfx+String(_maxReg+1).padStart(4,"0");
     const id="reg_"+Date.now()+"_"+Math.random().toString(36).slice(2,6);
-    try{await registrationsDB.set(id,Object.assign({},f,{regNo,status:"pending",pipelineStage:"new",priority:"normal",by:user.name,assignedTo:user.name,at:new Date().toISOString()}));
-      setMsg("✓ Registration "+regNo+" saved for "+f.name.trim());setF(blank);setRegCleanSig(JSON.stringify(blank));setEditId("");setView("list");}
+    try{await registrationsDB.set(id,Object.assign({},f,{regNo,session:regSess,status:"pending",pipelineStage:"new",priority:"normal",by:user.name,assignedTo:user.name,at:new Date().toISOString()}));
+      setMsg("✓ Registration "+regNo+" saved for "+f.name.trim()+" · session "+regSess);setF(blank);setRegCleanSig(JSON.stringify(blank));setEditId("");setView("list");}
     catch(e){setMsg("Could not save — "+(e&&e.message||"try again"));}
     setSaving(false);
   };
@@ -5685,10 +5708,22 @@ function Registration({user, registrationsDB, usersDB, setTab}){
   const fld=(k,label,opts)=><div style={{flex:1,minWidth:160}}><Lbl c={label}/>{opts?<Sel value={f[k]} onChange={v=>set(k,v)} options={opts}/>:<input value={f[k]} onChange={e=>set(k,e.target.value)} className="ss-input" style={{width:"100%",padding:"10px 14px",borderRadius:6,fontSize:13}}/>}</div>;
   return <div style={{maxWidth:1180,margin:"0 auto"}}>
     <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",flexWrap:"wrap",gap:12,marginBottom:16}}>
-      <div><div className="ap-hi">Admissions pipeline</div><p className="ap-hisub" style={{margin:"4px 0 0"}}>{canEdit?"Enquiry → follow-up → admission → first fee":"Leadership view · owners, ageing and next actions"} · {counts.due} follow-up{counts.due===1?"":"s"} due · {counts.pending} open</p></div>
-      <div className="ap-subnav"><button className={"ap-pill"+(view==="list"?" on":"")} onClick={openPipeline}>Pipeline</button>{canEdit&&<button className={"ap-pill"+(view==="new"?" on":"")} onClick={openNewEnquiry}>+ New enquiry</button>}</div>
+      <div><div className="ap-hi">Admissions pipeline</div><p className="ap-hisub" style={{margin:"4px 0 0"}}>{canEdit?"Enquiry → follow-up → admission → first fee":"Leadership view · owners, ageing and next actions"} · {counts.due} follow-up{counts.due===1?"":"s"} due · {counts.pending} open <b style={{color:"var(--ap-ink)"}}>in {regSess}</b>{regSess!==__liveSession()?<span style={{color:"var(--tx-grn2)",fontWeight:700}}> · next year</span>:null}</p></div>
+      <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+        <div style={{display:"flex",alignItems:"center",gap:7}}>
+          <span style={{fontSize:11,fontWeight:700,color:"var(--ap-muted)",textTransform:"uppercase",letterSpacing:.6}}>Registering for</span>
+          <select value={regSess} onChange={e=>{if(regFormDirty&&!window.confirm("Discard the unsaved enquiry details?"))return;resetEnquiry();setRegSess(e.target.value);}}
+            className="ss-input" style={{padding:"7px 10px",borderRadius:6,fontSize:12.5,fontWeight:700,fontFamily:"var(--ss-font)"}}>
+            {__regSessions(regs).map(v=><option key={v} value={v}>{v}{v===__admSession()?" (next year)":v===__liveSession()?" (running now)":""}</option>)}
+          </select>
+        </div>
+        <div className="ap-subnav"><button className={"ap-pill"+(view==="list"?" on":"")} onClick={openPipeline}>Pipeline</button>{canEdit&&<button className={"ap-pill"+(view==="new"?" on":"")} onClick={openNewEnquiry}>+ New enquiry</button>}</div>
+      </div>
     </div>
-    {view==="new"?<InsPanel title={editId?"Correct enquiry details":"New enquiry"} sub={editId?"Update the same registration — follow-up history and status stay intact":"Capture the family once; a registration number and owner are assigned automatically"}>
+    {otherSess.length>0&&<div style={{marginBottom:14,padding:"9px 13px",borderRadius:7,background:"var(--bg-amb)",border:"1px solid var(--bd-amb)",color:"var(--tx-org2)",fontSize:12.3,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+      <span>Not shown here:</span>{otherSess.map(x=><button key={x.sess} onClick={()=>{if(regFormDirty&&!window.confirm("Discard the unsaved enquiry details?"))return;resetEnquiry();setRegSess(x.sess);}} style={{background:"var(--c-fff)",border:"1px solid var(--bd-amb)",borderRadius:999,padding:"4px 11px",fontSize:12,fontWeight:700,color:"var(--tx-org2)",cursor:"pointer",fontFamily:"var(--ss-font)"}}>{x.open} open in {x.sess}</button>)}
+    </div>}
+    {view==="new"?<InsPanel title={editId?"Correct enquiry details":"New enquiry"} sub={editId?"Update the same registration — follow-up history and status stay intact":("Capture the family once; Reg No "+__regPrefix(regSess)+"\u2026 and an owner are assigned automatically \u00b7 filed under session "+regSess)}>
       <div style={{display:"flex",flexDirection:"column",gap:12,maxWidth:900}}>
         <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>{fld("source","Enquiry source",["Walk-in","Phone call","WhatsApp","Website","Referral","Existing parent","Other"])}{fld("preferredContact","Preferred contact",["WhatsApp","Phone call","SMS","Email"])}<div style={{flex:1,minWidth:160}}><Lbl c="First follow-up date"/><input type="date" min={_regToday} value={f.nextFollowUp||""} onChange={e=>set("nextFollowUp",e.target.value)} className="ss-input" style={{width:"100%",padding:"10px 14px",borderRadius:6,fontSize:13}}/></div></div>
         <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>{fld("name","Student name *")}{fld("classSought","Class sought",SCHOOL.classes)}</div>
@@ -5707,7 +5742,7 @@ function Registration({user, registrationsDB, usersDB, setTab}){
         <button className="lnk" onClick={printList} disabled={!shown.length}><Icon name="print" size={16}/> Print</button>
         {canImp&&<button className="lnk" onClick={()=>setImpOpen(true)} style={{marginLeft:8}}><Icon name="upload" size={16}/> Upload Excel</button>}
       </div>
-      {canImp&&<ImportModal open={impOpen} onClose={()=>setImpOpen(false)}><ImportRegistrations registrationsDB={registrationsDB} user={user}/></ImportModal>}
+      {canImp&&<ImportModal open={impOpen} onClose={()=>setImpOpen(false)}><ImportRegistrations registrationsDB={registrationsDB} user={user} session={regSess}/></ImportModal>}
       {shown.length===0?<div style={{padding:"28px 18px",textAlign:"center",color:"var(--c-94)",fontSize:13}}><div style={{width:46,height:46,borderRadius:12,background:"var(--ap-accent-soft)",color:"var(--ap-accent)",display:"grid",placeItems:"center",margin:"0 auto 11px"}}><Icon name="userplus" size={21}/></div><div style={{fontSize:15,fontWeight:750,color:"var(--ap-ink)"}}>{filt==="all"?"Start the admissions pipeline":"No enquiries in this view"}</div><div style={{marginTop:4,lineHeight:1.5}}>{filt==="all"?"Capture a walk-in or phone enquiry, or upload the office's existing Excel list.":"Choose another status or add a new enquiry."}</div>{filt==="all"&&<div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap",marginTop:14}}><button onClick={openNewEnquiry} style={{border:"none",background:"var(--btn-pri-bg)",color:"#fff",borderRadius:6,padding:"9px 13px",fontSize:12.5,fontWeight:750,cursor:"pointer"}}>+ Capture enquiry</button>{canImp&&<button onClick={()=>setImpOpen(true)} style={{border:"1px solid var(--ap-line)",background:"var(--c-fff)",color:"var(--ap-ink2)",borderRadius:6,padding:"9px 13px",fontSize:12.5,fontWeight:700,cursor:"pointer"}}>Upload Excel</button>}<button onClick={()=>setTab("admission")} style={{border:"1px solid var(--ap-line)",background:"var(--c-fff)",color:"var(--ap-ink2)",borderRadius:6,padding:"9px 13px",fontSize:12.5,fontWeight:700,cursor:"pointer"}}>Direct admission →</button></div>}</div>:
       <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse"}}>
         <thead><tr><th style={th}>Reg No</th><th style={th}>Date</th><th style={th}>Name</th><th style={th}>Class</th><th style={th}>Parent</th><th style={th}>Contact</th><th style={th}>Status</th><th style={th}></th></tr></thead>
@@ -7720,7 +7755,8 @@ function ImportModal({open,onClose,children}){
 }
 
 // Bulk-add pre-admission enquiries (writes to registrationsDB). Required columns: Name + Contact (mirrors the single-form rule).
-function ImportRegistrations({registrationsDB, user}){
+function ImportRegistrations({registrationsDB, user, session}){
+  const impSess=String(session||__admSession()); // files under the session the desk is registering for
   const[msg,setMsg]=useState(""); const[busy,setBusy]=useState(false); const[preview,setPreview]=useState(null);
   function template(){__xlsxSave("registrations_template.xlsx",[{"Name":"Ravi Kumar","Class Sought":"Class 6","Contact":"9000000000","DOB":"2014-05-12","Gender":"Male","Father":"Suresh Kumar","Mother":"Sunita Devi","Address":"Gorakhpur","Previous School":"","Notes":""}]);}
   async function pick(file){setBusy(true);setMsg("Reading "+file.name+"…");setPreview(null);
@@ -7734,22 +7770,22 @@ function ImportRegistrations({registrationsDB, user}){
         prevSchool:__col(r,["Previous School","Prev School"]),notes:__col(r,["Notes","Note"])});});
     setPreview({recs:recs,bad:bad});setMsg(recs.length+" enquiries ready"+(bad?" · "+bad+" skipped (need Name + Contact)":"")+".");setBusy(false);
   }
-  async function doImport(){if(!preview||!preview.recs.length)return;if(!window.confirm("Add "+preview.recs.length+" pre-admission enquiries as pending registrations? Nothing existing is changed."))return;
+  async function doImport(){if(!preview||!preview.recs.length)return;if(!window.confirm("Add "+preview.recs.length+" pre-admission enquiries as pending registrations for session "+impSess+"? Nothing existing is changed."))return;
     setBusy(true);var n=0;
     // Sequence Reg No off the current count so a bulk add doesn't reuse a manually-entered number.
     // Sequence Reg No off the MAX existing number (not the count) + a session-derived prefix, so deletions or
     // manual entries can't make a bulk add reuse an existing Reg No.
-    var _regPfx="REG/"+String(window.__SESSION||"2026-27").replace(/^20/,"")+"/";
-    var existing=Object.values(registrationsDB.data||{}).reduce(function(m,r){if(!r||!r.name)return m;var mm=String(r.regNo||"").match(/(\d+)\s*$/);var k=mm?parseInt(mm[1],10):0;return k>m?k:m;},0);
+    var _regPfx=__regPrefix(impSess);
+    var existing=Object.values(registrationsDB.data||{}).reduce(function(m,r){if(!r||!r.name||__regSession(r)!==impSess)return m;var mm=String(r.regNo||"").match(/(\d+)\s*$/);var k=mm?parseInt(mm[1],10):0;return k>m?k:m;},0);
     try{for(var i=0;i<preview.recs.length;i+=25){var c=preview.recs.slice(i,i+25);
       await Promise.all(c.map(function(rec,j){var regNo=_regPfx+String(existing+i+j+1).padStart(4,"0");var id="reg_"+Date.now()+"_"+(i+j)+"_"+Math.random().toString(36).slice(2,6);
-        return registrationsDB.set(id,Object.assign({},rec,{regNo:regNo,status:"pending",by:(user&&user.name)||"Imported",at:new Date().toISOString(),source:"import"})).then(function(){n++;});}));
+        return registrationsDB.set(id,Object.assign({},rec,{regNo:regNo,session:impSess,status:"pending",by:(user&&user.name)||"Imported",at:new Date().toISOString(),source:"import"})).then(function(){n++;});}));
       setMsg("Imported "+n+" / "+preview.recs.length+"…");}
-      setMsg("✓ Imported "+n+" enquiries — now pending in the Registration list.");}
+      setMsg("✓ Imported "+n+" enquiries for "+impSess+" — now pending in the Registration list.");}
     catch(e){setMsg(""+((e&&e.message)||"write failed")+".");}
     setBusy(false);
   }
-  return <ImportShell title="Registration enquiries" hint="Bulk-add pre-admission enquiries. Required columns: Name and Contact. Each becomes a pending registration with an auto Reg No." template={template} pick={pick} doImport={doImport} preview={preview&&(preview.recs.length+" ready"+(preview.bad?", "+preview.bad+" skipped":""))} busy={busy} msg={msg} card={__impCard()} btn={__impBtn}/>;
+  return <ImportShell title="Registration enquiries" hint={"Bulk-add pre-admission enquiries for session "+impSess+". Required columns: Name and Contact. Each becomes a pending registration numbered "+__regPrefix(impSess)+"\u2026"} template={template} pick={pick} doImport={doImport} preview={preview&&(preview.recs.length+" ready"+(preview.bad?", "+preview.bad+" skipped":""))} busy={busy} msg={msg} card={__impCard()} btn={__impBtn}/>;
 }
 
 // Session master-switch: promote everyone to the next class and start a fresh session (archiving this year).

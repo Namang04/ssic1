@@ -4486,6 +4486,54 @@ function __testRepairPlan(tests, rosterOf, attendance, todayIso) {
   var live = function (id) {
     return !!docs[id] && !removed[id];
   };
+  Object.keys(docs).forEach(function (id) {
+    var t = docs[id];
+    if (!t || !t.section || removed[id] || created[id]) return;
+    var twin = null;
+    Object.keys(docs).forEach(function (j) {
+      if (twin || j === id || !live(j) || created[j]) return;
+      var u = docs[j];
+      if (u.section) return;
+      if (u.cls !== t.cls || rawSubj(u) !== rawSubj(t)) return;
+      if (String(u.week || "") !== String(t.week || "")) return;
+      if (String(u.testDate || "") !== String(t.testDate || "")) return;
+      if (String(u.total || "") !== String(t.total || "")) return;
+      twin = j;
+    });
+    if (!twin) return;
+    var target = docs[twin],
+      rejoined = 0,
+      hadEntries = __testFill(t) > 0;
+    pupilsIn(t).forEach(function (p) {
+      var mine = valueFor(t, p),
+        theirs = valueFor(target, p);
+      if (mine && theirs && (mine.k !== theirs.k || mine.v !== theirs.v)) {
+        review.push({
+          id: id,
+          label: label(t),
+          reason: p.name + " has " + mine.v + " in this Section " + secOf(t) + " copy and " + theirs.v + " in the whole-class record of the same test \u2014 both kept, pick one"
+        });
+        return;
+      }
+      var e = entriesOf(t, p);
+      if (!theirs) addEntries(target, e);
+      dropEntries(t, e);
+      rejoined++;
+    });
+    if (rejoined) {
+      note(twin, rejoined + " entr" + (rejoined === 1 ? "y" : "ies") + " brought back in from a Section " + secOf(t) + " copy of the same test");
+    }
+    if (__testFill(t) === 0) {
+      removed[id] = hadEntries ? "its entries were put back into the whole-class record of the same test" : "empty Section " + secOf(t) + " copy of a whole-class test that already holds the marks";
+      counts.merged++;
+    } else {
+      review.push({
+        id: id,
+        label: label(t),
+        reason: "a Section " + secOf(t) + " copy of a whole-class test still holds entries that could not be matched to a pupil on the roster \u2014 check it before deleting"
+      });
+    }
+  });
   var newId = function (t, S) {
     var base = safeId(t.cls + "__" + rawSubj(t) + "__sec" + S + "__week" + (t.week || "x")),
       id = base,
@@ -38378,8 +38426,9 @@ function EnterMarks({
     try {
       const _admMap = emAdmOf;
       const _editSec = editing ? String(editing.section || "") : "";
-      const _sectionMoved = !!editing && String(_secKey || "") !== _editSec;
+      const _sectionMoved = !!editing && _editSec !== "" && String(_secKey || "") !== _editSec;
       const docId = editing && !_sectionMoved ? editing.id : safeId(testKey);
+      const _secField = editing && !_sectionMoved ? editing.section !== undefined ? editing.section : "" : editing && editing.section !== undefined && !_secKey ? editing.section : _secKey;
       const live = testsDB.data[docId] || {};
       const mergedRows = Object.assign({}, live.rows || {});
       const mergedByAdm = Object.assign({}, live.rowsByAdm || {});
@@ -38441,7 +38490,7 @@ function EnterMarks({
       await testsDB.set(docId, {
         cls,
         subj,
-        section: editing && editing.section !== undefined && !_secKey ? editing.section : _secKey,
+        section: _secField,
         week,
         total,
         testDate,
@@ -85808,9 +85857,10 @@ function App() {
   const testsDB = __wrapMergedSubj(_wrapSess(testsDBraw));
   const attendanceDB = _wrapSess(attendanceDBraw);
   useEffect(() => {
-    const needsAll = tab !== "dashboard" || user.role === "student" || user.role === "parent";
+    const _r = user && user.role || "";
+    const needsAll = !!user && (tab !== "dashboard" || _r === "student" || _r === "parent");
     if (needsAll && attendanceDBraw.loadRange) attendanceDBraw.loadRange(__sessionStart(curSession), _attTodayStr());
-  }, [tab, user.role, curSession, attendanceDBraw.loadRange]);
+  }, [tab, user && user.role, curSession, attendanceDBraw.loadRange]);
   const examsDB = _wrapSess(examsDBraw);
   const registrationsDB = useFirestore("registrations", !!user && (user.role === "office" || user.role === "vp" || user.role === "admin" && user.fees !== false));
   const disciplineDB = useFirestore("discipline", !!user && ["admin", "vp", "office", "teacher"].indexOf(user.role) >= 0);
