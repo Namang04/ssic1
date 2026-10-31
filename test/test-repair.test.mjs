@@ -90,4 +90,54 @@ ok('twin: the ambiguous plain-name row stays put',       twA && twA.doc.rows.RAM
 const zk={z:{cls:"Class 10",subj:"English",section:"A",testDate:"2026-08-21",total:20,topics:["T"],at:"1",rows:{"RAM (21)":0},rowsByAdm:{"21":0}}};
 const pzk=__testRepairPlan(zk,rosterTw,{a:{cls:"Class 10",section:"A",date:"2026-08-21",status:{"21":"A"}}},"2026-09-14"), zw=pzk.writes.find(w=>w.id==="z");
 ok('0 -> Absent is filed under the same name key',       zw && zw.doc.states["RAM (21)"]==="A" && zw.doc.statesByAdm["21"]==="A" && zw.doc.rows["RAM (21)"]===undefined);
+// ── forked per-section copies of a whole-class test (2026-10-31) ──
+// Enter Marks used to write a new "...__sec<S>__week<N>" document when a teacher filled a missing entry with
+// the section filter on, leaving the whole-class record without those marks. The planner now puts them back.
+const fork={
+  whole:{cls:"Class 10",subj:"Mathematics",section:"",week:1,testDate:"2026-04-25",total:20,topics:["Squares"],at:"2026-04-25T09:00:00Z",rows:{FARAH:15,GAURAV:12},rowsByAdm:{"11":15,"12":12}},
+  secB :{cls:"Class 10",subj:"Mathematics",section:"B",week:1,testDate:"2026-04-25",total:20,topics:["Squares"],at:"2026-10-31T07:19:00Z",rows:{HINA:9},rowsByAdm:{"13":9}}};
+const frozenFork=JSON.stringify(fork);
+const pf=__testRepairPlan(fork,rosterOf,{},"2026-10-31");
+const fW=Object.fromEntries(pf.writes.map(w=>[w.id,w]));
+ok('fork: the planner still never mutates its input',  JSON.stringify(fork)===frozenFork);
+ok('fork: the missing entry goes back into the whole-class record', fW.whole && fW.whole.doc.rowsByAdm["13"]===9 && fW.whole.doc.rows.HINA===9);
+ok('fork: the marks already there are untouched',      fW.whole && fW.whole.doc.rowsByAdm["11"]===15 && fW.whole.doc.rowsByAdm["12"]===12);
+ok('fork: the emptied per-section copy is removed',    pf.removes.some(r=>r.id==="secB"));
+ok('fork: the whole-class record keeps no section',    fW.whole && !fW.whole.doc.section);
+ok('fork: no new per-section copy is invented',        !pf.writes.some(w=>w.isNew));
+
+// a copy on a DIFFERENT DAY is a different test and must be left alone
+const otherDay={w:{...fork.whole},s:{...fork.secB,testDate:"2026-05-02"}};
+const pod=__testRepairPlan(otherDay,rosterOf,{},"2026-10-31");
+ok('a copy on another date is not merged',             !pod.removes.some(r=>r.id==="s") && !(pod.writes.find(w=>w.id==="w")||{doc:{rowsByAdm:{}}}).doc.rowsByAdm["13"]);
+// ...and so is a copy with a different maximum
+const otherMax={w:{...fork.whole},s:{...fork.secB,total:25}};
+const pom=__testRepairPlan(otherMax,rosterOf,{},"2026-10-31");
+ok('a copy with another maximum is not merged',        !pom.removes.some(r=>r.id==="s"));
+
+// two copies that disagree about one pupil: nothing is overwritten, it goes to review
+const dis={w:{...fork.whole,rows:{FARAH:15,HINA:4},rowsByAdm:{"11":15,"13":4}},s:{...fork.secB}};
+const pdis=__testRepairPlan(dis,rosterOf,{},"2026-10-31");
+ok('a disagreement is listed, not resolved',           pdis.review.some(r=>/whole-class record of the same test/.test(r.reason)));
+ok('...and neither mark is changed',                   !pdis.removes.some(r=>r.id==="s") && (pdis.writes.find(w=>w.id==="w")||{doc:{rowsByAdm:{"13":4}}}).doc.rowsByAdm["13"]===4);
+
+// an empty per-section copy of a whole-class test is just noise and is removed
+const emptyFork={w:{...fork.whole},s:{...fork.secB,rows:{},rowsByAdm:{}}};
+const pef=__testRepairPlan(emptyFork,rosterOf,{},"2026-10-31");
+ok('an empty per-section copy of the same test is removed', pef.removes.some(r=>r.id==="s"&&/empty Section B copy/.test(r.reason)));
+
+// ── the Enter Marks guard itself, read out of index.html so it cannot pass against a copy ──
+const movedExpr=(src.match(/const _sectionMoved=!!editing&&[^;]+;/)||[])[0];
+const fieldExpr=(src.match(/const _secField=\(editing&&!_sectionMoved\)[\s\S]*?;\n/)||[])[0];
+if(!movedExpr||!fieldExpr){console.error('  missing the Enter Marks section guard');process.exit(2);}
+const guard=(editing,_secKey)=>{const _editSec=editing?String(editing.section||""):"";
+  return (0,eval)('(function(editing,_secKey,_editSec){'+movedExpr+fieldExpr+'return{moved:_sectionMoved,sec:_secField};})')(editing,_secKey,_editSec);};
+const wholeDoc={id:"Class_10__Mathematics__week1",section:""}, noSecDoc={id:"Class_10__Mathematics__week1"}, secA={id:"x__secA__week1",section:"A"};
+ok('guard: whole-class test + section filter does NOT fork', guard(wholeDoc,"B").moved===false);
+ok('guard: ...and the record keeps no section',              guard(wholeDoc,"B").sec==="");
+ok('guard: a legacy test with no section field is the same', guard(noSecDoc,"B").moved===false && guard(noSecDoc,"B").sec==="");
+ok('guard: another section\'s record is still protected',    guard(secA,"B").moved===true && guard(secA,"B").sec==="B");
+ok('guard: the same section writes back in place',           guard(secA,"A").moved===false && guard(secA,"A").sec==="A");
+ok('guard: a new test takes the filtered section',           guard(null,"B").sec==="B");
+
 console.log(`\n  ${pass} passed, ${fail} failed`); process.exit(fail?1:0);

@@ -2341,6 +2341,41 @@ function __testRepairPlan(tests,rosterOf,attendance,todayIso){
   var dropEntries=function(t,e){["rows","rowsByAdm","states","statesByAdm"].forEach(function(f){Object.keys(e[f]).forEach(function(k){if(t[f])delete t[f][k];});});};
   var addEntries=function(t,e){["rows","rowsByAdm","states","statesByAdm"].forEach(function(f){t[f]=t[f]||{};Object.keys(e[f]).forEach(function(k){t[f][k]=e[f][k];});});};
   var live=function(id){return !!docs[id]&&!removed[id];};
+  // 1a. A per-section copy FORKED off a whole-class test. Until today, filling a missing entry in Enter Marks
+  // with the section filter on wrote to a new "...__sec<S>__week<N>" document instead of the "...__week<N>"
+  // one already holding the class, so the original sat there without those marks and the class was split in
+  // two. Same class, subject, week, DATE and maximum, and the twin carries no section at all: that is one
+  // test, not two. Bring the fork's entries back into the whole-class record and drop the emptied fork. A
+  // different date or a different maximum is a different test and is left alone; a pupil the two copies
+  // disagree about is never overwritten - it goes to review.
+  Object.keys(docs).forEach(function(id){
+    var t=docs[id];if(!t||!t.section||removed[id]||created[id])return;
+    var twin=null;
+    Object.keys(docs).forEach(function(j){
+      if(twin||j===id||!live(j)||created[j])return;var u=docs[j];
+      if(u.section)return;
+      if(u.cls!==t.cls||rawSubj(u)!==rawSubj(t))return;
+      if(String(u.week||"")!==String(t.week||""))return;
+      if(String(u.testDate||"")!==String(t.testDate||""))return;
+      if(String(u.total||"")!==String(t.total||""))return;
+      twin=j;
+    });
+    if(!twin)return;
+    var target=docs[twin],rejoined=0,hadEntries=__testFill(t)>0;
+    pupilsIn(t).forEach(function(p){
+      var mine=valueFor(t,p),theirs=valueFor(target,p);
+      if(mine&&theirs&&(mine.k!==theirs.k||mine.v!==theirs.v)){
+        review.push({id:id,label:label(t),reason:p.name+" has "+mine.v+" in this Section "+secOf(t)+" copy and "+theirs.v+" in the whole-class record of the same test \u2014 both kept, pick one"});return;}
+      var e=entriesOf(t,p);if(!theirs)addEntries(target,e);dropEntries(t,e);rejoined++;});
+    if(rejoined){note(twin,rejoined+" entr"+(rejoined===1?"y":"ies")+" brought back in from a Section "+secOf(t)+" copy of the same test");}
+    if(__testFill(t)===0){
+      removed[id]=hadEntries?("its entries were put back into the whole-class record of the same test")
+                            :("empty Section "+secOf(t)+" copy of a whole-class test that already holds the marks");
+      counts.merged++;
+    }else{
+      review.push({id:id,label:label(t),reason:"a Section "+secOf(t)+" copy of a whole-class test still holds entries that could not be matched to a pupil on the roster \u2014 check it before deleting"});
+    }
+  });
   // 1. each pupil's entry into the copy of the test for the pupil's own section
   var newId=function(t,S){var base=safeId(t.cls+"__"+rawSubj(t)+"__sec"+S+"__week"+(t.week||"x")),id=base,n=1;while(seenIds[id]||docs[id]){id=base+"__r"+(n++);}return id;};
   Object.keys(docs).forEach(function(id){var t=docs[id];if(!t.section||removed[id])return;var X=secOf(t),bySec={};
@@ -10813,8 +10848,17 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB,academicRost
       // If the filter no longer matches the open document, write to the key for the section actually on
       // screen instead of overwriting the other section's record.
       const _editSec=editing?String(editing.section||""):"";
-      const _sectionMoved=!!editing&&String(_secKey||"")!==_editSec;
+      // A test saved for the WHOLE class carries no section, and filtering the screen to one section is not
+      // "moving to another section's record" - it is the same record. Forking there created a second, nearly
+      // empty copy and left the original without the marks just typed, which is how one Class 8 test ended up
+      // as a 88-mark paper plus a 3-mark copy. Only a document that belongs to a DIFFERENT, NAMED section is
+      // protected from being overwritten; that is the case this guard was added for and it still holds.
+      const _sectionMoved=!!editing&&_editSec!==""&&String(_secKey||"")!==_editSec;
       const docId=(editing&&!_sectionMoved)?editing.id:safeId(testKey);
+      // Writing back into the open document must not re-stamp its section from the filter on screen either:
+      // a whole-class test stays a whole-class test, however the teacher has the list filtered.
+      const _secField=(editing&&!_sectionMoved)?(editing.section!==undefined?editing.section:"")
+        :((editing&&editing.section!==undefined&&!_secKey)?editing.section:_secKey);
       const live=testsDB.data[docId]||{};
       const mergedRows=Object.assign({},live.rows||{});
       const mergedByAdm=Object.assign({},live.rowsByAdm||{});
@@ -10834,7 +10878,7 @@ function EnterMarks({user,testsDB,topicsDB,studentsDB,dirDB,ttSetDB,academicRost
       const completeNow=students.every(s=>__mkSettled(mergedTest,emAdmOf[s],_emRealOf[s]||s));
       const completionBySection=Object.assign({},(live&&live.completionBySection)||{});completionBySection[_secKey||"all"]={complete:completeNow,pending:students.filter(s=>!__mkSettled(mergedTest,emAdmOf[s],_emRealOf[s]||s)).length,at:now,by:user.name};
       const editHistory=((live&&Array.isArray(live.editHistory))?live.editHistory:[]).concat(live&&live.at?[{at:now,by:user.name,changed:Object.keys(dirtyRef.current).length,complete:completeNow}]:[]).slice(-12);
-      await testsDB.set(docId,{cls,subj,section:(editing&&editing.section!==undefined&&!_secKey)?editing.section:_secKey,week,total,testDate,topics:selTopics,name:(selTopics[0]||"Test"),by:user.name,at:now,firstSavedAt:(live&&live.firstSavedAt)||(live&&live.at)||now,revision:Number(live&&live.revision||0)+(live&&live.at?1:0),complete:completeNow,completedAt:completeNow?((live&&live.completedAt)||now):"",completionBySection:completionBySection,editHistory:editHistory,rows:mergedRows,rowsByAdm:mergedByAdm,states:mergedStates,statesByAdm:mergedStatesByAdm});
+      await testsDB.set(docId,{cls,subj,section:_secField,week,total,testDate,topics:selTopics,name:(selTopics[0]||"Test"),by:user.name,at:now,firstSavedAt:(live&&live.firstSavedAt)||(live&&live.at)||now,revision:Number(live&&live.revision||0)+(live&&live.at?1:0),complete:completeNow,completedAt:completeNow?((live&&live.completedAt)||now):"",completionBySection:completionBySection,editHistory:editHistory,rows:mergedRows,rowsByAdm:mergedByAdm,states:mergedStates,statesByAdm:mergedStatesByAdm});
       // Any topic typed here joins the saved list, so the next teacher taps it instead of retyping.
       try{
         var _tk=safeId(cls+"__"+subj), _cur=((topicsDB.data||{})[_tk]||{}).list||[];
