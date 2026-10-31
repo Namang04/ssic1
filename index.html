@@ -487,6 +487,11 @@ body,.ap-panel,.ap-content,.ap-nav,.ap-topbar{transition:background-color .25s e
 .ap-viewtog button.on{background:var(--c-fff);color:var(--ap-ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
 .ap-subbar{position:sticky;top:calc(62px + env(safe-area-inset-top,0px));z-index:80;display:flex;align-items:center;gap:12px;padding:9px 30px;background:var(--c-blur2);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);border-bottom:1px solid var(--ap-line)}
 .ap-subbar .ap-crumb{flex:none}
+/* Between phone and full desktop the top bar is wider than the space beside the sidebar, so the page scrolled
+   sideways. The Desktop/Mobile preview toggle already goes at phone width; it goes first here too. */
+@media(min-width:881px) and (max-width:1190px){.ap-topbar .ap-viewtog{display:none}.ap-search{min-width:0}.ap-search .kbd{display:none}}
+@media(max-width:880px){.ap-sesschip{padding:7px 8px}.ap-sesschip select{width:86px}}
+@media(min-width:881px) and (max-width:1040px){.ap-branchsel span.bn{display:none}}
 @media(max-width:880px){
   .ap-topbar{flex-wrap:wrap;row-gap:8px}.ap-search{max-width:none;flex:1 1 100%;order:9}.ap-topchip{display:none}.ap-viewtog{display:none}.ap-branchsel span.bn{display:none}.ap-workspace-title{font-size:12px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .ap-subbar{padding:7px max(12px,env(safe-area-inset-left));display:block;overflow:hidden}
@@ -3011,23 +3016,30 @@ function useFirestore(collName,enabled=true,opts){
   const rangeRef=useRef(null);
   const rangeArgs=useRef(null);
   const rangeFn=useRef(null);
+  const storeGen=useRef(0); // bumped on every campus or session switch, so a read still in flight is dropped
+  const rangeDocs=useRef({}); // what loadRange brought in. A live update only carries the window, so these must be kept across it
   useEffect(()=>{
-    if(!enabled){if(unsubRef.current){unsubRef.current();unsubRef.current=null;}setData({});setLoading(false);return;}
+    if(!enabled){if(unsubRef.current){unsubRef.current();unsubRef.current=null;}rangeDocs.current={};rangeRef.current=null;setData({});setLoading(false);return;} // signed out: the next person on this device starts clean
     const setup=()=>{
       if(!window.__db)return;
       if(unsubRef.current)unsubRef.current();
       setLoading(true);
       // The undated documents first, so a snapshot can never land without them.
       if(keep&&keep.length&&window.__fbGetDoc&&window.__fbDoc){
+        const g=storeGen.current;
         Promise.all(keep.map(id=>window.__fbGetDoc(window.__fbDoc(window.__db,collName,id))
           .then(sn=>(sn&&sn.exists&&sn.exists())?[id,sn.data()]:null).catch(()=>null)))
-          .then(rows=>{const k={};rows.forEach(r=>{if(r)k[r[0]]=r[1];});keepRef.current=k;
+          .then(rows=>{if(g!==storeGen.current)return;const k={};rows.forEach(r=>{if(r)k[r[0]]=r[1];});keepRef.current=k;
             setData(prev=>Object.assign({},k,prev));});
       }
       const ref=window.__fbCollection(window.__db,collName);
       const src=(since&&window.__fbQuery&&window.__fbWhere)?window.__fbQuery(ref,window.__fbWhere(field,">=",since)):ref;
       unsubRef.current=window.__fbOnSnapshot(src,snap=>{
-        const d={};snap.forEach(dc=>{d[dc.id]=dc.data();});setData(Object.assign({},keepRef.current,d));setLoading(false);
+        // Every live update replaces the data, and it only carries the window. Without the older stretch added back,
+        // one attendance save anywhere dropped every month before the window from every open screen.
+        const d={},older={};snap.forEach(dc=>{d[dc.id]=dc.data();});
+        Object.keys(rangeDocs.current).forEach(id=>{const r=rangeDocs.current[id];if(since&&String((r&&r[field])||"")<since)older[id]=r;});
+        setData(Object.assign({},older,keepRef.current,d));setLoading(false);
       },err=>{setLoading(false);});
     };
     if(window.__fbReady)setup();
@@ -3035,7 +3047,7 @@ function useFirestore(collName,enabled=true,opts){
     // The director switching campus re-points _bcoll → drop the old branch's data and re-subscribe to the new one.
     // The range already pulled in belonged to the old collection: without clearing it, loadRange thinks it
     // has that stretch and the new campus or session shows only the live window.
-    const onBranch=()=>{keepRef.current={};rangeRef.current=null;setData({});setup();if(rangeArgs.current&&rangeFn.current)rangeFn.current(rangeArgs.current[0],rangeArgs.current[1]);};
+    const onBranch=()=>{storeGen.current++;keepRef.current={};rangeDocs.current={};rangeRef.current=null;setData({});setup();if(rangeArgs.current&&rangeFn.current)rangeFn.current(rangeArgs.current[0],rangeArgs.current[1]);};
     window.addEventListener("branchchange",onBranch);
     return()=>{window.removeEventListener("branchchange",onBranch);if(unsubRef.current)unsubRef.current();};
   },[collName,enabled,since,field,keepKey]);
@@ -3046,12 +3058,15 @@ function useFirestore(collName,enabled=true,opts){
     rangeArgs.current=[from,to];
     if(rangeRef.current&&rangeRef.current<=from)return;                 // already have this far back
     rangeRef.current=from;
+    const g=storeGen.current;
     try{
       const snap=await window.__fbGetDocs(window.__fbQuery(window.__fbCollection(window.__db,collName),
         window.__fbWhere(field,">=",from),window.__fbWhere(field,"<=",to||"9999-12-31")));
+      if(g!==storeGen.current)return;                                   // the campus or session changed while this ran
       const d={};snap.forEach(dc=>{d[dc.id]=dc.data();});
+      rangeDocs.current=Object.assign({},rangeDocs.current,d);
       setData(prev=>Object.assign({},d,prev));                          // the live window wins on overlap
-    }catch(e){rangeRef.current=null;}                                    // a failure must not block a retry
+    }catch(e){if(g===storeGen.current)rangeRef.current=null;}            // a failure must not block a retry
   },[collName,field]);
   rangeFn.current=loadRange;
 
@@ -3067,11 +3082,25 @@ function useFirestore(collName,enabled=true,opts){
       throw e;
     }
   },[]);
-  const set=useCallback(async(id,val)=>{if(!window.__db)return;await __retry(()=>window.__fbSetDoc(window.__fbDoc(window.__db,collName,safeId(id)),val));},[collName,__retry]);
+  // A write to a day older than the window raises no live update, so the screen has to be told. Only reads
+  // when the older stretch has been loaded, and only for a day that the live window cannot report.
+  const syncOlder=useCallback(async(id,val)=>{
+    if(!rangeRef.current||!since)return;
+    const sid=safeId(id),was=rangeDocs.current[sid],d=String((val&&val[field])||(was&&was[field])||"");
+    if(!d||d>=since)return;
+    const g=storeGen.current;
+    try{
+      const s=await window.__fbGetDoc(window.__fbDoc(window.__db,collName,sid));
+      if(g!==storeGen.current)return;
+      const v=s.exists()?s.data():null,put=m=>{const o=Object.assign({},m);if(v)o[sid]=v;else delete o[sid];return o;};
+      rangeDocs.current=put(rangeDocs.current);setData(put);
+    }catch(e){}                                                         // the save itself went through; a reload shows it
+  },[collName,field,since]);
+  const set=useCallback(async(id,val)=>{if(!window.__db)return;await __retry(()=>window.__fbSetDoc(window.__fbDoc(window.__db,collName,safeId(id)),val));await syncOlder(id,val);},[collName,__retry,syncOlder]);
   // Field-level update (updateDoc) — touches ONLY the named fields (dot paths + FieldValues like arrayUnion work),
   // so two clients patching different fields of the same doc never clobber each other the way full-doc set() does.
-  const patch=useCallback(async(id,fields)=>{if(!window.__db)return;await __retry(()=>window.__fbUpdateDoc(window.__fbDoc(window.__db,collName,safeId(id)),fields));},[collName,__retry]);
-  const del=useCallback(async(id)=>{if(!window.__db)return;await __retry(()=>window.__fbDeleteDoc(window.__fbDoc(window.__db,collName,safeId(id))));},[collName,__retry]);
+  const patch=useCallback(async(id,fields)=>{if(!window.__db)return;await __retry(()=>window.__fbUpdateDoc(window.__fbDoc(window.__db,collName,safeId(id)),fields));await syncOlder(id);},[collName,__retry,syncOlder]);
+  const del=useCallback(async(id)=>{if(!window.__db)return;await __retry(()=>window.__fbDeleteDoc(window.__fbDoc(window.__db,collName,safeId(id))));await syncOlder(id);},[collName,__retry,syncOlder]);
   // Soft-delete support: docs flagged {deleted:true} are hidden from `data` (so EVERY reader excludes them automatically),
   // surfaced in `trash`, and brought back by `restore`. `allData` keeps the unfiltered map. (No collection used `deleted` before.)
   const visible=useMemo(()=>{const o={};for(const k in data){const v=data[k];if(!(v&&v.deleted===true))o[k]=v;}return o;},[data]);
@@ -7843,8 +7872,8 @@ function ImportRegistrations({registrationsDB, user, session}){
 // needed: each run rebuilds the promoted pupils from the same source and can never push anyone up a second class.
 // A pupil already admitted into next year (no promotedFrom) stays in the class they were admitted to.
 function __promotionPlan(liveDir,nextDir,live,nxt,uniqueName){
-  var ladder={nursery:"LKG",lkg:"UKG",ukg:"1"},byTok={},counts={promoted:0,passout:0,left:0,intake:0,unmoved:0},conflicts=[],intake=[],intakeAdm={};
-  Object.keys(nextDir||{}).forEach(function(k){if(k.indexOf("dir_")!==0)return;((nextDir[k]||{}).students||[]).forEach(function(s){if(!s||s.promotedFrom)return;intake.push({tok:String(s.clsNum||k.slice(4)),s:s});if(s.admNo)intakeAdm[String(s.admNo)]=s;});});
+  var ladder={nursery:"LKG",lkg:"UKG",ukg:"1"},byTok={},counts={promoted:0,passout:0,left:0,intake:0,unmoved:0,added:0},conflicts=[],intake=[],intakeAdm={},prior={},kept={};
+  Object.keys(nextDir||{}).forEach(function(k){if(k.indexOf("dir_")!==0)return;((nextDir[k]||{}).students||[]).forEach(function(s){if(!s)return;if(s.promotedFrom){if(s.admNo)prior[String(s.admNo)]=s;return;}intake.push({tok:String(s.clsNum||k.slice(4)),s:s});if(s.admNo)intakeAdm[String(s.admNo)]=s;});});
   counts.intake=intake.length;
   var put=function(tok,st){(byTok[tok]=byTok[tok]||[]).push(st);};
   Object.keys(liveDir||{}).forEach(function(k){if(k.indexOf("dir_")!==0)return;((liveDir[k]||{}).students||[]).forEach(function(s){if(!s)return;
@@ -7857,6 +7886,11 @@ function __promotionPlan(liveDir,nextDir,live,nxt,uniqueName){
     if(!to){counts.unmoved++;to=tok;}else counts.promoted++;
     var clash=s.admNo&&intakeAdm[String(s.admNo)];
     if(clash)conflicts.push({admNo:String(s.admNo),student:s.name||"",admitted:clash.name||""});
+    // Promoted on an earlier run: next year's record is the one to keep, with its stream, section or any other
+    // correction made there. Rebuilding it from this year would silently undo that work.
+    var was=s.admNo&&prior[String(s.admNo)];
+    if(was){kept[String(s.admNo)]=1;put(String(was.clsNum||to),was);return;}
+    if(Object.keys(prior).length)counts.added++;
     var st=Object.assign({},s,{clsNum:to,cls:to,promotedFrom:live,prevCls:tok});
     if(String(st.oldNew||"").toLowerCase()==="new")st.oldNew="Old";          // only a first year pays the new-admission heads
     put(to,st);});});
@@ -7864,7 +7898,9 @@ function __promotionPlan(liveDir,nextDir,live,nxt,uniqueName){
   var docs={},now=new Date().toISOString();
   Object.keys(byTok).forEach(function(t){docs["dir_"+t]={cls:t,clsNum:t,students:byTok[t],updatedAt:now};});
   Object.keys(nextDir||{}).forEach(function(k){if(k.indexOf("dir_")===0&&!docs[k]){var t=k.slice(4);docs[k]={cls:t,clsNum:t,students:[],updatedAt:now};}}); // a class emptied by a re-run
-  return{docs:docs,counts:counts,conflicts:conflicts};
+  // Promoted earlier but no longer going forward: left or passed out since. Going live must wait for a re-run.
+  var dropped=Object.keys(prior).filter(function(a){return !kept[a];}).map(function(a){return prior[a].name||a;});
+  return{docs:docs,counts:counts,conflicts:conflicts,dropped:dropped};
 }
 // What each pupil was billed in the year ending. The balance is worked out when it is shown, from this and the
 // receipts of that year, so a payment taken later in that session lowers it at once. It has to be recorded here:
@@ -7978,6 +8014,7 @@ function SessionPromote({user, dirDB, usersDB, studentsDB, testsDB, feesDB, atte
     if(liveText.trim().toUpperCase()!=="GO LIVE"){setMsg("Type GO LIVE in the box to confirm.");return;}
     if(!onLive){setMsg("Switch back to "+curSession+" first.");return;}
     if(!promoted){setMsg("Promote students into "+nxt+" first.");return;}
+    if(plan.counts.added||plan.dropped.length){setMsg("Students have changed since you promoted: "+plan.counts.added+" new in "+curSession+", "+plan.dropped.length+" no longer going forward"+(plan.dropped.length?(" ("+plan.dropped.slice(0,3).join(", ")+")"):"")+". Press Promote again first.");return;}
     if(!window.confirm("Make "+nxt+" the live session for everyone?\n\nEvery teacher, parent and student moves to "+nxt+" the next time the app refreshes. "+curSession+" stays complete and you can still work in it from the session menu.\n\nYou can undo this from this page."))return;
     setBusy(true);setMsg("Bringing across anything dated after the new session began…");
     try{
@@ -7986,7 +8023,7 @@ function SessionPromote({user, dirDB, usersDB, studentsDB, testsDB, feesDB, atte
       var dir=await __readDirectory(nxt),n=await relabelLogins(dir,curSession);
       await writeConfig({session:nxt,liveAt:new Date().toISOString()});
       try{logAudit("session-go-live","meta",nxt,{session:curSession},{session:nxt,moved:moved,logins:n});}catch(e){}
-      setLiveText("");setMsg("✓ "+nxt+" is live. "+n+" logins updated"+(moved?(", "+moved+" late records moved across"):"")+". Now press Publish sign-in list in Accounts & Roles.");
+      setLiveText("");setMsg("✓ "+nxt+" is live. "+n+" logins updated"+(moved?(", "+moved+" late records moved across"):"")+". Parents still see last year's fee figures until you press Publish balances in Fees, working in "+nxt+". Then press Publish sign-in list in Accounts & Roles.");
     }catch(e){setMsg("Stopped: "+((e&&e.message)||"error")+". The live session has not changed. It is safe to press this again.");}
     setBusy(false);
   }
@@ -12434,7 +12471,7 @@ function ParentView({user,testsDB,examsDB,studentsDB,academicRosterDB,attendance
       if(!cancel)setHwFeed(mine.slice(0,30));
     }catch(e){if(!cancel)setHwFeed([]);}
   };if(window.__fbReady)load();else window.addEventListener("fbready",load,{once:true});return()=>{cancel=true;};},[cls,_mySec]);
-  const submitPay=async()=>{if(paySaving)return;const amt=Number(String(payAmt).replace(/[^0-9.]/g,""));if(!amt||amt<=0){setPayErr("Enter the amount you paid.");return;}const ref=String(payRef).trim();if(!ref){setPayErr("Enter the UPI reference / UTR number shown in your payment app.");return;}setPaySaving(true);setPayErr("");try{const id="upi_"+safeId(String(padm||"x"))+"_"+safeId(ref);await window.__fbSetDoc(window.__fbDoc(window.__db,"paymentIntents",id),{admNo:String(padm||""),student:student||"",cls:cls||"",amount:amt,ref:ref,date:new Date().toISOString().slice(0,10),status:"pending",by:(user&&(user.name||user.username))||"parent",at:new Date().toISOString()});try{localStorage.setItem("ssic_upi_sent_"+String(padm||""),JSON.stringify({ref:ref,amount:amt,at:new Date().toISOString()}));}catch(e){}setPaySent(true);setPayAmt("");setPayRef("");setPayOpen(false);}catch(e){setPayErr((e&&e.message)||"Could not submit — please try again.");}finally{setPaySaving(false);}};
+  const submitPay=async()=>{if(paySaving)return;const amt=Number(String(payAmt).replace(/[^0-9.]/g,""));if(!amt||amt<=0){setPayErr("Enter the amount you paid.");return;}const ref=String(payRef).trim();if(!ref){setPayErr("Enter the UPI reference / UTR number shown in your payment app.");return;}setPaySaving(true);setPayErr("");try{const id="upi_"+safeId(String(padm||"x"))+"_"+safeId(ref);await window.__fbSetDoc(window.__fbDoc(window.__db,"paymentIntents",id),{admNo:String(padm||""),student:student||"",cls:cls||"",amount:amt,ref:ref,session:__workSession(),date:new Date().toISOString().slice(0,10),status:"pending",by:(user&&(user.name||user.username))||"parent",at:new Date().toISOString()});try{localStorage.setItem("ssic_upi_sent_"+String(padm||""),JSON.stringify({ref:ref,amount:amt,at:new Date().toISOString()}));}catch(e){}setPaySent(true);setPayAmt("");setPayRef("");setPayOpen(false);}catch(e){setPayErr((e&&e.message)||"Could not submit — please try again.");}finally{setPaySaving(false);}};
   const feeBal=portalFee?Number(portalFee.bal||0):0;
   const feeHasOverdue=!!(portalFee&&portalFee.overdue!=null);const feeOverdue=feeHasOverdue?Number(portalFee.overdue):feeBal;
   const feePayAmount=feeHasOverdue&&feeOverdue>0?feeOverdue:feeBal;
@@ -14861,7 +14898,9 @@ function Fees({user,session,feesDB,studentsDB,academicRosterDB,dirDB,metaDB,inte
   const closeId=(date)=>safeId(String(window.__SESSION||"2026-27")+"_"+String(date||""));
   const closeFor=(date)=>((feeCloseDB&&feeCloseDB.data)||{})[closeId(date)]||null;
   const isDateClosed=(date)=>{const c=closeFor(date);return !!(c&&c.status==="closed");};
-  const adjustPortalLedger=async(p,delta)=>{if(!p||!p.admNo||!delta||!window.__db||!window.__fbGetDoc||!window.__fbSetDoc)return true;try{const ref=window.__fbDoc(window.__db,"portalFees",String(p.admNo));const snap=await window.__fbGetDoc(ref);if(!snap||!snap.exists||!snap.exists())return true;const old=snap.data()||{},disc=!!p.disc;const paid=Math.max(0,Number(old.paid||0)+(disc?0:delta)),conc=Math.max(0,Number(old.conc||0)+(disc?delta:0)),bal=Math.max(0,Number(old.bal||0)-delta),overdue=Math.max(0,Number(old.overdue||0)-delta),status=bal<=0?"cleared":((paid>0||conc>0)?"partial":"unpaid");await window.__fbSetDoc(ref,Object.assign({},old,{paid,conc,bal,overdue,status,updatedAt:new Date().toISOString(),by:user.name}));return true;}catch(e){window.__toast&&window.__toast("Ledger changed, but the parent's balance could not refresh. Use Fees Overview → Publish balances.","err");return false;}};
+  // A parent has one published balance, for the session they are in. Work in any other session must not replace it.
+  const portalIsLive=session===__liveSession();
+  const adjustPortalLedger=async(p,delta)=>{if(!portalIsLive)return true;if(!p||!p.admNo||!delta||!window.__db||!window.__fbGetDoc||!window.__fbSetDoc)return true;try{const ref=window.__fbDoc(window.__db,"portalFees",String(p.admNo));const snap=await window.__fbGetDoc(ref);if(!snap||!snap.exists||!snap.exists())return true;const old=snap.data()||{},disc=!!p.disc;const paid=Math.max(0,Number(old.paid||0)+(disc?0:delta)),conc=Math.max(0,Number(old.conc||0)+(disc?delta:0)),bal=Math.max(0,Number(old.bal||0)-delta),overdue=Math.max(0,Number(old.overdue||0)-delta),status=bal<=0?"cleared":((paid>0||conc>0)?"partial":"unpaid");await window.__fbSetDoc(ref,Object.assign({},old,{paid,conc,bal,overdue,status,updatedAt:new Date().toISOString(),by:user.name}));return true;}catch(e){window.__toast&&window.__toast("Ledger changed, but the parent's balance could not refresh. Use Fees Overview → Publish balances.","err");return false;}};
   const payIdx=useMemo(()=>__payIndex(payments),[payments]); // O(P) once — payInfo per student is then O(own payments), not O(all)
   const annualFor=c=>(structure[c]||[]).reduce((a,h)=>a+Number(h.amount||0),0);
   // ONE fee formula for the whole app — delegate to the global studentAnnualFee (stream + admission-fee aware)
@@ -14991,6 +15030,7 @@ function Fees({user,session,feesDB,studentsDB,academicRosterDB,dirDB,metaDB,inte
   const[pubMsg,setPubMsg]=useState("");const[pubBusy,setPubBusy]=useState(false);
   const publishPortalFees=async()=>{
     if(!window.__db||!window.__fbSetDoc){setPubMsg("Not connected.");return;}
+    if(!portalIsLive){setPubMsg("Parents see the live session, "+__liveSession()+". Switch to it to publish their balances.");return;}
     if(!window.confirm("Publish current fee balances to the parent portal?\n\nEach parent/student will then see only their OWN annual fee, amount paid and balance — never anyone else's, and never the payment history.\n\nSafe to re-run anytime to refresh the figures."))return;
     setPubBusy(true);setPubMsg("Publishing…");let n=0,skip=0;
     for(const C of agg.perClass){for(const r of C.rows){
@@ -15093,7 +15133,7 @@ td.r,th.r{text-align:right}
       const _pdn=feeDueNow(_pstruct[cls]||[],_newCash,today(),_newConc+(wv||0));
       const _overdue=Math.max(0,(_pdn.hasDates?_pdn.dueAmt+_pdn.fineAmt:ann)-wv-_newConc-_newCash);
       const _status=(ann>0&&_bal<=0)?"cleared":((_newCash>0||_newConc>0)?"partial":"unpaid");
-      try{window.__fbSetDoc(window.__fbDoc(window.__db,"portalFees",String(selAdm)),{admNo:String(selAdm),name:student,cls,annual:ann,paid:_newCash,conc:_newConc,waiver:wv,bal:_bal,overdue:_overdue,status:_status,updatedAt:new Date().toISOString(),by:user.name}).catch(function(){});}catch(e){}
+      if(portalIsLive)try{window.__fbSetDoc(window.__fbDoc(window.__db,"portalFees",String(selAdm)),{admNo:String(selAdm),name:student,cls,annual:ann,paid:_newCash,conc:_newConc,waiver:wv,bal:_bal,overdue:_overdue,status:_status,updatedAt:new Date().toISOString(),by:user.name}).catch(function(){});}catch(e){}
     }
     setSaving(false);setAmount("");setNote("");setIsConc(false);setPayRef("");setCollectBase("");window.__feesDirty="";
     if(!isConc){const balAfterRec=Math.max(0,ann-wv-concGiven-(paidBefore+amt));setLastReceipt({rec,paidBefore,conc:concGiven,balAfter:balAfterRec});printReceipt(rec,paidBefore,concGiven);}
@@ -24551,7 +24591,8 @@ function UpiCollections({feesDB,metaDB,intentsDB,feeCloseDB,user,isDirector}){
     if(confirming)return;                                   // in-flight lock — block double-click / second row mid-write
     const live=(intentsDB&&intentsDB.data&&intentsDB.data[it.id])||it;
     if(live.status&&live.status!=="pending"){if(window.__toast)window.__toast("Already handled by "+(live.verifiedBy||"someone"),"err");return;}
-    const intentDate=it.date||new Date().toISOString().slice(0,10);const closeKey=safeId(String(window.__SESSION||"2026-27")+"_"+intentDate);const dayClose=(feeCloseDB&&feeCloseDB.data&&feeCloseDB.data[closeKey])||null;
+    const upiSess=String(it.session||__liveSession());
+    const intentDate=it.date||new Date().toISOString().slice(0,10);const closeKey=safeId(upiSess+"_"+intentDate);const dayClose=(feeCloseDB&&feeCloseDB.data&&feeCloseDB.data[closeKey])||null;
     if(dayClose&&dayClose.status==="closed"){window.__toast&&window.__toast("The "+fmtDate(intentDate)+" cash book is closed. Ask the Director to reopen it before verifying this claim.","err");return;}
     const nr=String(it.ref||"").replace(/[\s-]+/g,"").toLowerCase();const dup=nr&&Object.entries((feesDB.raw&&feesDB.raw.allData)||feesDB.data||{}).find(([id,p])=>p&&!p.disc&&String(p.ref||"").replace(/[\s-]+/g,"").toLowerCase()===nr&&String(p.intentId||"")!==String(it.id));
     if(dup){window.__toast&&window.__toast("Reference "+it.ref+" is already on "+(dup[1].receiptNo||"another receipt")+" for "+(dup[1].student||"another student")+". This claim was not recorded.","err");return;}
@@ -24562,7 +24603,7 @@ function UpiCollections({feesDB,metaDB,intentsDB,feeCloseDB,user,isDirector}){
     // so the office could see a receipt while the parent still saw "Pay".
     if(window.__fnConfirmUpi){
       try{
-        const r=await window.__fnConfirmUpi(it.id,String(window.__SESSION||"2026-27"));
+        const r=await window.__fnConfirmUpi(it.id,upiSess);
         if(r&&r.ok){
           logAudit("upi-confirm","fees","pay_"+it.id,null,{admNo:r.admNo,amount:r.amount,ref:it.ref||""});
           if(window.__toast)window.__toast("Recorded "+inr(r.amount)+" · "+r.receiptNo+(r.balanceUpdated?"":" · parent balance not published yet"),"ok");
@@ -24579,9 +24620,9 @@ function UpiCollections({feesDB,metaDB,intentsDB,feeCloseDB,user,isDirector}){
     // Atomic receipt number (shared counter with the cash-collection path) so two intents confirmed at once
     // can't mint the same receipt. Safe client-side fallback when the counter rule isn't published.
     const _rn=await __allocReceiptNo(_maxR);
-    const receiptNo="SSC/"+String(window.__SESSION||"2026-27").replace(/^20/,"")+"/"+String(_rn).padStart(4,"0");
+    const receiptNo="SSC/"+upiSess.replace(/^20/,"")+"/"+String(_rn).padStart(4,"0");
     const pid="pay_"+it.id;                                 // DETERMINISTIC from the intent → a duplicate confirm OVERWRITES, never double-records
-    const rec={cls:it.cls||"",student:it.student||"",admNo:it.admNo||"",amount:Number(it.amount)||0,mode:"UPI",ref:String(it.ref||"").trim(),note:"Online UPI"+(it.ref?" · ref "+it.ref:""),date:it.date||new Date().toISOString().slice(0,10),receiptNo:receiptNo,by:(user&&user.name)||"office",source:"online-upi",intentId:it.id,disc:false,createdAt:new Date().toISOString()};
+    const rec={cls:it.cls||"",student:it.student||"",admNo:it.admNo||"",amount:Number(it.amount)||0,mode:"UPI",ref:String(it.ref||"").trim(),note:"Online UPI"+(it.ref?" · ref "+it.ref:""),date:it.date||new Date().toISOString().slice(0,10),receiptNo:receiptNo,session:upiSess,by:(user&&user.name)||"office",source:"online-upi",intentId:it.id,disc:false,createdAt:new Date().toISOString()};
     try{
       await feesDB.set(pid,rec);
       await intentsDB.set(it.id,Object.assign({},it,{status:"verified",verifiedBy:(user&&user.name)||"office",verifiedAt:new Date().toISOString(),receiptNo:receiptNo}));
@@ -25115,7 +25156,7 @@ function App(){
   const jumpStudent=(adm,name)=>{if(!__guardTab("directory"))return;setJumpAdm(String(adm||name||""));window.scrollTo(0,0);};
 
   return(
-    <div className="ap-shell"><ToastHost/><ConfirmHost/><OfflineBanner/><ReadOnlySessionBanner user={user}/>{vSess!==curSession&&canSwitchSession&&<div role="status" style={{background:"var(--bg-amb)",borderBottom:"1px solid var(--bd-amb)",color:"var(--tx-org2)",padding:"8px 16px",fontSize:12.8,fontWeight:650,display:"flex",alignItems:"center",justifyContent:"center",gap:12,flexWrap:"wrap"}}><span>You are working in session {vSess}. Everything you enter here stays in {vSess} and does not appear in {curSession}.</span><button className="ss-press" onClick={()=>window.__setWorkSession(curSession)} style={{background:"var(--c-fff)",border:"1px solid var(--bd-amb)",color:"var(--tx-org2)",borderRadius:6,padding:"4px 11px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Back to {curSession}</button></div>}<StaffPhonePrompt user={user} onSaved={ph=>setUser(u=>u?{...u,phone:ph}:u)}/>
+    <div className="ap-shell"><ToastHost/><ConfirmHost/><OfflineBanner/><ReadOnlySessionBanner user={user}/><StaffPhonePrompt user={user} onSaved={ph=>setUser(u=>u?{...u,phone:ph}:u)}/>
       <div className={"ap-scrim"+(navOpen?" open":"")} onClick={()=>setNavOpen(false)}/>
       {/* Mobile quick-bar — the five most-used screens, one thumb-tap away (phone widths only; parents keep their own nav) */}
       {!isParent&&(()=>{
@@ -25164,6 +25205,7 @@ function App(){
 
       {/* ─── Main ─── */}
       <div className="ap-main">
+        {vSess!==curSession&&canSwitchSession&&<div role="status" style={{background:"var(--bg-amb)",borderBottom:"1px solid var(--bd-amb)",color:"var(--tx-org2)",padding:"8px 16px",fontSize:12.8,fontWeight:650,display:"flex",alignItems:"center",justifyContent:"center",gap:12,flexWrap:"wrap"}}><span>You are working in session {vSess}. Everything you enter here stays in {vSess} and does not appear in {curSession}.</span><button className="ss-press" onClick={()=>window.__setWorkSession(curSession)} style={{background:"var(--c-fff)",border:"1px solid var(--bd-amb)",color:"var(--tx-org2)",borderRadius:6,padding:"4px 11px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Back to {curSession}</button></div>}
         <header className="ap-topbar">
           <button className="ap-menu-btn" aria-label="Open menu" title="Menu" onClick={()=>setNavOpen(true)}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
           <div className="ap-crumb ap-workspace-title"><b>{activeGroup?activeGroup.label:"Portal"}</b>{activeGroup&&activeGroup.children&&activeGroup.children.some(c=>c.id===tab)?<span>{" · "+activeGroup.children.find(c=>c.id===tab).label}</span>:null}</div>
@@ -25186,7 +25228,7 @@ function App(){
               </div>}
             </div>
           ):<div style={{flex:1}}/>}
-          {canSwitchSession&&<label className="ap-tchip" title="Change session. What you enter stays in the session shown here." style={{cursor:"pointer",position:"relative",...(vSess!==curSession?{borderColor:"var(--tx-org2)",color:"var(--tx-org2)",background:"var(--bg-amb)"}:{})}}><select aria-label="Session" value={vSess} onChange={e=>{window.__setWorkSession(e.target.value);}} style={{border:0,background:"transparent",color:"inherit",font:"inherit",fontWeight:700,cursor:"pointer",outline:"none",padding:0}}>{allSessions.slice().reverse().map(v=><option key={v} value={v}>{v}{v===curSession?" · live":v>curSession?" · next":" · past"}</option>)}</select></label>}
+          {canSwitchSession?<label className="ap-tchip ap-sesschip" title="Change session. What you enter stays in the session shown here." style={{cursor:"pointer",position:"relative",...(vSess!==curSession?{borderColor:"var(--tx-org2)",color:"var(--tx-org2)",background:"var(--bg-amb)"}:{})}}><select aria-label="Session" value={vSess} onChange={e=>{window.__setWorkSession(e.target.value);}} style={{border:0,background:"transparent",color:"inherit",font:"inherit",fontWeight:700,cursor:"pointer",outline:"none",padding:0}}>{allSessions.slice().reverse().map(v=><option key={v} value={v}>{v}{v===curSession?" · live":v>curSession?" · next":" · past"}</option>)}</select></label>:<span className="ap-tchip ap-topchip">Session {vSess}</span>}
           <label className="ap-tchip ap-datechip" title="Pick a date to view that day's data" style={{cursor:"pointer",position:"relative",...(viewDate!==_todayStr?{borderColor:"var(--ap-accent)",color:"var(--ap-accent)"}:{})}}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4.5" width="18" height="17" rx="2"/><path d="M3 9h18M8 2.5v4M16 2.5v4"/></svg>{new Date(viewDate+"T00:00").toLocaleDateString("en-IN",{day:"numeric",month:"short"})}<input type="date" value={viewDate} max={_todayStr} onChange={e=>setViewDate(e.target.value||_todayStr)} style={{position:"absolute",inset:0,width:"100%",height:"100%",opacity:0,cursor:"pointer"}}/></label>
           {viewDate!==_todayStr&&<button className="ap-tchip ap-datechip" onClick={()=>setViewDate(_todayStr)} title="Back to today" style={{cursor:"pointer",color:"var(--ap-accent)",fontWeight:600}}>Today</button>}
           <div className="ap-viewtog ap-topchip">
@@ -25620,7 +25662,7 @@ function StudentMyReport({user,testsDB,examsDB,studentsDB,attendanceDB,wrongDB,o
     const ref=String(payRef).trim();
     if(!ref){setPayErr("Enter the UPI reference / UTR number shown in your payment app.");return;}
     try{const id="upi_"+safeId(String(adm||"x"))+"_"+safeId(ref);   // deterministic (admNo + UTR) → re-submitting the same payment overwrites, never piles up duplicates
-      await window.__fbSetDoc(window.__fbDoc(window.__db,"paymentIntents",id),{admNo:String(adm||""),student:student||"",cls:cls||"",amount:amt,ref:ref,date:new Date().toISOString().slice(0,10),status:"pending",by:(user&&(user.name||user.username))||"parent",at:new Date().toISOString()});
+      await window.__fbSetDoc(window.__fbDoc(window.__db,"paymentIntents",id),{admNo:String(adm||""),student:student||"",cls:cls||"",amount:amt,ref:ref,session:__workSession(),date:new Date().toISOString().slice(0,10),status:"pending",by:(user&&(user.name||user.username))||"parent",at:new Date().toISOString()});
       try{localStorage.setItem("ssic_upi_sent_"+String(adm||""),JSON.stringify({ref:ref,amount:amt,at:new Date().toISOString()}));}catch(e){}
       setPaySent(true);setPayErr("");setPayAmt("");setPayRef("");setPayOpen(false);
     }catch(e){setPayErr((e&&e.message)||"Could not submit — please try again.");}

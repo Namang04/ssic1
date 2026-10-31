@@ -95,6 +95,19 @@ ok('running it twice gives the same classes',        ['1', '6', '7', 'LKG', 'SIP
 ok('...and no one twice',                            again.docs.dir_7.students.length === 1 && again.docs.dir_6.students.length === 2);
 ok('a pupil marked left after a first run drops out on the next', (() => {
   const l2 = JSON.parse(frozen); l2.dir_6.students[0].status = 'Left'; const p = __promotionPlan(l2, P.docs, '2026-27', '2027-28'); return p.docs.dir_7.students.length === 0; })());
+// corrections made in next year survive a re-run: a stream set for Class 11 must not silently revert
+const edited = JSON.parse(JSON.stringify(P.docs)); edited.dir_7.students[0].section = 'BIO'; edited.dir_7.students[0].phone = 'new';
+const reRun = __promotionPlan(live, edited, '2026-27', '2027-28');
+ok('a correction made in next year survives a re-run',  reRun.docs.dir_7.students.find(s => s.name === 'CHARU').section === 'BIO' && reRun.docs.dir_7.students.find(s => s.name === 'CHARU').phone === 'new');
+const moved = JSON.parse(JSON.stringify(P.docs)); const ch = moved.dir_7.students.shift(); ch.clsNum = '8'; ch.cls = '8'; moved.dir_8 = { cls: '8', clsNum: '8', students: [ch] };
+ok('...and so does a pupil moved to another class',     __promotionPlan(live, moved, '2026-27', '2027-28').docs.dir_8.students.some(s => s.name === 'CHARU'));
+ok('no changes since promoting: nothing to report',     again.counts.added === 0 && again.dropped.length === 0);
+const joined = JSON.parse(frozen); joined.dir_6.students.push({ admNo: '50', name: 'LATE JOINER', clsNum: '6' });
+const pj = __promotionPlan(joined, P.docs, '2026-27', '2027-28');
+ok('a pupil who joined after promoting is added and reported', inCls(pj, '7').includes('LATE JOINER') && pj.counts.added === 1);
+const gone = JSON.parse(frozen); gone.dir_6.students[0].status = 'Left';
+const pg = __promotionPlan(gone, P.docs, '2026-27', '2027-28');
+ok('a pupil who left after promoting is reported',      pg.dropped.length === 1 && pg.dropped[0] === 'CHARU');
 const clash = __promotionPlan(live, { dir_6: { students: [{ admNo: '3', name: 'SOMEONE ELSE', clsNum: '6' }] } }, '2026-27', '2027-28');
 ok('an admission number used twice is reported, not merged', clash.conflicts.length === 1 && clash.conflicts[0].admNo === '3');
 
@@ -128,6 +141,12 @@ ok('a left or passed-out child has no class to follow', __clsByAdm(live)['2'] ==
 // ── what the app wires up ──
 ok('the session wrapper scopes each collection by name', /_fsess\(db\.data,coll\)/.test(src));
 ok('a promotion reads the live directory, never writes it', !/dirDB\.set/.test(grab('SessionPromote')));
+ok('going live waits if students changed since promoting', /plan\.counts\.added\|\|plan\.dropped\.length/.test(grab('SessionPromote')));
+const portalWrites = src.split('\n').filter(l => /__fbSetDoc\(window\.__fbDoc\(window\.__db,"portalFees"/.test(l));
+ok('a parent\'s balance is only ever written from the live session', portalWrites.length === 2 && portalWrites.every(l => /portalIsLive/.test(l) || /try\{await window\.__fbSetDoc/.test(l)) && /if\(!portalIsLive\)\{setPubMsg/.test(src) && /adjustPortalLedger=async\(p,delta\)=>\{if\(!portalIsLive\)return true;/.test(src));
+ok('a UPI claim is filed under the parent\'s session',  /const upiSess=String\(it\.session\|\|__liveSession\(\)\)/.test(src) && /__fnConfirmUpi\(it\.id,upiSess\)/.test(src) && !/__fnConfirmUpi\(it\.id,String\(window/.test(src));
+ok('a parent\'s claim records the session it was made in', (src.match(/ref:ref,session:__workSession\(\),date:/g) || []).length === 2);
+ok('a read in flight is dropped on a session switch',   /if\(g!==storeGen\.current\)return;/.test(src));
 ok('going live moves late records and logins',       /__moveLateRecords\(/.test(grab('SessionPromote')) && /relabelLogins\(dir,curSession\)/.test(grab('SessionPromote')));
 ok('a registration for another year switches session', /__setWorkSession\(_rs\)/.test(src));
 

@@ -56,8 +56,8 @@ ok('and it is a where() on the query',     /__fbWhere\(field,">=",since\)/.test(
 ok('no window means the whole collection', /:ref;/.test(hook) && /src=\(since&&/.test(hook));
 ok('undated documents are named and kept', /keep=\(opts&&opts\.keep\)\|\|null/.test(hook));
 ok('they are read as single documents',    /__fbGetDoc\(window\.__fbDoc\(window\.__db,collName,id\)\)/.test(hook));
-ok('and merged under every snapshot',      /setData\(Object\.assign\(\{\},keepRef\.current,d\)\)/.test(hook));
-ok('a campus switch drops the old config', /keepRef\.current=\{\};rangeRef\.current=null;setData\(\{\}\);setup\(\)/.test(hook));
+ok('and merged under every snapshot',      /setData\(Object\.assign\(\{\},older,keepRef\.current,d\)\)/.test(hook));
+ok('a campus switch drops the old config', /keepRef\.current=\{\};rangeDocs\.current=\{\};rangeRef\.current=null;setData\(\{\}\);setup\(\)/.test(hook));
 ok('...and re-asks for the range it had',  /rangeArgs\.current&&rangeFn\.current\)rangeFn\.current\(/.test(hook));
 ok('the window is part of the dependencies', /\[collName,enabled,since,field,keepKey\]/.test(hook));
 
@@ -99,7 +99,13 @@ ok('the loader is offered by the hook',   /return\{data:visible,[^\n]*loadRange\
 ok('and survives the session wrapper',    /_wrapSess\(db\)\{[^\n]*return\{[^\n]*loadRange:db\.loadRange/.test(src));
 ok('a range already fetched is not refetched', /if\(rangeRef\.current&&rangeRef\.current<=from\)return;/.test(hook));
 ok('live data wins where the two overlap', /setData\(prev=>Object\.assign\(\{\},d,prev\)\)/.test(hook));
-ok('a failed fetch can be retried',       /catch\(e\)\{rangeRef\.current=null;\}/.test(hook));
+ok('a live update keeps the older stretch it does not carry', /older\[id\]=r;/.test(hook) && /setData\(Object\.assign\(\{\},older,keepRef\.current,d\)\)/.test(hook));
+ok('...but only what the window does not cover, so a deletion still shows', /String\(\(r&&r\[field\]\)\|\|""\)<since/.test(hook));
+ok('a campus or session switch forgets it',                 /rangeDocs\.current=\{\};rangeRef\.current=null/.test(hook));
+ok('a write to an older day tells the screen itself',    /__fbSetDoc\(window\.__fbDoc\(window\.__db,collName,safeId\(id\)\),val\)\);await syncOlder\(id,val\);/.test(hook) && /fields\)\);await syncOlder\(id\);/.test(hook) && /__fbDeleteDoc\(window\.__fbDoc\(window\.__db,collName,safeId\(id\)\)\)\);await syncOlder\(id\);/.test(hook));
+ok('...and costs no read unless the older stretch is loaded', /if\(!rangeRef\.current\|\|!since\)return;/.test(hook) && /if\(!d\|\|d>=since\)return;/.test(hook));
+ok('signing out forgets it, so the next person on the device starts clean', /if\(!enabled\)\{[^\n]*rangeDocs\.current=\{\};rangeRef\.current=null;setData\(\{\}\)/.test(hook));
+ok('a failed fetch can be retried',       /catch\(e\)\{if\(g===storeGen\.current\)rangeRef\.current=null;\}/.test(hook));
 
 // __sessionStart: the school year runs April to March.
 const ss = (() => { const i = src.search(/^function __sessionStart\(/m);

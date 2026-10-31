@@ -1,8 +1,12 @@
 // An in-memory Firebase for rehearsing the REAL app with no connection to production. tools/rehearsal/build.mjs swaps
 // the CDN imports in a copy of the built page for this file, so React, every screen and every write path run for
-// real. Choose who is signed in with ?as=director|office|vp|teacher|parent|leftparent, and ?reset=1 to reseed.
+// real. Choose who is signed in with ?as=director|office|vp|teacher|parent|student|leftparent, and ?reset=1 to reseed.
 // Like real Firestore it refuses undefined field values, which a mock normally lets through.
 const LS = '__rehearsal_fs';
+// ?deny=1 behaves like rules that have not been published yet: every session store refuses this user.
+const denyAll = new URLSearchParams(location.search).get('deny') === '1';
+const refused = (n) => denyAll && /-\d{4}_/.test(String(n || ''));
+const denied = () => { const e = new Error('Missing or insufficient permissions.'); e.code = 'permission-denied'; return e; };
 const clone = (x) => (x === undefined ? undefined : JSON.parse(JSON.stringify(x)));
 const params = new URLSearchParams(location.search);
 if (params.get('reset')) localStorage.removeItem(LS);
@@ -41,15 +45,15 @@ export const where = (f, op, v) => ({ f, op, v });
 export const query = (ref, ...filters) => ({ kind: 'query', name: ref.name, filters });
 export const serverTimestamp = () => SERVER, deleteField = () => DELETE, arrayUnion = (...a) => ({ __union: a });
 export class FieldPath { constructor(...p) { this.p = p; } }
-export const getDoc = async (r) => snapDoc(r.coll, r.id), getDocFromServer = getDoc;
-export const getDocs = async (s) => runQuery(s);
-export async function setDoc(r, val, opts) { checkVal(val, 'data'); const cur = (FS[r.coll] || {})[r.id]; write(r.coll, r.id, opts && opts.merge ? Object.assign({}, cur, resolve(val, cur)) : resolve(val)); }
+export const getDoc = async (r) => { if (refused(r.coll)) throw denied(); return snapDoc(r.coll, r.id); }, getDocFromServer = getDoc;
+export const getDocs = async (s) => { if (refused(s.name)) throw denied(); return runQuery(s); };
+export async function setDoc(r, val, opts) { if (refused(r.coll)) throw denied(); checkVal(val, 'data'); const cur = (FS[r.coll] || {})[r.id]; write(r.coll, r.id, opts && opts.merge ? Object.assign({}, cur, resolve(val, cur)) : resolve(val)); }
 export async function updateDoc(r, fields) { checkVal(fields, 'data'); const cur = (FS[r.coll] || {})[r.id]; if (cur === undefined) throw new Error('No document to update: ' + r.coll + '/' + r.id);
   const next = clone(cur); Object.keys(fields).forEach(k => { const path = k.split('.'); let o = next; path.slice(0, -1).forEach(p => { o = o[p] = o[p] || {}; }); const last = path[path.length - 1]; if (fields[k] && fields[k].__delete) delete o[last]; else o[last] = resolve(fields[k], o[last]); }); write(r.coll, r.id, next); }
 export async function deleteDoc(r) { if (FS[r.coll]) { delete FS[r.coll][r.id]; save(); touch(r.coll); } }
-export function onSnapshot(src, cb) { const l = { src, cb }; listeners.add(l); setTimeout(() => emit(l), 0); return () => listeners.delete(l); }
+export function onSnapshot(src, cb, err) { if (refused(src.name || src.coll)) { setTimeout(() => err && err(denied()), 0); return () => {}; } const l = { src, cb }; listeners.add(l); setTimeout(() => emit(l), 0); return () => listeners.delete(l); }
 export async function runTransaction(db, fn) { return fn({ get: async (r) => snapDoc(r.coll, r.id), set: (r, v, o) => { setDoc(r, v, o); }, update: (r, v) => { updateDoc(r, v); } }); }
-const AS = { director: 'u_dir', office: 'u_off', vp: 'u_vp', teacher: 'u_t', parent: 'u_p', leftparent: 'u_lp' };
+const AS = { director: 'u_dir', office: 'u_off', vp: 'u_vp', teacher: 'u_t', parent: 'u_p', leftparent: 'u_lp', student: 'u_s' };
 const who = params.get('as') || localStorage.getItem('__rehearsal_as') || 'director'; localStorage.setItem('__rehearsal_as', who);
 const authUser = { uid: AS[who] || AS.director, email: who + '@ssic-portal.app' };
 export const getAuth = () => ({ currentUser: authUser }), signInWithEmailAndPassword = async () => ({ user: authUser }), createUserWithEmailAndPassword = async () => ({ user: authUser }), signOut = async () => {}, updatePassword = async () => {};
