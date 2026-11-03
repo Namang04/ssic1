@@ -37,5 +37,10 @@ window.__REHEARSAL_SEED = (function () {
     portalFees: { 1003: { admNo: '1003', name: 'CHARU DEV', cls: 'Class 6', annual: 12000, paid: 5000, conc: 0, waiver: 0, bal: 7000, overdue: 7000, status: 'partial' } },
     paymentIntents: { upi_1: { admNo: '1003', student: 'CHARU DEV', cls: 'Class 6', amount: 2000, ref: '123456789012', date: today, status: 'pending', by: 'Parent of CHARU', at: new Date().toISOString() } },
     feeDayCloses: {}, salaries: {}, studentLinks: {}, conceptNotes: {}, counters: { feeReceipts: { value: 2 } },
-    registrations: { web_WEB_AAAAA: { name: 'NEW CHILD', classSought: 'Class 6', contact: '9811111111', father: 'NEW FATHER', gender: 'Male', dob: '2015-05-05', regNo: 'WEB-AAAAA', status: 'pending', session: '2027-28', source: 'Online form', at: '2026-10-28T10:00:00Z', payAmount: 500, payRef: '123456789012', payVerified: false, address: 'Rehearsal Road' } } };
+    registrations: {
+      // the live desk on 3 Nov 2026: nine records numbered REG/27-28/0001-0009 that were really enquiries
+      ...Object.fromEntries(['Kritigya Gupta', 'ANNIKA SWARNKAR', 'Azba Fatima', 'Heba Fatima', 'Divyansh kashyap', 'Shaista khatoon', 'Devansh keshari', 'Ayush Kumar kharwar', 'Shaurya gupta'].map((nm, i) => ['reg_desk' + i,
+        { name: nm, classSought: 'Class ' + (1 + i), contact: '98000000' + String(i).padStart(2, '0'), father: 'FATHER ' + i, session: '2027-28', status: 'pending', pipelineStage: 'new', priority: 'normal',
+          source: i === 0 || i === 7 ? 'Phone call' : 'Walk-in', regNo: 'REG/27-28/' + String(i + 1).padStart(4, '0'), by: 'Front Office (Accounts)', assignedTo: 'Front Office (Accounts)', at: '2026-11-03T0' + (i % 9) + ':30:00.000Z' }])),
+      web_WEB_AAAAA: { name: 'NEW CHILD', classSought: 'Class 6', contact: '9811111111', father: 'NEW FATHER', gender: 'Male', dob: '2015-05-05', regNo: 'WEB-AAAAA', status: 'pending', session: '2027-28', source: 'Online form', at: '2026-10-28T10:00:00Z', payAmount: 500, payRef: '123456789012', payVerified: false, address: 'Rehearsal Road' } } };
 })();

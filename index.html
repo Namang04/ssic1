@@ -492,6 +492,9 @@ body,.ap-panel,.ap-content,.ap-nav,.ap-topbar{transition:background-color .25s e
 @media(min-width:881px) and (max-width:1190px){.ap-topbar .ap-viewtog{display:none}.ap-search{min-width:0}.ap-search .kbd{display:none}}
 @media(max-width:880px){.ap-sesschip{padding:7px 8px}.ap-sesschip select{width:86px}}
 @media(min-width:881px) and (max-width:1040px){.ap-branchsel span.bn{display:none}}
+/* A long page name ("Admissions Desk · Enquiries & Follow-ups") pushed the bar past a 1280 laptop screen. The part
+   after the dot is the highlighted tab right under the bar, so on laptop widths the bar shows the section alone. */
+@media(min-width:881px) and (max-width:1366px){.ap-workspace-title>span{display:none}}
 @media(max-width:880px){
   .ap-topbar{flex-wrap:wrap;row-gap:8px}.ap-search{max-width:none;flex:1 1 100%;order:9}.ap-topchip{display:none}.ap-viewtog{display:none}.ap-branchsel span.bn{display:none}.ap-workspace-title{font-size:12px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .ap-subbar{padding:7px max(12px,env(safe-area-inset-left));display:block;overflow:hidden}
@@ -5661,7 +5664,54 @@ function __regPrefix(sess){return "REG/"+String(sess||__admSession()).replace(/^
 function __regSessions(regs){var m={};m[__liveSession()]=1;m[__admSession()]=1;
   (regs||[]).forEach(function(r){var v=__regSession(r);if(v)m[v]=1;});
   return Object.keys(m).sort(function(a,b){return b.localeCompare(a);});}
-function Registration({user, registrationsDB, usersDB, setTab, session}){
+// ── Enquiry, then registration, then admission (2026-11-03) ──
+// An enquiry is free and carries an ENQ number. It becomes a REGISTRATION only when the registration fee is
+// recorded, or waived with a reason, and only a registration can be admitted. Until this date the desk gave
+// every enquiry a REG number, so a desk record with no `kind` is an enquiry unless it was already admitted:
+// its old REG number reads as the same ENQ number, and REG numbering starts with the first paid registration.
+// Nothing is rewritten to make that true; a record takes the explicit fields the next time it is saved.
+var __REG_FEE=500;
+function __enqPrefix(sess){return "ENQ/"+String(sess||__admSession()).replace(/^20/,"")+"/";}
+function __regIsLegacyDesk(r){return !!r&&!r.kind&&r.source!=="Online form";}
+function __regKind(r){if(!r)return "enquiry";if(r.kind==="registration"||r.kind==="enquiry")return r.kind;
+  if(String(r.status||"")==="admitted")return "registration";
+  if(r.source==="Online form"&&r.payVerified===true)return "registration";
+  return "enquiry";}
+// The number shown for a record: REG for a registration, ENQ for an enquiry, WEB- for an online form whose
+// payment has not been approved yet.
+function __regNoOf(r){if(!r)return "";
+  if(__regKind(r)==="registration")return String(r.regNo||"");
+  if(r.enqNo)return String(r.enqNo);
+  if(__regIsLegacyDesk(r)&&/^REG\//.test(String(r.regNo||"")))return String(r.regNo).replace(/^REG\//,"ENQ/");
+  return String(r.regNo||"");}
+function __isoLocalDay(iso){var d=new Date(iso||"");return isNaN(d.getTime())?"":d.toLocaleDateString("en-CA",{timeZone:"Asia/Kolkata"});}
+// The registration fee as money received, or null: an enquiry, a waiver and a cancelled receipt took none.
+function __regFeeOf(r){if(!r)return null;var f=r.regFee;
+  if(f){if(f.cancelled||!(Number(f.amount)>0))return null;return {amount:Number(f.amount),mode:String(f.mode||"Cash"),ref:String(f.ref||""),date:String(f.date||""),by:String(f.by||""),at:String(f.at||"")};}
+  if(r.source==="Online form"&&r.payVerified===true&&Number(r.payAmount)>0)
+    return {amount:Number(r.payAmount),mode:"UPI",ref:String(r.payRef||""),date:__isoLocalDay(r.payVerifiedAt||r.at),by:String(r.payVerifiedBy||""),at:String(r.payVerifiedAt||"")};
+  return null;}
+// Next ENQ or REG number in a session, from the highest number already used (never the count), so a deletion
+// can never make two families share one. A cancelled registration keeps its number out of use.
+function __regNextNo(regs,sess,kind){var pfx=kind==="enquiry"?__enqPrefix(sess):__regPrefix(sess),m=0;
+  (regs||[]).forEach(function(r){if(!r||__regSession(r)!==sess)return;
+    var nos=kind==="enquiry"?[r.enqNo,__regIsLegacyDesk(r)?__regNoOf(r):""]:[__regKind(r)==="registration"?r.regNo:"",r.cancelledRegNo];
+    nos.forEach(function(n){n=String(n||"");if(n.indexOf(pfx)!==0)return;var mm=n.match(/(\d+)\s*$/);var k=mm?parseInt(mm[1],10):0;if(k>m)m=k;});});
+  return pfx+String(m+1).padStart(4,"0");}
+// A record saved from today on carries its kind and numbers explicitly; an old desk record is converted on save.
+function __regNormalize(r){var o=Object.assign({},r);if(o.kind||!__regIsLegacyDesk(o))return o;
+  if(__regKind(o)==="registration"){o.kind="registration";return o;}
+  var no=__regNoOf(o);if(o.regNo){o.oldRegNo=o.regNo;delete o.regNo;}if(no)o.enqNo=no;o.kind="enquiry";return o;}
+// The academic year running on a date (April to March).
+function __sessOfDate(d){var m=String(d||"").match(/^(\d{4})-(\d{2})/);if(!m)return "";var y=+m[1];if(+m[2]<4)y--;return y+"-"+String((y+1)%100).padStart(2,"0");}
+// Registration money received on one day. It belongs to the Day Book of the year RUNNING that day, one cash
+// drawer, whichever year the family is registering for, so it can never be counted in two Day Books.
+function __regFeesOn(regData,day,sess){var out=[];if(!day||(sess&&__sessOfDate(day)!==sess))return out;
+  Object.keys(regData||{}).forEach(function(id){if(id.indexOf("__")===0)return;var r=regData[id];if(!r||r.deleted===true)return;var f=__regFeeOf(r);if(!f||f.date!==day)return;
+    out.push({id:id,regNo:__regNoOf(r),name:String(r.name||""),cls:String(r.classSought||""),session:__regSession(r),amount:f.amount,mode:f.mode,ref:f.ref,by:f.by,at:f.at});});
+  return out.sort(function(a,b){return a.at.localeCompare(b.at)||a.regNo.localeCompare(b.regNo,undefined,{numeric:true});});}
+function __regIsCash(x){return String((x&&x.mode)||"").toLowerCase().trim()==="cash";}
+function Registration({user, registrationsDB, usersDB, setTab, session, feeCloseDB}){
   const[view,setView]=useState("list"); // 'list' | 'new'
   const blank={name:"",classSought:SCHOOL.classes[0],dob:"",gender:"",father:"",mother:"",contact:"",address:"",prevSchool:"",notes:"",source:"Walk-in",preferredContact:"WhatsApp",nextFollowUp:""};
   const[f,setF]=useState(blank);
@@ -5683,7 +5733,12 @@ function Registration({user, registrationsDB, usersDB, setTab, session}){
   const[followSaving,setFollowSaving]=useState(false);
   const[formId,setFormId]=useState(""); // online-form detail sheet (steppingstone.school/apply.html submissions)
   const[payBusy,setPayBusy]=useState(false);
+  const[regTarget,setRegTarget]=useState(null); // the enquiry being registered: fee received or waived
+  const[regForm,setRegForm]=useState({});
+  const[regBusy,setRegBusy]=useState(false);
+  const[regMsg,setRegMsg]=useState("");
   const canEdit=!!user&&(user.role==="admin"||user.role==="office"); // VP sees the pipeline and exceptions but does not operate the admissions desk
+  const isDir=!!user&&user.role==="admin";
   const canImp=canEdit;
   const stageOpts=["new","contacted","visit scheduled","application received","documents pending","ready to admit"];
   const stageLabel=s=>String(s||"new").replace(/\b\w/g,c=>c.toUpperCase());
@@ -5708,28 +5763,33 @@ function Registration({user, registrationsDB, usersDB, setTab, session}){
   const otherSess=useMemo(()=>__regSessions(regs).filter(v=>v!==regSess)
     .map(v=>({sess:v,open:regs.filter(r=>__regSession(r)===v&&(r.status||"pending")==="pending").length}))
     .filter(x=>x.open>0),[regs,regSess]);
-  const shown=filt==="all"?sessRegs:filt==="due"?sessRegs.filter(followDue):filt==="online"?sessRegs.filter(isOnline):filt==="payverify"?sessRegs.filter(payToVerify):sessRegs.filter(r=>(r.status||"pending")===filt);
-  const counts={pending:sessRegs.filter(r=>(r.status||"pending")==="pending").length,due:sessRegs.filter(followDue).length,admitted:sessRegs.filter(r=>r.status==="admitted").length,rejected:sessRegs.filter(r=>r.status==="rejected").length};
-  const submit=async()=>{
+  const isOpen=r=>(r.status||"pending")==="pending";
+  const openAs=(r,k)=>isOpen(r)&&__regKind(r)===k;
+  const shown=filt==="all"?sessRegs:filt==="due"?sessRegs.filter(followDue):filt==="online"?sessRegs.filter(isOnline):filt==="payverify"?sessRegs.filter(payToVerify)
+    :filt==="enquiry"?sessRegs.filter(r=>openAs(r,"enquiry")):filt==="registered"?sessRegs.filter(r=>openAs(r,"registration")):sessRegs.filter(r=>(r.status||"pending")===filt);
+  const counts={pending:sessRegs.filter(r=>(r.status||"pending")==="pending").length,due:sessRegs.filter(followDue).length,admitted:sessRegs.filter(r=>r.status==="admitted").length,rejected:sessRegs.filter(r=>r.status==="rejected").length,
+    enquiry:sessRegs.filter(r=>openAs(r,"enquiry")).length,registered:sessRegs.filter(r=>openAs(r,"registration")).length};
+  // Registration money from this session's families, all of it and today's
+  const feeSum=useMemo(()=>{var t=0,d=0,n=0;sessRegs.forEach(r=>{var x=__regFeeOf(r);if(!x)return;t+=x.amount;n++;if(x.date===_regToday)d+=x.amount;});return{total:t,today:d,n:n};},[sessRegs,_regToday]);
+  const submit=async(andRegister)=>{
     if(!canEdit)return;
     if(!f.name.trim()||!f.contact.trim()){setMsg("Student name and contact number are required.");return;}
-    if(!editId){const nm=nmKey(f.name),ph=String(f.contact||"").replace(/\D/g,"").slice(-10);const dup=sessRegs.find(r=>(r.status||"pending")==="pending"&&nmKey(r.name)===nmKey(f.name)&&String(r.contact||"").replace(/\D/g,"").slice(-10)===ph);if(dup){setMsg((dup.regNo||"An open enquiry")+" already has the same student name and contact number. Open that record instead of creating a duplicate.");setView("list");setFilt("pending");return;}}
+    if(!editId){const nm=nmKey(f.name),ph=String(f.contact||"").replace(/\D/g,"").slice(-10);const dup=sessRegs.find(r=>(r.status||"pending")==="pending"&&nmKey(r.name)===nmKey(f.name)&&String(r.contact||"").replace(/\D/g,"").slice(-10)===ph);if(dup){setMsg((__regNoOf(dup)||"An open enquiry")+" already has the same student name and contact number. Open that record instead of creating a duplicate.");setView("list");setFilt("pending");return;}}
     setSaving(true);setMsg("");
     if(editId){
       var old=regs.find(r=>r.id===editId);
       if(!old){setMsg("This enquiry could not be found. Return to the pipeline and try again.");setSaving(false);return;}
-      try{await registrationsDB.set(editId,Object.assign({},old,f,{updatedBy:user.name,updatedAt:new Date().toISOString()}));logAudit("registration-edit","registrations",editId,{name:old.name,contact:old.contact,classSought:old.classSought},{name:f.name,contact:f.contact,classSought:f.classSought});setMsg("✓ "+(old.regNo||"Enquiry")+" updated for "+f.name.trim());setF(blank);setRegCleanSig(JSON.stringify(blank));setEditId("");setView("list");}
+      try{await registrationsDB.set(editId,Object.assign({},__regNormalize(old),f,{updatedBy:user.name,updatedAt:new Date().toISOString()}));logAudit("registration-edit","registrations",editId,{name:old.name,contact:old.contact,classSought:old.classSought},{name:f.name,contact:f.contact,classSought:f.classSought});setMsg("✓ "+(__regNoOf(old)||"Enquiry")+" updated for "+f.name.trim());setF(blank);setRegCleanSig(JSON.stringify(blank));setEditId("");setView("list");}
       catch(e){setMsg("Could not update — "+(e&&e.message||"try again"));}
       setSaving(false);return;
     }
-    // Reg No: year prefix from the session + sequence from the MAX existing number (not the count) so deletions
-    // or manual entries can't make the next enquiry reuse an existing Reg No.
-    const _regPfx=__regPrefix(regSess);
-    const _maxReg=sessRegs.reduce((m,r)=>{var mm=String(r.regNo||"").match(/(\d+)\s*$/);var k=mm?parseInt(mm[1],10):0;return k>m?k:m;},0);
-    const regNo=_regPfx+String(_maxReg+1).padStart(4,"0");
+    // An enquiry is free: it gets an ENQ number, never a REG number. Registering is its own step, with the fee.
+    const enqNo=__regNextNo(sessRegs,regSess,"enquiry");
     const id="reg_"+Date.now()+"_"+Math.random().toString(36).slice(2,6);
-    try{await registrationsDB.set(id,Object.assign({},f,{regNo,session:regSess,status:"pending",pipelineStage:"new",priority:"normal",by:user.name,assignedTo:user.name,at:new Date().toISOString()}));
-      setMsg("✓ Registration "+regNo+" saved for "+f.name.trim()+" · session "+regSess);setF(blank);setRegCleanSig(JSON.stringify(blank));setEditId("");setView("list");}
+    const rec=Object.assign({},f,{kind:"enquiry",enqNo,session:regSess,status:"pending",pipelineStage:"new",priority:"normal",by:user.name,assignedTo:user.name,at:new Date().toISOString()});
+    try{await registrationsDB.set(id,rec);
+      setMsg("✓ Enquiry "+enqNo+" saved for "+f.name.trim()+" · session "+regSess);setF(blank);setRegCleanSig(JSON.stringify(blank));setEditId("");setView("list");
+      if(andRegister===true)openRegister(Object.assign({id},rec));}
     catch(e){setMsg("Could not save — "+(e&&e.message||"try again"));}
     setSaving(false);
   };
@@ -5738,9 +5798,10 @@ function Registration({user, registrationsDB, usersDB, setTab, session}){
   const setStatus=async(r,status)=>{
     if(!canEdit)return;
     if(status==="admitted"){
+      if(__regKind(r)!=="registration"){window.__toast&&window.__toast("Register "+r.name+" first: record the \u20b9"+__REG_FEE+" registration fee, or waive it with a reason.","err");return;}
       // A family registered for next year is admitted into next year, so the admission happens in that session.
       var _rs=__regSession(r),_ws=__workSession();
-      if(!window.confirm("Start the full admission for "+r.name+"?\n\nThe enquiry stays OPEN until the admission form is successfully saved, so it can never disappear from follow-up by mistake."+(_rs!==_ws?("\n\nThis family registered for "+_rs+", so the app will switch to "+_rs+" and the admission will not appear in "+_ws+"."):"")))return;
+      if(!window.confirm("Start the full admission for "+r.name+" ("+__regNoOf(r)+")?\n\nThe registration stays OPEN until the admission form is successfully saved, so it can never disappear from follow-up by mistake."+(_rs!==_ws?("\n\nThis family registered for "+_rs+", so the app will switch to "+_rs+" and the admission will not appear in "+_ws+"."):"")))return;
       if(_rs!==_ws&&!(window.__setWorkSession&&window.__setWorkSession(_rs)))return;
       // Prefill first; AdmissionForm marks this enquiry admitted only AFTER the student record + roster caches save.
       try{var _nm=String(r.name||"").trim().split(/\s+/).filter(Boolean);var _fa=String(r.father||"").trim().split(/\s+/).filter(Boolean);var _mo=String(r.mother||"").trim().split(/\s+/).filter(Boolean);
@@ -5751,28 +5812,92 @@ function Registration({user, registrationsDB, usersDB, setTab, session}){
           mobile:String(r.contact||"").replace(/\D/g,"").slice(-10),fatherFirst:_fa[0]||"",fatherLast:_fa.length>1?_fa.slice(1).join(" "):"",
           fatherMobile:String(r.contact||"").replace(/\D/g,"").slice(-10),motherFirst:_mo[0]||"",motherLast:_mo.length>1?_mo.slice(1).join(" "):"",
           dob:r.dob||"",gender:r.gender||"",classSec:_classSec,addr1:r.address||"",pAddr:r.address||"",prevInst:r.prevSchool||"",
-          officeNotes:[r.notes||"",_history].filter(Boolean).join("\n"),fromRegNo:r.regNo||"",fromRegId:r.id};}catch(e){}
+          officeNotes:[r.notes||"",_history].filter(Boolean).join("\n"),fromRegNo:__regNoOf(r),fromRegId:r.id};}catch(e){}
       setTab("admission");return;
     }
     const reason=window.prompt("Why is "+r.name+"'s enquiry being closed as lost / rejected?\nThis helps improve the admissions process.","");if(reason===null)return;if(!String(reason).trim()){window.__toast&&window.__toast("Add a reason before closing the enquiry.","err");return;}
-    try{await registrationsDB.set(r.id,Object.assign({},r,{status,lostReason:String(reason).trim(),statusBy:user.name,statusAt:new Date().toISOString()}));logAudit("registration-"+status,"registrations",r.id,{status:r.status||"pending"},{status:status,reason:String(reason).trim()});}
+    try{await registrationsDB.set(r.id,Object.assign({},__regNormalize(r),{status,lostReason:String(reason).trim(),statusBy:user.name,statusAt:new Date().toISOString()}));logAudit("registration-"+status,"registrations",r.id,{status:r.status||"pending"},{status:status,reason:String(reason).trim()});}
     catch(e){alert("Could not update — "+(e&&e.message||"try again"));}
   };
+  // ── Registering: the fee, or a waiver with a reason, turns an enquiry into a registration with a REG number ──
+  // A fee taken today goes in today's Day Book, so it waits while today's cash book is closed, as a fee receipt does.
+  const dayClosed=d=>{var c=feeCloseDB&&feeCloseDB.data&&feeCloseDB.data[safeId(__sessOfDate(d)+"_"+d)];return !!(c&&c.status==="closed");};
+  const openRegister=r=>{if(!canEdit||!r)return;setRegMsg("");setRegTarget(r);
+    setRegForm({amount:String(__REG_FEE),mode:"Cash",ref:"",waive:"",dob:r.dob||"",gender:r.gender||"",father:r.father||"",mother:r.mother||"",address:r.address||"",prevSchool:r.prevSchool||""});};
+  const printRegReceipt=r=>{const x=__regFeeOf(r);if(!x)return;const w=window.open("","_blank");if(!w)return;const e=v=>esc(String(v==null?"":v));
+    let h=`<html><head><title>Registration receipt ${e(r.regNo)}</title><meta charset="utf-8"><style>
+*{box-sizing:border-box}body{font-family:'Times New Roman',Georgia,serif;padding:26px 30px;color:#1a1a1a;max-width:680px;margin:0 auto;line-height:1.5}
+.hdr{text-align:center;border-bottom:2.5px solid #0d1b2a;padding-bottom:10px}.hdr h1{font-size:21px;font-weight:800;margin:0;color:#0d1b2a}.hdr .sub{font-size:11.5px;color:#555;margin-top:3px}
+.title{text-align:center;font-size:13px;font-weight:700;letter-spacing:2px;color:#0d1b2a;margin:12px 0;text-transform:uppercase}
+.row{display:flex;justify-content:space-between;gap:12px;font-size:13px;margin:5px 0}.row b{color:#0d1b2a;text-align:right}
+.box{border:1px solid #cfcfcf;border-radius:6px;padding:12px 14px;margin:12px 0}
+table{width:100%;border-collapse:collapse;font-size:13px;margin:10px 0}th,td{border:1px solid #cfcfcf;padding:6px 10px;text-align:left}th{background:#eef1f8;color:#0d1b2a}td.r,th.r{text-align:right}
+.amt{font-size:20px;font-weight:800;color:#0d1b2a}.words{font-size:12px;font-style:italic;color:#444;margin-top:4px}.note{font-size:11.5px;color:#444;margin-top:12px}
+.sign{margin-top:42px;display:flex;justify-content:space-between;font-size:12px;color:#333}.foot{margin-top:18px;font-size:10.5px;color:#999;text-align:center;border-top:1px solid #e0e0e0;padding-top:8px}
+@media print{body{padding:12px}}</style></head><body>`;
+    h+=`<div class="hdr">${window.__LOGO?`<img src="${window.__LOGO}" alt="" style="height:58px;width:58px;object-fit:contain;display:block;margin:0 auto 6px">`:""}<h1>STEPPING STONE INTER COLLEGE</h1><div class="sub">${e(BRANCH_LABEL)}, ${e(BRANCH_ADDR)}</div></div>`;
+    h+=`<div class="title">Registration Fee Receipt</div><div class="row"><span>Registration No. <b>${e(r.regNo)}</b></span><span>Date <b>${e(fmtDate(x.date))}</b></span></div>`;
+    h+=`<div class="box"><div class="row"><span>Student</span><b>${e(r.name)}</b></div><div class="row"><span>Class sought</span><b>${e(r.classSought)} · session ${e(__regSession(r))}</b></div><div class="row"><span>Father / guardian</span><b>${e(r.father||"—")}</b></div><div class="row"><span>Contact</span><b>${e(r.contact||"—")}</b></div>${r.enqNo?`<div class="row"><span>Enquiry No.</span><b>${e(r.enqNo)}</b></div>`:""}</div>`;
+    h+=`<table><tr><th>Particulars</th><th>Mode</th><th class="r">Amount</th></tr><tr><td>Registration fee</td><td>${e(x.mode)}${x.ref?" · "+e(x.ref):""}</td><td class="r">₹${x.amount.toLocaleString("en-IN")}</td></tr></table>`;
+    h+=`<div class="amt">₹${x.amount.toLocaleString("en-IN")}</div><div class="words">Rupees ${inrWords(x.amount)} Only</div><div class="note">Registration does not by itself confirm admission.</div>`;
+    h+=`<div class="sign"><span>Received by: ${e(x.by)}</span><span>Signature &amp; seal</span></div><div class="foot">Computer-generated receipt · ${e(BRANCH_LABEL)}</div></body></html>`;
+    w.document.write(h);w.document.close();setTimeout(()=>w.print(),300);};
+  const doRegister=async()=>{
+    const r=regTarget;if(!r||!canEdit||regBusy)return;
+    const g=regForm,waived=g.mode==="Waived",amt=waived?0:Number(String(g.amount||"").replace(/[^0-9.]/g,""));
+    if(!g.dob){setRegMsg("Enter the date of birth. It is part of the registration form.");return;}
+    if(!String(g.father||"").trim()){setRegMsg("Enter the father's or guardian's name.");return;}
+    if(waived&&!String(g.waive||"").trim()){setRegMsg("Write why the fee is waived, for example RTE or staff ward.");return;}
+    if(!waived&&!(amt>0)){setRegMsg("Enter the fee received, or choose Waived.");return;}
+    if(!waived&&g.mode!=="Cash"&&!String(g.ref||"").trim()){setRegMsg("Enter the "+(g.mode==="Cheque"?"cheque number":"UPI or transaction reference")+".");return;}
+    const day=today();
+    if(!waived&&dayClosed(day)){setRegMsg("Today's cash book is already closed. Ask the Director to reopen it in Fees, then record the fee.");return;}
+    const stored=registrationsDB.data&&registrationsDB.data[r.id];   // what is saved now, not the copy on screen
+    if(stored&&__regKind(stored)==="registration"){setRegMsg(r.name+" is already registered as "+__regNoOf(stored)+".");return;}
+    const sess=__regSession(r),regNo=__regNextNo(regs,sess,"registration"),now=new Date().toISOString(),who=user.name||user.username||"office";
+    const fee={amount:amt,mode:g.mode,date:day,by:who,at:now};
+    if(!waived&&g.mode!=="Cash")fee.ref=String(g.ref).trim();
+    if(waived)fee.waivedReason=String(g.waive).trim();
+    const base=__regNormalize(Object.assign({},stored||r,{id:r.id}));
+    const rec=Object.assign({},base,{dob:g.dob,gender:g.gender||"",father:String(g.father).trim(),mother:String(g.mother||"").trim(),address:String(g.address||"").trim(),prevSchool:String(g.prevSchool||"").trim(),
+      kind:"registration",regNo:regNo,regFee:fee,registeredAt:now,registeredBy:who,
+      pipelineStage:(base.pipelineStage&&base.pipelineStage!=="new"&&base.pipelineStage!=="contacted")?base.pipelineStage:"application received"});
+    if(isOnline(base)&&base.regNo&&!base.webRef)rec.webRef=base.regNo;              // the website reference stays findable
+    if(base.regFee&&base.regFee.cancelled)rec.regFeeHistory=(base.regFeeHistory||[]).concat([base.regFee]);
+    setRegBusy(true);setRegMsg("");
+    try{await registrationsDB.set(r.id,rec);logAudit("registration-registered","registrations",r.id,{kind:"enquiry",no:__regNoOf(r)},{regNo:regNo,amount:amt,mode:g.mode});
+      setRegTarget(null);setMsg("✓ "+r.name+" registered as "+regNo+(waived?" · fee waived":" · "+inr(amt)+" "+g.mode+" · in today's Day Book"));
+      if(amt>0)printRegReceipt(rec);}
+    catch(e){setRegMsg("Could not save — "+((e&&e.message)||"try again"));}
+    setRegBusy(false);
+  };
+  // Director only, like a fee correction: the fee leaves the Day Book, the family is an enquiry again, the number is retired.
+  const cancelRegistration=async r=>{
+    if(!isDir||!r||__regKind(r)!=="registration"||!r.regFee||!isOpen(r))return;
+    const reason=window.prompt("Cancel registration "+r.regNo+" for "+r.name+"?\n\n"+(__regFeeOf(r)?"The "+inr(r.regFee.amount)+" comes out of the Day Book for "+fmtDate(r.regFee.date):"The fee waiver is withdrawn")+" and the family becomes an enquiry again. The number "+r.regNo+" is not reused.\n\nWhy is it being cancelled?","");
+    if(reason===null)return;if(!String(reason).trim()){window.__toast&&window.__toast("Write why the registration is being cancelled.","err");return;}
+    const now=new Date().toISOString();
+    const rec=Object.assign({},r,{kind:"enquiry",cancelledRegNo:r.regNo,regFee:Object.assign({},r.regFee,{cancelled:{by:user.name||"Director",at:now,reason:String(reason).trim()}})});delete rec.regNo;
+    try{await registrationsDB.set(r.id,rec);logAudit("registration-cancelled","registrations",r.id,{regNo:r.regNo,amount:Number(r.regFee.amount)||0},{reason:String(reason).trim()});}
+    catch(e){alert("Could not cancel — "+((e&&e.message)||"try again"));}
+  };
   const openFollow=r=>{if(!canEdit)return;setFollowId(r.id);setFollowNote("");setFollowNext(r.nextFollowUp||"");setFollowStage(r.pipelineStage||"new");setFollowOutcome("Spoke to parent");setFollowOwner(r.assignedTo||user.name||"");setFollowPriority(r.priority||"normal");};
-  const saveFollow=async()=>{var r=regs.find(x=>x.id===followId);if(!r||!canEdit)return;if(!followNote.trim()){if(window.__toast)window.__toast("Add a short follow-up note.","err");return;}if(followStage!=="ready to admit"&&!followNext){if(window.__toast)window.__toast("Set the next follow-up date so this family does not disappear from the desk.","err");return;}setFollowSaving(true);try{var now=new Date().toISOString(),hist=(r.followUps||[]).slice();hist.push({at:now,by:user.name||user.username,note:followNote.trim(),outcome:followOutcome,nextDate:followNext||"",stage:followStage});await registrationsDB.set(r.id,Object.assign({},r,{followUps:hist,lastFollowUpAt:now,lastFollowUpBy:user.name||user.username,nextFollowUp:followStage==="ready to admit"?"":(followNext||""),pipelineStage:followStage,assignedTo:followOwner||user.name,priority:followPriority}));setFollowId("");setFollowNote("");setFollowNext("");setFollowStage("new");setFollowOwner("");setFollowPriority("normal");if(window.__toast)window.__toast("Follow-up saved · next action is owned.","ok");}catch(e){if(window.__toast)window.__toast("Could not save the follow-up.","err");}setFollowSaving(false);};
+  const saveFollow=async()=>{var r=regs.find(x=>x.id===followId);if(!r||!canEdit)return;if(!followNote.trim()){if(window.__toast)window.__toast("Add a short follow-up note.","err");return;}if(followStage!=="ready to admit"&&!followNext){if(window.__toast)window.__toast("Set the next follow-up date so this family does not disappear from the desk.","err");return;}setFollowSaving(true);try{var now=new Date().toISOString(),hist=(r.followUps||[]).slice();hist.push({at:now,by:user.name||user.username,note:followNote.trim(),outcome:followOutcome,nextDate:followNext||"",stage:followStage});await registrationsDB.set(r.id,Object.assign({},__regNormalize(r),{followUps:hist,lastFollowUpAt:now,lastFollowUpBy:user.name||user.username,nextFollowUp:followStage==="ready to admit"?"":(followNext||""),pipelineStage:followStage,assignedTo:followOwner||user.name,priority:followPriority}));setFollowId("");setFollowNote("");setFollowNext("");setFollowStage("new");setFollowOwner("");setFollowPriority("normal");if(window.__toast)window.__toast("Follow-up saved · next action is owned.","ok");}catch(e){if(window.__toast)window.__toast("Could not save the follow-up.","err");}setFollowSaving(false);};
   const printList=()=>{
-    const head=[{k:"regNo",l:"Reg No"},{k:"name",l:"Name"},{k:"classSought",l:"Class"},{k:"father",l:"Father"},{k:"contact",l:"Contact"},{k:"status",l:"Status"}];
-    let h=`<html><head><title>Registration Forms</title><meta charset="utf-8"><style>body{font-family:'Times New Roman',Georgia,serif;padding:24px}h1{font-size:19px;text-align:center;color:#0d1b2a;margin:0}.s{text-align:center;font-size:11px;color:#555;margin:2px 0 14px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #ccc;padding:5px 8px;text-align:left}th{background:#eef1f8}</style></head><body><h1>STEPPING STONE INTER COLLEGE</h1><div class="s">Registration Forms · Session ${window.__SESSION||"2026-27"} · ${shown.length} record(s)</div><table><tr>${head.map(c=>`<th>${c.l}</th>`).join("")}</tr>${shown.map(r=>`<tr>${head.map(c=>`<td>${r[c.k]==null?"":esc(r[c.k])}</td>`).join("")}</tr>`).join("")}</table></body></html>`;
+    const head=[{k:"no",l:"No."},{k:"type",l:"Stage"},{k:"name",l:"Name"},{k:"classSought",l:"Class"},{k:"father",l:"Father"},{k:"contact",l:"Contact"},{k:"fee",l:"Registration fee"}];
+    const list=shown.map(r=>{var x=__regFeeOf(r),st=r.status||"pending";return Object.assign({},r,{no:__regNoOf(r),type:st==="pending"?(__regKind(r)==="registration"?"Registered":"Enquiry"):st==="admitted"?"Admitted":"Rejected",
+      fee:x?("₹"+x.amount.toLocaleString("en-IN")+" "+x.mode):(r.regFee&&r.regFee.mode==="Waived"&&!r.regFee.cancelled?"Waived":"")});});
+    let h=`<html><head><title>Admissions pipeline</title><meta charset="utf-8"><style>body{font-family:'Times New Roman',Georgia,serif;padding:24px}h1{font-size:19px;text-align:center;color:#0d1b2a;margin:0}.s{text-align:center;font-size:11px;color:#555;margin:2px 0 14px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #ccc;padding:5px 8px;text-align:left}th{background:#eef1f8}</style></head><body><h1>STEPPING STONE INTER COLLEGE</h1><div class="s">Admissions pipeline · Session ${regSess} · ${list.length} record(s)</div><table><tr>${head.map(c=>`<th>${c.l}</th>`).join("")}</tr>${list.map(r=>`<tr>${head.map(c=>`<td>${r[c.k]==null?"":esc(r[c.k])}</td>`).join("")}</tr>`).join("")}</table></body></html>`;
     const w=window.open("","_blank");if(w){w.document.write(h);w.document.close();setTimeout(()=>w.print(),300);}
   };
   if(registrationsDB.loading)return <Spinner/>;
   const td={padding:"9px 11px",fontSize:12.5,borderBottom:"1px solid var(--c-f0)",color:"var(--ap-ink)"};
   const th={padding:"9px 11px",fontSize:11,fontWeight:700,color:"var(--c-64)",textTransform:"uppercase",letterSpacing:.6,textAlign:"left",borderBottom:"1px solid var(--c-ec)"};
-  const SST={pending:["var(--tx-org)","var(--bg-amb)"],admitted:["var(--tx-grn)","var(--bg-grn)"],rejected:["#d2342a","var(--bg-red)"]};
+  const SST={registered:["var(--ap-accent)","var(--ap-accent-soft)"],pending:["var(--tx-org)","var(--bg-amb)"],admitted:["var(--tx-grn)","var(--bg-grn)"],rejected:["#d2342a","var(--bg-red)"]};
   const fld=(k,label,opts)=><div style={{flex:1,minWidth:160}}><Lbl c={label}/>{opts?<Sel value={f[k]} onChange={v=>set(k,v)} options={opts}/>:<input value={f[k]} onChange={e=>set(k,e.target.value)} className="ss-input" style={{width:"100%",padding:"10px 14px",borderRadius:6,fontSize:13}}/>}</div>;
   return <div style={{maxWidth:1180,margin:"0 auto"}}>
     <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",flexWrap:"wrap",gap:12,marginBottom:16}}>
-      <div><div className="ap-hi">Admissions pipeline</div><p className="ap-hisub" style={{margin:"4px 0 0"}}>{canEdit?"Enquiry → follow-up → admission → first fee":"Leadership view · owners, ageing and next actions"} · {counts.due} follow-up{counts.due===1?"":"s"} due · {counts.pending} open <b style={{color:"var(--ap-ink)"}}>in {regSess}</b>{regSess!==__liveSession()?<span style={{color:"var(--tx-grn2)",fontWeight:700}}> · next year</span>:null}</p></div>
+      <div><div className="ap-hi">Admissions pipeline</div><p className="ap-hisub" style={{margin:"4px 0 0"}}>{canEdit?"Enquiry → registration (₹"+__REG_FEE+" fee) → admission":"Leadership view · owners, ageing and next actions"} · {counts.due} follow-up{counts.due===1?"":"s"} due · {counts.pending} open <b style={{color:"var(--ap-ink)"}}>in {regSess}</b>{regSess!==__liveSession()?<span style={{color:"var(--tx-grn2)",fontWeight:700}}> · next year</span>:null}</p></div>
       <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
         <div style={{display:"flex",alignItems:"center",gap:7}}>
           <span style={{fontSize:11,fontWeight:700,color:"var(--ap-muted)",textTransform:"uppercase",letterSpacing:.6}}>Registering for</span>
@@ -5787,7 +5912,7 @@ function Registration({user, registrationsDB, usersDB, setTab, session}){
     {otherSess.length>0&&<div style={{marginBottom:14,padding:"9px 13px",borderRadius:7,background:"var(--bg-amb)",border:"1px solid var(--bd-amb)",color:"var(--tx-org2)",fontSize:12.3,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
       <span>Not shown here:</span>{otherSess.map(x=><button key={x.sess} onClick={()=>{if(regFormDirty&&!window.confirm("Discard the unsaved enquiry details?"))return;resetEnquiry();setRegSess(x.sess);}} style={{background:"var(--c-fff)",border:"1px solid var(--bd-amb)",borderRadius:999,padding:"4px 11px",fontSize:12,fontWeight:700,color:"var(--tx-org2)",cursor:"pointer",fontFamily:"var(--ss-font)"}}>{x.open} open in {x.sess}</button>)}
     </div>}
-    {view==="new"?<InsPanel title={editId?"Correct enquiry details":"New enquiry"} sub={editId?"Update the same registration — follow-up history and status stay intact":("Capture the family once; Reg No "+__regPrefix(regSess)+"\u2026 and an owner are assigned automatically \u00b7 filed under session "+regSess)}>
+    {view==="new"?<InsPanel title={editId?(__regKind(regs.find(x=>x.id===editId))==="registration"?"Correct registration details":"Correct enquiry details"):"New enquiry"} sub={editId?"Update the same record — follow-up history, number and status stay intact":("Free. An enquiry number "+__enqPrefix(regSess)+"\u2026 and an owner are assigned \u00b7 filed under session "+regSess+". It becomes a registration when the \u20b9"+__REG_FEE+" fee is recorded.")}>
       <div style={{display:"flex",flexDirection:"column",gap:12,maxWidth:900}}>
         <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>{fld("source","Enquiry source",["Walk-in","Phone call","WhatsApp","Website","Referral","Existing parent","Other"])}{fld("preferredContact","Preferred contact",["WhatsApp","Phone call","SMS","Email"])}<div style={{flex:1,minWidth:160}}><Lbl c="First follow-up date"/><input type="date" min={_regToday} value={f.nextFollowUp||""} onChange={e=>set("nextFollowUp",e.target.value)} className="ss-input" style={{width:"100%",padding:"10px 14px",borderRadius:6,fontSize:13}}/></div></div>
         <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>{fld("name","Student name *")}{fld("classSought","Class sought",SCHOOL.classes)}</div>
@@ -5796,12 +5921,13 @@ function Registration({user, registrationsDB, usersDB, setTab, session}){
         <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>{fld("contact","Contact number *")}{fld("prevSchool","Previous school")}</div>
         {fld("address","Address")}
         <div><Lbl c="Context for the next call"/><textarea value={f.notes||""} onChange={e=>set("notes",e.target.value)} placeholder="What is the family looking for? Fee discussion, campus visit, transport, sibling, documents promised…" className="ss-input" style={{width:"100%",minHeight:90,padding:"10px 14px",borderRadius:6,fontSize:13,resize:"vertical",fontFamily:"var(--ss-font)"}}/></div>
-        <div style={{display:"flex",gap:10}}><Btn onClick={submit} disabled={saving}>{saving?"Saving…":editId?"Save corrections":"Save enquiry"}</Btn><button onClick={openPipeline} style={{background:"var(--c-f5)",border:"1px solid var(--c-ec)",borderRadius:6,padding:"0 16px",fontSize:13,cursor:"pointer",color:"var(--ap-ink)"}}>Cancel</button></div>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}><Btn onClick={()=>submit(false)} disabled={saving}>{saving?"Saving…":editId?"Save corrections":"Save enquiry"}</Btn>{!editId&&<Btn v="ghost" onClick={()=>submit(true)} disabled={saving}>Save &amp; register now</Btn>}<button onClick={openPipeline} style={{background:"var(--c-f5)",border:"1px solid var(--c-ec)",borderRadius:6,padding:"0 16px",fontSize:13,cursor:"pointer",color:"var(--ap-ink)"}}>Cancel</button></div>
         {msg&&<div style={{fontSize:12.5,color:msg[0]==="✓"?"var(--tx-grn)":"var(--tx-org2)"}}>{msg}</div>}
       </div>
-    </InsPanel>:<InsPanel title="Enquiry pipeline" sub="Every open family keeps an owner, contact history and next action; admission closes it only after the student record saves">
+    </InsPanel>:<InsPanel title="Admissions pipeline" sub="Enquiry, then registration with the fee, then admission. Every open family keeps an owner, contact history and next action">
+      {feeSum.n>0&&<div style={{fontSize:12.5,color:"var(--ap-ink2)",marginBottom:10}}>Registration fees for {regSess}: <b style={{color:"var(--ap-ink)"}}>{inr(feeSum.total)}</b> from {feeSum.n} famil{feeSum.n===1?"y":"ies"} · today <b style={{color:"var(--ap-ink)"}}>{inr(feeSum.today)}</b></div>}
       <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:12}}>
-        {[["all","All "+regs.length],["due","Follow-up due "+counts.due]].concat(regs.some(isOnline)?[["online","Online forms "+regs.filter(isOnline).length],["payverify","UPI to verify "+regs.filter(payToVerify).length]]:[]).concat([["pending","Pending "+counts.pending],["admitted","Admitted "+counts.admitted],["rejected","Rejected "+counts.rejected]]).map(([k,l])=><button key={k} className={"ap-pill"+(filt===k?" on":"")} onClick={()=>setFilt(k)}>{l}</button>)}
+        {[["all","All "+regs.length],["due","Follow-up due "+counts.due]].concat(regs.some(isOnline)?[["online","Online forms "+regs.filter(isOnline).length],["payverify","UPI to verify "+regs.filter(payToVerify).length]]:[]).concat([["enquiry","Enquiries "+counts.enquiry],["registered","Registered "+counts.registered],["admitted","Admitted "+counts.admitted],["rejected","Rejected "+counts.rejected]]).map(([k,l])=><button key={k} className={"ap-pill"+(filt===k?" on":"")} onClick={()=>setFilt(k)}>{l}</button>)}
         <div style={{flex:1}}/>
         <button className="lnk" onClick={printList} disabled={!shown.length}><Icon name="print" size={16}/> Print</button>
         {canImp&&<button className="lnk" onClick={()=>setImpOpen(true)} style={{marginLeft:8}}><Icon name="upload" size={16}/> Upload Excel</button>}
@@ -5809,26 +5935,37 @@ function Registration({user, registrationsDB, usersDB, setTab, session}){
       {canImp&&<ImportModal open={impOpen} onClose={()=>setImpOpen(false)}><ImportRegistrations registrationsDB={registrationsDB} user={user} session={regSess}/></ImportModal>}
       {shown.length===0?<div style={{padding:"28px 18px",textAlign:"center",color:"var(--c-94)",fontSize:13}}><div style={{width:46,height:46,borderRadius:12,background:"var(--ap-accent-soft)",color:"var(--ap-accent)",display:"grid",placeItems:"center",margin:"0 auto 11px"}}><Icon name="userplus" size={21}/></div><div style={{fontSize:15,fontWeight:750,color:"var(--ap-ink)"}}>{filt==="all"?"Start the admissions pipeline":"No enquiries in this view"}</div><div style={{marginTop:4,lineHeight:1.5}}>{filt==="all"?"Capture a walk-in or phone enquiry, or upload the office's existing Excel list.":"Choose another status or add a new enquiry."}</div>{filt==="all"&&<div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap",marginTop:14}}><button onClick={openNewEnquiry} style={{border:"none",background:"var(--btn-pri-bg)",color:"#fff",borderRadius:6,padding:"9px 13px",fontSize:12.5,fontWeight:750,cursor:"pointer"}}>+ Capture enquiry</button>{canImp&&<button onClick={()=>setImpOpen(true)} style={{border:"1px solid var(--ap-line)",background:"var(--c-fff)",color:"var(--ap-ink2)",borderRadius:6,padding:"9px 13px",fontSize:12.5,fontWeight:700,cursor:"pointer"}}>Upload Excel</button>}<button onClick={()=>setTab("admission")} style={{border:"1px solid var(--ap-line)",background:"var(--c-fff)",color:"var(--ap-ink2)",borderRadius:6,padding:"9px 13px",fontSize:12.5,fontWeight:700,cursor:"pointer"}}>Direct admission →</button></div>}</div>:
       <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse"}}>
-        <thead><tr><th style={th}>Reg No</th><th style={th}>Date</th><th style={th}>Name</th><th style={th}>Class</th><th style={th}>Parent</th><th style={th}>Contact</th><th style={th}>Status</th><th style={th}></th></tr></thead>
+        <thead><tr><th style={th}>No.</th><th style={th}>Date</th><th style={th}>Name</th><th style={th}>Class</th><th style={th}>Parent</th><th style={th}>Contact</th><th style={th}>Status</th><th style={th}></th></tr></thead>
         <tbody>{shown.map(r=>{const st=r.status||"pending",due=followDue(r),last=(r.followUps||[]).slice(-1)[0];return <tr key={r.id} style={{background:due?"color-mix(in srgb,var(--bg-amb) 55%,var(--c-fff))":undefined}}>
-          <td style={{...td,fontFamily:"var(--ss-font)",fontSize:11.5}}>{r.regNo||"—"}</td>
+          <td style={{...td,fontFamily:"var(--ss-font)",fontSize:11.5}}>{__regNoOf(r)||"—"}</td>
           <td style={{...td,color:"var(--c-94)"}}>{r.at?fmtDate(r.at.slice(0,10)):"—"}<div style={{fontSize:10.5,color:"var(--ap-faint)",marginTop:2}}>{r.source||"Walk-in"}</div></td>
-          <td style={{...td,fontWeight:600}}>{r.name}<div style={{fontSize:10.5,color:r.priority==="urgent"?"var(--tx-red)":"var(--ap-muted)",marginTop:2}}>{stageLabel(r.pipelineStage)}{r.assignedTo?" · "+r.assignedTo:" · unassigned"}{r.priority==="urgent"?" · urgent":""}</div>{isOnline(r)&&Number(r.payAmount||0)>0&&<div style={{marginTop:4}}><span style={{fontSize:10.5,fontWeight:700,padding:"2px 7px",borderRadius:6,background:r.payVerified===true?"var(--bg-grn)":r.payIssue?"var(--bg-red)":"var(--bg-amb)",color:r.payVerified===true?"var(--tx-grn)":r.payIssue?"var(--tx-red)":"var(--tx-org2)"}}>₹{r.payAmount} UPI · {r.payVerified===true?"received":r.payIssue?"not found":"to verify"}</span></div>}</td><td style={td}>{String(r.classSought||"").replace("Class ","")}</td>
+          <td style={{...td,fontWeight:600}}>{r.name}<div style={{fontSize:10.5,color:r.priority==="urgent"?"var(--tx-red)":"var(--ap-muted)",marginTop:2}}>{stageLabel(r.pipelineStage)}{r.assignedTo?" · "+r.assignedTo:" · unassigned"}{r.priority==="urgent"?" · urgent":""}</div>{isOnline(r)&&Number(r.payAmount||0)>0&&<div style={{marginTop:4}}><span style={{fontSize:10.5,fontWeight:700,padding:"2px 7px",borderRadius:6,background:r.payVerified===true?"var(--bg-grn)":r.payIssue?"var(--bg-red)":"var(--bg-amb)",color:r.payVerified===true?"var(--tx-grn)":r.payIssue?"var(--tx-red)":"var(--tx-org2)"}}>₹{r.payAmount} UPI · {r.payVerified===true?"received":r.payIssue?"not found":"to verify"}</span></div>}{r.regFee&&!r.regFee.cancelled&&__regKind(r)==="registration"&&!(isOnline(r)&&r.regFee.online)&&<div style={{marginTop:4}}><span style={{fontSize:10.5,fontWeight:700,padding:"2px 7px",borderRadius:6,background:"var(--ap-accent-soft)",color:"var(--ap-accent)"}}>{r.regFee.mode==="Waived"?"Fee waived":"₹"+Number(r.regFee.amount||0).toLocaleString("en-IN")+" "+r.regFee.mode} · {fmtDate(r.regFee.date)}</span></div>}</td><td style={td}>{String(r.classSought||"").replace("Class ","")}</td>
           <td style={td}>{r.father||"—"}</td><td style={{...td,color:"var(--c-64)"}}><div>{r.contact||"—"}</div>{st==="pending"&&<div style={{fontSize:10.5,color:due?"var(--tx-org2)":"var(--ap-faint)",fontWeight:due?700:500,marginTop:2}}>{due?"Follow-up due":last?("Last: "+fmtDate(String(last.at||"").slice(0,10))):(r.nextFollowUp?"Next: "+fmtDate(r.nextFollowUp):"Not contacted yet")}</div>}</td>
-          <td style={td}><span style={{background:SST[st][1],color:SST[st][0],padding:"2px 9px",borderRadius:8,fontSize:11,fontWeight:700,textTransform:"capitalize"}}>{st}</span></td>
-          <td style={{...td,textAlign:"right",whiteSpace:"nowrap"}}>{isOnline(r)&&<button onClick={()=>setFormId(r.id)} title="See the full online form" style={{background:"var(--ap-accent-soft)",color:"var(--ap-accent)",border:"none",borderRadius:6,padding:"5px 9px",fontSize:11.5,cursor:"pointer",fontWeight:700,marginRight:5}}>Form</button>}{canEdit?<div style={{display:"inline-flex",alignItems:"center",gap:5}}><button onClick={()=>startEdit(r)} title="Correct enquiry details" style={{background:"none",border:"1px solid var(--c-e6)",borderRadius:6,padding:"5px 8px",fontSize:11.5,cursor:"pointer",color:"var(--ap-ink2)"}}>Edit</button>{st==="pending"&&<><CallWAButtons phone={r.contact} msg={"Hello, this is the admissions office at "+SCHOOL_NAME+" regarding "+r.name+"'s enquiry for "+(r.classSought||"admission")+"."}/><button onClick={()=>openFollow(r)} style={{background:due?"var(--tx-org2)":"var(--ap-accent-soft)",color:due?"#fff":"var(--ap-accent)",border:"none",borderRadius:6,padding:"5px 9px",fontSize:11.5,cursor:"pointer",fontWeight:700}}>Follow up</button><button onClick={()=>setStatus(r,"admitted")} style={{background:"var(--bg-grn)",color:"var(--tx-grn)",border:"none",borderRadius:6,padding:"5px 9px",fontSize:11.5,cursor:"pointer",fontWeight:600}}>Admit</button><button onClick={()=>setStatus(r,"rejected")} style={{background:"none",border:"1px solid var(--c-e6)",borderRadius:6,padding:"5px 8px",fontSize:11.5,cursor:"pointer",color:"var(--tx-red)"}}>Reject</button></>}</div>:<span style={{fontSize:11.5,color:"var(--ap-muted)"}}>View only</span>}</td>
+          <td style={td}>{(()=>{const lab=st==="pending"?(__regKind(r)==="registration"?"registered":payToVerify(r)?"UPI to verify":"enquiry"):st,c=SST[lab==="registered"?"registered":lab==="enquiry"||lab==="UPI to verify"?"pending":lab]||SST.pending;return <span style={{background:c[1],color:c[0],padding:"2px 9px",borderRadius:8,fontSize:11,fontWeight:700,textTransform:"capitalize"}}>{lab}</span>;})()}</td>
+          <td style={{...td,textAlign:"right",whiteSpace:"nowrap"}}>{isOnline(r)&&<button onClick={()=>setFormId(r.id)} title="See the full online form" style={{background:"var(--ap-accent-soft)",color:"var(--ap-accent)",border:"none",borderRadius:6,padding:"5px 9px",fontSize:11.5,cursor:"pointer",fontWeight:700,marginRight:5}}>Form</button>}{canEdit?<div style={{display:"inline-flex",alignItems:"center",gap:5}}><button onClick={()=>startEdit(r)} title="Correct enquiry details" style={{background:"none",border:"1px solid var(--c-e6)",borderRadius:6,padding:"5px 8px",fontSize:11.5,cursor:"pointer",color:"var(--ap-ink2)"}}>Edit</button>{st==="pending"&&<>{__regKind(r)==="registration"
+            ?<><button onClick={()=>setStatus(r,"admitted")} style={{background:"var(--bg-grn)",color:"var(--tx-grn)",border:"none",borderRadius:6,padding:"5px 9px",fontSize:11.5,cursor:"pointer",fontWeight:600}}>Admit</button>{__regFeeOf(r)&&<button onClick={()=>printRegReceipt(r)} title="Print the registration fee receipt" aria-label="Print the registration fee receipt" style={{background:"none",border:"1px solid var(--c-e6)",borderRadius:6,padding:"4px 7px",cursor:"pointer",color:"var(--ap-ink2)",display:"inline-flex"}}><Icon name="print" size={13}/></button>}{isDir&&r.regFee&&<button onClick={()=>cancelRegistration(r)} title="Cancel this registration (Director only)" style={{background:"none",border:"1px solid var(--c-e6)",borderRadius:6,padding:"5px 8px",fontSize:11.5,cursor:"pointer",color:"var(--ap-ink2)"}}>Cancel reg.</button>}</>
+            :payToVerify(r)?<button onClick={()=>setFormId(r.id)} style={{background:"var(--bg-amb)",color:"var(--tx-org2)",border:"none",borderRadius:6,padding:"5px 9px",fontSize:11.5,cursor:"pointer",fontWeight:700}}>Verify UPI</button>
+            :<button onClick={()=>openRegister(r)} title={"Record the \u20b9"+__REG_FEE+" registration fee"} style={{background:"var(--bg-grn)",color:"var(--tx-grn)",border:"none",borderRadius:6,padding:"5px 9px",fontSize:11.5,cursor:"pointer",fontWeight:700}}>Register</button>}<button onClick={()=>openFollow(r)} style={{background:due?"var(--tx-org2)":"var(--ap-accent-soft)",color:due?"#fff":"var(--ap-accent)",border:"none",borderRadius:6,padding:"5px 9px",fontSize:11.5,cursor:"pointer",fontWeight:700}}>Follow up</button><CallWAButtons phone={r.contact} msg={"Hello, this is the admissions office at "+SCHOOL_NAME+" regarding "+r.name+"'s enquiry for "+(r.classSought||"admission")+"."}/><button onClick={()=>setStatus(r,"rejected")} style={{background:"none",border:"1px solid var(--c-e6)",borderRadius:6,padding:"5px 8px",fontSize:11.5,cursor:"pointer",color:"var(--tx-red)"}}>Reject</button></>}</div>:<span style={{fontSize:11.5,color:"var(--ap-muted)"}}>View only</span>}</td>
         </tr>;})}</tbody>
       </table></div>}
     </InsPanel>}
     {formId&&(()=>{var r=regs.find(x=>x.id===formId);if(!r)return null;
       const row=(k,v)=>v?<div key={k} style={{display:"grid",gridTemplateColumns:"150px 1fr",gap:10,padding:"6px 0",borderTop:"1px solid var(--ap-line)",fontSize:12.5}}><div style={{color:"var(--ap-muted)"}}>{k}</div><div style={{color:"var(--ap-ink)",fontWeight:600,wordBreak:"break-word"}}>{v}</div></div>:null;
-      const markPay=async(ok)=>{if(!canEdit||payBusy)return;if(ok&&!window.confirm("Confirm you have seen ₹"+r.payAmount+" credited in the school account with reference "+r.payRef+"?"))return;if(!ok&&!window.confirm("Mark this payment as NOT found in the bank statement? The family should be called."))return;
-        setPayBusy(true);try{const upd=ok?{payVerified:true,payIssue:false,payVerifiedBy:user.name,payVerifiedAt:new Date().toISOString()}:{payVerified:false,payIssue:true,payVerifiedBy:user.name,payVerifiedAt:new Date().toISOString()};
+      // Approving the payment registers the family: a REG number, and the fee in TODAY's Day Book. Until then it is in neither.
+      const markPay=async(ok)=>{if(!canEdit||payBusy)return;
+        if(ok&&dayClosed(today())){alert("Today's cash book is already closed. Ask the Director to reopen it in Fees before approving this payment.");return;}
+        const _no=ok?__regNextNo(regs,__regSession(r),"registration"):"";
+        if(ok&&!window.confirm("Confirm you have seen ₹"+r.payAmount+" credited in the school account with reference "+r.payRef+"?\n\n"+r.name+" becomes registration "+_no+" and the ₹"+r.payAmount+" goes in today's Day Book."))return;if(!ok&&!window.confirm("Mark this payment as NOT found in the bank statement? The family should be called."))return;
+        setPayBusy(true);try{const now=new Date().toISOString(),who=user.name||user.username||"office";
+          const upd=ok?{payVerified:true,payIssue:false,payVerifiedBy:who,payVerifiedAt:now,kind:"registration",regNo:_no,webRef:r.webRef||r.regNo||"",registeredAt:now,registeredBy:who,
+              regFee:{amount:Number(r.payAmount)||0,mode:"UPI",ref:String(r.payRef||""),date:today(),by:who,at:now,online:true},
+              pipelineStage:(r.pipelineStage&&r.pipelineStage!=="new")?r.pipelineStage:"application received"}
+            :{payVerified:false,payIssue:true,payVerifiedBy:who,payVerifiedAt:now};
           await registrationsDB.set(r.id,Object.assign({},r,upd));logAudit(ok?"registration-pay-verified":"registration-pay-notfound","registrations",r.id,{payVerified:r.payVerified||false},upd);}
         catch(e){alert("Could not save — "+(e&&e.message||"try again"));}setPayBusy(false);};
       const pay=Number(r.payAmount||0);
       return <div onClick={()=>setFormId("")} style={{position:"fixed",inset:0,zIndex:1200,background:"rgba(13,23,38,.55)",display:"grid",placeItems:"center",padding:16}}><div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:640,maxHeight:"92vh",overflowY:"auto",background:"var(--c-fff)",borderRadius:10,padding:20,boxShadow:"0 22px 65px rgba(0,0,0,.25)"}}>
-        <div style={{display:"flex",gap:14,alignItems:"flex-start"}}>{r.photo?<img src={r.photo} alt="" style={{width:76,height:94,objectFit:"cover",borderRadius:6,border:"1px solid var(--ap-line)",flex:"none"}}/>:null}<div style={{flex:1}}><div style={{fontSize:11,fontWeight:800,color:"var(--ap-muted)",textTransform:"uppercase",letterSpacing:.55}}>Online registration form · {r.regNo}</div><div style={{fontSize:19,fontWeight:800,color:"var(--ap-ink)",marginTop:3}}>{r.name}</div><div style={{fontSize:12.5,color:"var(--ap-muted)",marginTop:2}}>{r.classSought}{r.session?" · session "+r.session:""} · submitted {r.at?fmtDate(String(r.at).slice(0,10)):""}</div></div><button onClick={()=>setFormId("")} aria-label="Close" style={{border:"none",background:"none",fontSize:20,cursor:"pointer",color:"var(--ap-muted)"}}>×</button></div>
+        <div style={{display:"flex",gap:14,alignItems:"flex-start"}}>{r.photo?<img src={r.photo} alt="" style={{width:76,height:94,objectFit:"cover",borderRadius:6,border:"1px solid var(--ap-line)",flex:"none"}}/>:null}<div style={{flex:1}}><div style={{fontSize:11,fontWeight:800,color:"var(--ap-muted)",textTransform:"uppercase",letterSpacing:.55}}>Online registration form · {__regNoOf(r)}{r.webRef?" · "+r.webRef:""}</div><div style={{fontSize:19,fontWeight:800,color:"var(--ap-ink)",marginTop:3}}>{r.name}</div><div style={{fontSize:12.5,color:"var(--ap-muted)",marginTop:2}}>{r.classSought}{r.session?" · session "+r.session:""} · submitted {r.at?fmtDate(String(r.at).slice(0,10)):""}</div></div><button onClick={()=>setFormId("")} aria-label="Close" style={{border:"none",background:"none",fontSize:20,cursor:"pointer",color:"var(--ap-muted)"}}>×</button></div>
         {pay>0&&<div style={{marginTop:14,padding:"12px 14px",borderRadius:8,background:r.payVerified===true?"var(--bg-grn)":r.payIssue?"var(--bg-red)":"var(--bg-amb)"}}><div style={{fontSize:13,fontWeight:800,color:r.payVerified===true?"var(--tx-grn)":r.payIssue?"var(--tx-red)":"var(--tx-org2)"}}>Registration fee ₹{pay} by UPI · {r.payVerified===true?"received":r.payIssue?"not found in bank":"not yet verified"}</div><div style={{fontSize:12.5,color:"var(--ap-ink2)",marginTop:4}}>UPI reference <b style={{fontFamily:"var(--ss-mono,monospace)"}}>{r.payRef}</b>{r.payerName?" · paid by "+r.payerName:""}{r.payVerifiedBy?" · checked by "+r.payVerifiedBy+" on "+fmtDate(String(r.payVerifiedAt||"").slice(0,10)):""}</div>
           {canEdit&&r.payVerified!==true&&<div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap"}}><button disabled={payBusy} onClick={()=>markPay(true)} style={{border:"none",background:"var(--tx-grn)",color:"#fff",borderRadius:6,padding:"8px 13px",fontSize:12.5,fontWeight:750,cursor:"pointer"}}>Payment received</button>{!r.payIssue&&<button disabled={payBusy} onClick={()=>markPay(false)} style={{border:"1px solid var(--ap-line)",background:"var(--c-fff)",color:"var(--tx-red)",borderRadius:6,padding:"8px 13px",fontSize:12.5,fontWeight:650,cursor:"pointer"}}>Not found in bank</button>}</div>}
           {!canEdit&&<div style={{fontSize:11.5,color:"var(--ap-muted)",marginTop:6}}>The office verifies payments.</div>}</div>}
@@ -5839,7 +5976,33 @@ function Registration({user, registrationsDB, usersDB, setTab, session}){
           {row("Address",r.address)}{row("School bus",r.transport?(r.transport+(r.transportArea?" · "+r.transportArea:"")):"")}
           {row("Previous school",[r.prevSchool,r.prevBoard,r.prevClass].filter(Boolean).join(" · "))}{row("Sibling at school",r.sibling)}{row("Heard about us",r.heardFrom)}{row("Notes",r.notes)}
         </div>
-        <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:16,flexWrap:"wrap"}}><CallWAButtons phone={r.contact} msg={"Hello, this is the admissions office at "+SCHOOL_NAME+". We have received "+r.name+"'s online registration ("+r.regNo+")."}/><button onClick={()=>setFormId("")} style={{border:"1px solid var(--ap-line)",background:"var(--c-fff)",color:"var(--ap-ink2)",borderRadius:6,padding:"9px 14px",fontSize:12.5,fontWeight:650,cursor:"pointer"}}>Close</button></div>
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:16,flexWrap:"wrap"}}><CallWAButtons phone={r.contact} msg={"Hello, this is the admissions office at "+SCHOOL_NAME+". We have received "+r.name+"'s online registration ("+(r.webRef||r.regNo)+")."}/><button onClick={()=>setFormId("")} style={{border:"1px solid var(--ap-line)",background:"var(--c-fff)",color:"var(--ap-ink2)",borderRadius:6,padding:"9px 14px",fontSize:12.5,fontWeight:650,cursor:"pointer"}}>Close</button></div>
+      </div></div>;})()}
+    {regTarget&&(()=>{const r=regTarget,g=regForm,waived=g.mode==="Waived",setG=(k,v)=>setRegForm(p=>Object.assign({},p,{[k]:v})),close=()=>{if(regBusy)return;setRegTarget(null);setRegMsg("");};
+      const mSt={width:"100%",marginTop:5,border:"1px solid var(--ap-line2)",borderRadius:7,padding:"9px 10px",fontSize:12.5,fontFamily:"var(--ss-font)",background:"var(--c-f7)",color:"var(--ap-ink)"};const mLbl={display:"block",fontSize:10.5,fontWeight:800,color:"var(--ap-muted)",textTransform:"uppercase",letterSpacing:.55,marginTop:11};
+      return <div onClick={close} style={{position:"fixed",inset:0,zIndex:1200,background:"rgba(13,23,38,.55)",display:"grid",placeItems:"center",padding:16}}><div onClick={e=>e.stopPropagation()} role="dialog" aria-label={"Register "+r.name} style={{width:"100%",maxWidth:560,maxHeight:"92vh",overflowY:"auto",background:"var(--c-fff)",borderRadius:10,padding:20,boxShadow:"0 22px 65px rgba(0,0,0,.25)"}}>
+        <div style={{fontSize:17,fontWeight:800,color:"var(--ap-ink)"}}>Register {r.name}</div>
+        <div style={{fontSize:12.5,color:"var(--ap-muted)",marginTop:3}}>{__regNoOf(r)||"New enquiry"} · {r.classSought||"Class not selected"} · session {__regSession(r)} · {r.contact}</div>
+        <div className="m1col" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 12px"}}>
+          <label style={mLbl}>Date of birth *<input type="date" max={_regToday} value={g.dob||""} onChange={e=>setG("dob",e.target.value)} style={mSt}/></label>
+          <label style={mLbl}>Gender<select value={g.gender||""} onChange={e=>setG("gender",e.target.value)} style={mSt}>{["","Male","Female","Other"].map(o=><option key={o} value={o}>{o||"—"}</option>)}</select></label>
+          <label style={mLbl}>Father / guardian *<input value={g.father||""} onChange={e=>setG("father",e.target.value)} style={mSt}/></label>
+          <label style={mLbl}>Mother<input value={g.mother||""} onChange={e=>setG("mother",e.target.value)} style={mSt}/></label>
+        </div>
+        <label style={mLbl}>Address<input value={g.address||""} onChange={e=>setG("address",e.target.value)} style={mSt}/></label>
+        <label style={mLbl}>Previous school<input value={g.prevSchool||""} onChange={e=>setG("prevSchool",e.target.value)} style={mSt}/></label>
+        <div style={{marginTop:16,padding:"12px 14px",borderRadius:8,background:"var(--c-f7)",border:"1px solid var(--ap-line)"}}>
+          <div style={{fontSize:13,fontWeight:800,color:"var(--ap-ink)"}}>Registration fee</div>
+          <div className="m1col" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 12px"}}>
+            <label style={mLbl}>Received as<select value={g.mode} onChange={e=>setG("mode",e.target.value)} style={mSt}>{["Cash","UPI","Cheque","Card","Waived"].map(o=><option key={o} value={o}>{o==="Waived"?"Waived (no fee)":o}</option>)}</select></label>
+            {!waived&&<label style={mLbl}>Amount (₹)<input inputMode="decimal" value={g.amount} onChange={e=>setG("amount",e.target.value.replace(/[^0-9.]/g,""))} style={mSt}/></label>}
+          </div>
+          {!waived&&g.mode!=="Cash"&&<label style={mLbl}>{g.mode==="Cheque"?"Cheque number *":"UPI or transaction reference *"}<input value={g.ref||""} onChange={e=>setG("ref",e.target.value)} style={mSt}/></label>}
+          {waived&&<label style={mLbl}>Why is it waived? *<input value={g.waive||""} onChange={e=>setG("waive",e.target.value)} placeholder="RTE, staff ward, sibling…" style={mSt}/></label>}
+          <div style={{fontSize:11.5,color:"var(--ap-muted)",marginTop:8,lineHeight:1.5}}>{waived?"No money is recorded. The family still gets a registration number.":"Dated today and shown in today's Day Book under Registration fees. The receipt prints after saving."}</div>
+        </div>
+        {regMsg&&<div role="alert" style={{fontSize:12.5,color:"var(--tx-red)",marginTop:10}}>{regMsg}</div>}
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end",flexWrap:"wrap",position:"sticky",bottom:-20,margin:"16px -20px -20px",padding:"12px 20px 16px",background:"var(--c-fff)",borderTop:"1px solid var(--ap-line)",borderRadius:"0 0 10px 10px"}}><button onClick={close} disabled={regBusy} style={{border:"1px solid var(--ap-line)",background:"var(--c-fff)",color:"var(--ap-ink2)",borderRadius:6,padding:"9px 14px",fontSize:12.5,fontWeight:650,cursor:"pointer"}}>Cancel</button><Btn onClick={doRegister} disabled={regBusy}>{regBusy?"Saving…":waived?"Register (fee waived)":"Register & print receipt"}</Btn></div>
       </div></div>;})()}
     {followId&&(()=>{var r=regs.find(x=>x.id===followId);if(!r)return null;const mSt={width:"100%",marginTop:5,border:"1px solid var(--ap-line2)",borderRadius:7,padding:"9px 10px",fontSize:12.5,fontFamily:"var(--ss-font)",background:"var(--c-f7)",color:"var(--ap-ink)"};const mLbl={display:"block",fontSize:10.5,fontWeight:800,color:"var(--ap-muted)",textTransform:"uppercase",letterSpacing:.55,marginTop:11};return <div onClick={closeFollow} style={{position:"fixed",inset:0,zIndex:1200,background:"rgba(13,23,38,.55)",display:"grid",placeItems:"center",padding:16}}><div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:560,maxHeight:"92vh",overflowY:"auto",background:"var(--c-fff)",borderRadius:10,padding:20,boxShadow:"0 22px 65px rgba(0,0,0,.25)"}}><div style={{fontSize:17,fontWeight:800,color:"var(--ap-ink)"}}>Log admissions follow-up</div><div style={{fontSize:12.5,color:"var(--ap-muted)",marginTop:3}}>{r.name} · {r.classSought||"Class not selected"} · {r.contact}</div>{(r.followUps||[]).length>0&&<div style={{marginTop:13,maxHeight:130,overflowY:"auto",background:"var(--c-f7)",borderRadius:7,padding:"5px 11px"}}>{(r.followUps||[]).slice().reverse().slice(0,5).map((h,i)=><div key={i} style={{padding:"7px 0",borderTop:i?"1px solid var(--ap-line)":"none",fontSize:12,color:"var(--ap-ink2)"}}><div>{h.note}</div><div style={{fontSize:10.5,color:"var(--ap-faint)",marginTop:2}}>{fmtDate(String(h.at||"").slice(0,10))} · {h.by||"Office"}{h.outcome?" · "+h.outcome:""}{h.nextDate?" · next "+fmtDate(h.nextDate):""}</div></div>)}</div>}<label style={mLbl}>What happened</label><textarea value={followNote} onChange={e=>setFollowNote(e.target.value)} placeholder="What did the family say? What was promised?" autoFocus style={{...mSt,minHeight:76,resize:"vertical"}}/><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:9}}><label style={mLbl}>Outcome<select value={followOutcome} onChange={e=>setFollowOutcome(e.target.value)} style={mSt}>{["Spoke to parent","No answer","WhatsApp sent","Campus visit completed","Application received","Not interested"].map(x=><option key={x}>{x}</option>)}</select></label><label style={mLbl}>Pipeline stage<select value={followStage} onChange={e=>setFollowStage(e.target.value)} style={mSt}>{stageOpts.map(x=><option key={x} value={x}>{stageLabel(x)}</option>)}</select></label><label style={mLbl}>Owner<select value={followOwner} onChange={e=>setFollowOwner(e.target.value)} style={mSt}><option value="">Admissions desk</option>{ownerOpts.map(x=><option key={x}>{x}</option>)}</select></label><label style={mLbl}>Priority<select value={followPriority} onChange={e=>setFollowPriority(e.target.value)} style={mSt}><option value="normal">Normal</option><option value="urgent">Urgent</option><option value="low">Low</option></select></label></div><label style={mLbl}>Next follow-up {followStage==="ready to admit"?"(not needed)":"*"}</label><input type="date" min={_regToday} disabled={followStage==="ready to admit"} value={followStage==="ready to admit"?"":followNext} onChange={e=>setFollowNext(e.target.value)} style={{...mSt,opacity:followStage==="ready to admit"?.55:1}}/><div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:16}}><button onClick={closeFollow} style={{border:"1px solid var(--ap-line)",background:"var(--c-fff)",color:"var(--ap-ink2)",borderRadius:6,padding:"9px 14px",fontSize:12.5,fontWeight:650,cursor:"pointer"}}>Cancel</button><button onClick={saveFollow} disabled={followSaving} style={{border:"none",background:"var(--btn-pri-bg)",color:"#fff",borderRadius:6,padding:"9px 16px",fontSize:12.5,fontWeight:750,cursor:"pointer",opacity:followSaving?.6:1}}>{followSaving?"Saving…":"Save & own next action"}</button></div></div></div>;})()}
   </div>;
@@ -7847,22 +8010,20 @@ function ImportRegistrations({registrationsDB, user, session}){
         prevSchool:__col(r,["Previous School","Prev School"]),notes:__col(r,["Notes","Note"])});});
     setPreview({recs:recs,bad:bad});setMsg(recs.length+" enquiries ready"+(bad?" · "+bad+" skipped (need Name + Contact)":"")+".");setBusy(false);
   }
-  async function doImport(){if(!preview||!preview.recs.length)return;if(!window.confirm("Add "+preview.recs.length+" pre-admission enquiries as pending registrations for session "+impSess+"? Nothing existing is changed."))return;
+  async function doImport(){if(!preview||!preview.recs.length)return;if(!window.confirm("Add "+preview.recs.length+" enquiries for session "+impSess+"? Nothing existing is changed. Each becomes a registration only when its fee is recorded on the desk."))return;
     setBusy(true);var n=0;
-    // Sequence Reg No off the current count so a bulk add doesn't reuse a manually-entered number.
-    // Sequence Reg No off the MAX existing number (not the count) + a session-derived prefix, so deletions or
-    // manual entries can't make a bulk add reuse an existing Reg No.
-    var _regPfx=__regPrefix(impSess);
-    var existing=Object.values(registrationsDB.data||{}).reduce(function(m,r){if(!r||!r.name||__regSession(r)!==impSess)return m;var mm=String(r.regNo||"").match(/(\d+)\s*$/);var k=mm?parseInt(mm[1],10):0;return k>m?k:m;},0);
+    // Imported rows are ENQUIRIES, numbered on from the highest ENQ number in the session (never the count).
+    var _enqPfx=__enqPrefix(impSess);
+    var _first=parseInt(__regNextNo(Object.values(registrationsDB.data||{}).filter(function(r){return r&&r.name;}),impSess,"enquiry").slice(_enqPfx.length),10);
     try{for(var i=0;i<preview.recs.length;i+=25){var c=preview.recs.slice(i,i+25);
-      await Promise.all(c.map(function(rec,j){var regNo=_regPfx+String(existing+i+j+1).padStart(4,"0");var id="reg_"+Date.now()+"_"+(i+j)+"_"+Math.random().toString(36).slice(2,6);
-        return registrationsDB.set(id,Object.assign({},rec,{regNo:regNo,session:impSess,status:"pending",by:(user&&user.name)||"Imported",at:new Date().toISOString(),source:"import"})).then(function(){n++;});}));
+      await Promise.all(c.map(function(rec,j){var enqNo=_enqPfx+String(_first+i+j).padStart(4,"0");var id="reg_"+Date.now()+"_"+(i+j)+"_"+Math.random().toString(36).slice(2,6);
+        return registrationsDB.set(id,Object.assign({},rec,{kind:"enquiry",enqNo:enqNo,session:impSess,status:"pending",by:(user&&user.name)||"Imported",at:new Date().toISOString(),source:"import"})).then(function(){n++;});}));
       setMsg("Imported "+n+" / "+preview.recs.length+"…");}
-      setMsg("✓ Imported "+n+" enquiries for "+impSess+" — now pending in the Registration list.");}
+      setMsg("✓ Imported "+n+" enquiries for "+impSess+" — now in the admissions pipeline.");}
     catch(e){setMsg(""+((e&&e.message)||"write failed")+".");}
     setBusy(false);
   }
-  return <ImportShell title="Registration enquiries" hint={"Bulk-add pre-admission enquiries for session "+impSess+". Required columns: Name and Contact. Each becomes a pending registration numbered "+__regPrefix(impSess)+"\u2026"} template={template} pick={pick} doImport={doImport} preview={preview&&(preview.recs.length+" ready"+(preview.bad?", "+preview.bad+" skipped":""))} busy={busy} msg={msg} card={__impCard()} btn={__impBtn}/>;
+  return <ImportShell title="Registration enquiries" hint={"Bulk-add pre-admission enquiries for session "+impSess+". Required columns: Name and Contact. Each becomes an enquiry numbered "+__enqPrefix(impSess)+"\u2026; it is registered on the desk when the fee is paid."} template={template} pick={pick} doImport={doImport} preview={preview&&(preview.recs.length+" ready"+(preview.bad?", "+preview.bad+" skipped":""))} busy={busy} msg={msg} card={__impCard()} btn={__impBtn}/>;
 }
 
 // Session master-switch: promote everyone to the next class and start a fresh session (archiving this year).
@@ -14849,7 +15010,7 @@ function UnrosteredPayments({user,payments,studentsDB,feesDB}){
   );
 }
 
-function Fees({user,session,feesDB,studentsDB,academicRosterDB,dirDB,metaDB,intentsDB,feeCloseDB}){
+function Fees({user,session,feesDB,studentsDB,academicRosterDB,dirDB,metaDB,intentsDB,feeCloseDB,registrationsDB}){
   const isDirector=user.role==="admin"&&user.fees!==false; // only the director may edit/delete a payment; office can add only
   // one-shot deep-link from the Director cockpit: window.__feesJump={sub,gq} (sub read here; gq below nulls the flag)
   const _feesFocus=(function(){try{return window.__feesJump&&window.__feesJump.focus;}catch(_){return "";}})();
@@ -15463,6 +15624,11 @@ td.r,th.r{text-align:right}
         const dcCash=sumMode(p=>_dm(p)==="cash");
         const dcCardChq=sumMode(p=>{var m=_dm(p);return m==="card"||m==="cheque"||m==="pos"||m==="dd";});
         const dcOnline=Math.max(0,dcTotal-dcCash-dcCardChq);
+        // Registration fees taken today are in the same drawer, so the cash count includes them. Fee figures stay as they were.
+        const regToday=__regFeesOn(registrationsDB&&registrationsDB.data,td0,session);
+        const regCash=regToday.filter(__regIsCash).reduce((a,x)=>a+x.amount,0);
+        const regOther=regToday.reduce((a,x)=>a+x.amount,0)-regCash;
+        const drawerCash=dcCash+regCash;
         const topOwe=agg.perClass.flatMap(pc=>pc.rows).filter(r=>r.overdue>0).sort((a,b)=>b.overdue-a.overdue).slice(0,6);
         const MODES=[["Cash","rupee"],["UPI","smartphone"],["Card","card"],["Cheque","doc"],["Bank Transfer","bank"]];
         const tag=(txt,bg,fg)=><span style={{background:bg,color:fg,padding:"4px 10px",borderRadius:99,fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>{txt}</span>;
@@ -15619,20 +15785,20 @@ td.r,th.r{text-align:right}
               </InsPanel>}
               <InsPanel title="Cashier day-close" sub={fmtDate(td0)+" · "+(user.name||"")} pad={0}>
                 <div style={{padding:"6px 16px 14px"}}>
-                  {[["Cash collected",dcCash,false],["UPI / online",dcOnline,false],["Cheque / card",dcCardChq,false],["Receipts issued",todays.length,true]].map((row,i)=><div key={row[0]} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",fontSize:12.5,borderTop:i?"1px solid var(--c-f0)":"none"}}><span style={{color:"var(--c-64)"}}>{row[0]}</span><span style={{fontWeight:700,color:"var(--ap-ink)",fontFamily:"var(--ss-font)"}}>{row[2]?row[1]:inr(row[1])}</span></div>)}
-                  <div style={{display:"flex",justifyContent:"space-between",padding:"9px 0 2px",marginTop:4,borderTop:"2px solid var(--ap-line)",fontSize:13}}><span style={{fontWeight:700,color:"var(--ap-ink)"}}>Total today</span><span style={{fontWeight:800,color:"var(--tx-grn2)",fontFamily:"var(--ss-font)"}}>{inr(dcTotal)}</span></div>
-                  {(()=>{const closed=closeFor(td0);const diff=Number(countedCash||0)-dcCash;
+                  {[["Cash collected",dcCash,false],["UPI / online",dcOnline,false],["Cheque / card",dcCardChq,false]].concat(regToday.length?[["Registration fees · cash",regCash,false],["Registration fees · UPI / other",regOther,false]]:[]).concat([["Receipts issued",todays.length,true]]).map((row,i)=><div key={row[0]} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",fontSize:12.5,borderTop:i?"1px solid var(--c-f0)":"none"}}><span style={{color:"var(--c-64)"}}>{row[0]}</span><span style={{fontWeight:700,color:"var(--ap-ink)",fontFamily:"var(--ss-font)"}}>{row[2]?row[1]:inr(row[1])}</span></div>)}
+                  <div style={{display:"flex",justifyContent:"space-between",padding:"9px 0 2px",marginTop:4,borderTop:"2px solid var(--ap-line)",fontSize:13}}><span style={{fontWeight:700,color:"var(--ap-ink)"}}>Total today</span><span style={{fontWeight:800,color:"var(--tx-grn2)",fontFamily:"var(--ss-font)"}}>{inr(dcTotal+regCash+regOther)}</span></div>
+                  {(()=>{const closed=closeFor(td0);const diff=Number(countedCash||0)-drawerCash;
                     if(closed&&closed.status==="closed")return <div style={{marginTop:12,padding:12,borderRadius:8,background:Math.abs(Number(closed.discrepancy||0))<.5?"var(--bg-grn)":"var(--bg-amb)",border:"1px solid "+(Math.abs(Number(closed.discrepancy||0))<.5?"var(--bd-grn)":"var(--bd-amb)")}}>
                       <div style={{fontSize:12.5,fontWeight:800,color:Math.abs(Number(closed.discrepancy||0))<.5?"var(--tx-grn2)":"var(--tx-org2)"}}>✓ Day closed by {closed.closedBy||"office"}</div>
-                      <div style={{fontSize:11.5,color:"var(--c-64)",marginTop:4,lineHeight:1.5}}>Counted cash {inr(closed.countedCash)} · system cash {inr(closed.systemCash)}{Number(closed.discrepancy||0)?" · difference "+inr(closed.discrepancy):" · matched exactly"}{closed.note?" · "+closed.note:""}</div>
+                      <div style={{fontSize:11.5,color:"var(--c-64)",marginTop:4,lineHeight:1.5}}>Counted cash {inr(closed.countedCash)} · system cash {inr(Number(closed.systemCash||0)+Number(closed.regCash||0))}{Number(closed.discrepancy||0)?" · difference "+inr(closed.discrepancy):" · matched exactly"}{closed.note?" · "+closed.note:""}</div>
                       {isDirector&&<button onClick={async()=>{const reason=window.prompt("Why are you reopening "+fmtDate(td0)+"?\nThe reason is kept in the close history.","");if(reason===null||!String(reason).trim())return;setCloseBusy(true);try{await feeCloseDB.set(closeId(td0),Object.assign({},closed,{status:"reopened",reopenedBy:user.name,reopenedAt:new Date().toISOString(),reopenReason:String(reason).trim()}));setCountedCash("");setCloseNote("");logAudit("reopen","feeDayCloses",closeId(td0),closed,{reason:String(reason).trim()});window.__toast&&window.__toast("Day reopened — receipts and corrections are enabled again.","ok");}catch(e){window.__toast&&window.__toast("Could not reopen — "+((e&&e.message)||"try again"),"err");}setCloseBusy(false);}} disabled={closeBusy} style={{marginTop:9,border:"none",background:"transparent",padding:0,color:"var(--ap-accent)",fontSize:11.5,fontWeight:800,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Director: reopen with reason →</button>}
                     </div>;
                     return <div style={{marginTop:12,padding:12,borderRadius:8,background:"var(--c-f7)",border:"1px solid var(--ap-line)"}}>
                       <div style={{fontSize:11.5,fontWeight:800,color:"var(--ap-ink)",marginBottom:7}}>Finish the cash drawer</div>
-                      <label style={{fontSize:11.5,color:"var(--c-64)"}}>Physical cash counted<input inputMode="decimal" value={countedCash} onChange={e=>setCountedCash(e.target.value.replace(/[^0-9.]/g,""))} placeholder={String(dcCash)} className="ss-input" style={{width:"100%",marginTop:4,padding:"8px 10px"}}/></label>
+                      <label style={{fontSize:11.5,color:"var(--c-64)"}}>Physical cash counted<input inputMode="decimal" value={countedCash} onChange={e=>setCountedCash(e.target.value.replace(/[^0-9.]/g,""))} placeholder={String(drawerCash)} className="ss-input" style={{width:"100%",marginTop:4,padding:"8px 10px"}}/></label>
                       {countedCash!==""&&<div style={{fontSize:11.5,fontWeight:700,color:Math.abs(diff)<.5?"var(--tx-grn2)":"var(--tx-red)",marginTop:5}}>{Math.abs(diff)<.5?"Cash matches the system.":(diff>0?inr(diff)+" extra in drawer":inr(Math.abs(diff))+" short in drawer")}</div>}
                       {countedCash!==""&&Math.abs(diff)>=.5&&<textarea value={closeNote} onChange={e=>setCloseNote(e.target.value)} placeholder="Required: explain the difference and the next action" className="ss-input" style={{width:"100%",minHeight:58,marginTop:7,padding:"8px 10px",resize:"vertical"}}/>}
-                      <button onClick={async()=>{if(countedCash===""){window.__toast&&window.__toast("Count the physical cash before closing.","err");return;}if(Math.abs(diff)>=.5&&!String(closeNote).trim()){window.__toast&&window.__toast("Explain the cash difference before closing.","err");return;}if(!await window.__confirm({title:"Close today's cash book?",body:todays.length+" receipt"+(todays.length===1?"":"s")+" · "+inr(dcTotal)+" total · "+inr(countedCash)+" physical cash. New receipts and corrections for today will be blocked until the Director reopens it.",confirmText:"Close day"}))return;setCloseBusy(true);const now=new Date().toISOString();const rec={date:td0,session:String(window.__SESSION||"2026-27"),status:"closed",receiptCount:todays.length,systemCash:dcCash,systemOnline:dcOnline,systemCardCheque:dcCardChq,systemTotal:dcTotal,countedCash:Number(countedCash),discrepancy:diff,note:String(closeNote).trim(),closedBy:user.name,closedAt:now};try{await feeCloseDB.set(closeId(td0),rec);logAudit("close","feeDayCloses",closeId(td0),null,rec);window.__toast&&window.__toast(Math.abs(diff)<.5?"Day closed — cash matched.":"Day closed with a recorded difference of "+inr(diff)+".",Math.abs(diff)<.5?"ok":"err");}catch(e){window.__toast&&window.__toast("Could not close the day — "+((e&&e.message)||"try again"),"err");}setCloseBusy(false);}} disabled={closeBusy||countedCash===""} style={{width:"100%",marginTop:9,border:"none",borderRadius:6,padding:"9px 11px",background:"var(--btn-pri-bg)",color:"#fff",fontSize:12,fontWeight:800,cursor:"pointer",opacity:closeBusy||countedCash===""?.55:1,fontFamily:"var(--ss-font)"}}>{closeBusy?"Closing…":"Close day & lock receipts"}</button>
+                      <button onClick={async()=>{if(countedCash===""){window.__toast&&window.__toast("Count the physical cash before closing.","err");return;}if(Math.abs(diff)>=.5&&!String(closeNote).trim()){window.__toast&&window.__toast("Explain the cash difference before closing.","err");return;}if(!await window.__confirm({title:"Close today's cash book?",body:todays.length+" receipt"+(todays.length===1?"":"s")+" · "+inr(dcTotal)+" total"+(regToday.length?" · "+regToday.length+" registration fee"+(regToday.length===1?"":"s")+" "+inr(regCash+regOther):"")+" · "+inr(countedCash)+" physical cash. New receipts and corrections for today will be blocked until the Director reopens it.",confirmText:"Close day"}))return;setCloseBusy(true);const now=new Date().toISOString();const rec={date:td0,session:String(window.__SESSION||"2026-27"),status:"closed",receiptCount:todays.length,systemCash:dcCash,systemOnline:dcOnline,systemCardCheque:dcCardChq,systemTotal:dcTotal,countedCash:Number(countedCash),discrepancy:diff,note:String(closeNote).trim(),closedBy:user.name,closedAt:now};if(regToday.length){rec.regCount=regToday.length;rec.regCash=regCash;rec.regOther=regOther;}try{await feeCloseDB.set(closeId(td0),rec);logAudit("close","feeDayCloses",closeId(td0),null,rec);window.__toast&&window.__toast(Math.abs(diff)<.5?"Day closed — cash matched.":"Day closed with a recorded difference of "+inr(diff)+".",Math.abs(diff)<.5?"ok":"err");}catch(e){window.__toast&&window.__toast("Could not close the day — "+((e&&e.message)||"try again"),"err");}setCloseBusy(false);}} disabled={closeBusy||countedCash===""} style={{width:"100%",marginTop:9,border:"none",borderRadius:6,padding:"9px 11px",background:"var(--btn-pri-bg)",color:"#fff",fontSize:12,fontWeight:800,cursor:"pointer",opacity:closeBusy||countedCash===""?.55:1,fontFamily:"var(--ss-font)"}}>{closeBusy?"Closing…":"Close day & lock receipts"}</button>
                     </div>;})()}
                   {todays.length>0&&<div style={{marginTop:10,borderTop:"1px solid var(--c-f0)",paddingTop:9}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:7}}>
@@ -15663,6 +15829,11 @@ td.r,th.r{text-align:right}
         const discs=payments.filter(p=>p.disc&&String(p.date||"")===ledDate);
         const tot=rows.reduce((a,p)=>a+Number(p.amount||0),0);
         const dTot=discs.reduce((a,p)=>a+Number(p.amount||0),0);
+        // Registration fees received this day: desk receipts, and website payments once the office approves them.
+        // Kept apart from the fee receipts, so no fee figure changes; "Total received" is everything that came in.
+        const regRows=__regFeesOn(registrationsDB&&registrationsDB.data,ledDate,session);
+        const regTot=regRows.reduce((a,x)=>a+x.amount,0);
+        const regElsewhere=__sessOfDate(ledDate)!==session?__regFeesOn(registrationsDB&&registrationsDB.data,ledDate,""):[];
         const modes={};rows.forEach(p=>{const m=String(p.mode||"Cash").trim().toLowerCase();const lbl=(m==="transfer"||m==="upi")?"UPI/Bank":m==="cash"?"Cash":m==="cheque"?"Cheque":m==="card"?"Card":m.replace(/\b\w/g,c=>c.toUpperCase());modes[lbl]=(modes[lbl]||0)+Number(p.amount||0);});
         const shift=(n)=>{const x=new Date(ledDate+"T12:00");x.setDate(x.getDate()+n);setLedDate(x.toLocaleDateString("en-CA"));};
         const dLbl=new Date(ledDate+"T00:00").toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
@@ -15670,12 +15841,15 @@ td.r,th.r{text-align:right}
         const csvOut=()=>{const head=["#","Student","Class","Section","Adm No","Mode","Receipt No","Note","Amount"];
           const lines=[head].concat(rows.map((p,i)=>[i+1,p.student||"",p.cls||"",p.section||"",p.admNo||"",p.mode||"",p.receiptNo||"",p.note||"",Number(p.amount||0)]));
           lines.push(["","","","","","","","TOTAL",tot]);
+          if(regRows.length){lines.push([]);lines.push(["#","Registration fee: student","Class sought","Session","Reg No","Mode","Reference","Received by","Amount"]);
+            regRows.forEach((x,i)=>lines.push([i+1,x.name,x.cls,x.session,x.regNo,x.mode,x.ref,x.by,x.amount]));
+            lines.push(["","","","","","","","TOTAL REGISTRATION FEES",regTot]);lines.push(["","","","","","","","TOTAL RECEIVED",tot+regTot]);}
           const csv=lines.map(r=>r.map(c=>{c=String(c);return /[",\n]/.test(c)?'"'+c.replace(/"/g,'""')+'"':c;}).join(",")).join("\n");
           const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="day_book_"+ledDate+".csv";a.click();URL.revokeObjectURL(a.href);};
         const printDay=()=>{const w=window.open("","_blank");if(!w)return;
           const tr=rows.map((p,i)=>"<tr><td>"+(i+1)+"</td><td class='l'>"+String(p.student||"").replace(/</g,"&lt;")+"</td><td>"+String(p.cls||"").replace("Class ","")+(p.section?"-"+p.section:"")+"</td><td>"+(p.admNo||"")+"</td><td>"+(p.mode||"")+"</td><td>"+(p.receiptNo||"")+"</td><td class='l'>"+String(p.note||"").replace(/</g,"&lt;")+"</td><td class='r'>"+Number(p.amount||0).toLocaleString("en-IN")+"</td></tr>").join("");
           const ms=Object.entries(modes).map(([m,v])=>m+" ₹"+v.toLocaleString("en-IN")).join(" · ");
-          w.document.write("<html><head><title>Day Book "+ledDate+"</title><meta charset='utf-8'><style>*{box-sizing:border-box}body{font-family:'Times New Roman',Georgia,serif;color:#1a1a1a;padding:22px 26px}h1{font-size:20px;text-align:center;color:#0d1b2a;margin:0}.sub{text-align:center;font-size:11.5px;color:#555;margin:3px 0 4px}.rt{text-align:center;font-size:13.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#0d1b2a;margin:10px 0 4px}table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}th,td{border:1px solid #cfcfcf;padding:5px 7px;text-align:center}th{background:#eef1f8;color:#0d1b2a}td.l,th.l{text-align:left}td.r,th.r{text-align:right}tfoot td{font-weight:700;background:#f4f6fb}.meta{font-size:11.5px;color:#333;margin-top:6px;text-align:center}.sign{margin-top:38px;display:flex;justify-content:space-between;font-size:12px;color:#333;text-align:center}.sign span{border-top:1px solid #333;padding:5px 28px 0}@media print{body{padding:10px}}</style></head><body><h1>"+SCHOOL_NAME+"</h1><div class='sub'>Session "+(window.__SESSION||"2026-27")+"</div><div class='rt'>Daily Collection Register — "+dLbl+"</div><div class='meta'>"+rows.length+" receipt"+(rows.length===1?"":"s")+" · Total <b>₹"+tot.toLocaleString("en-IN")+"</b>"+(ms?" · "+ms:"")+(dTot?" · Concessions granted ₹"+dTot.toLocaleString("en-IN"):"")+"</div><table><thead><tr><th>#</th><th class='l'>Student</th><th>Class</th><th>Adm No</th><th>Mode</th><th>Receipt No</th><th class='l'>Note</th><th class='r'>Amount ₹</th></tr></thead><tbody>"+tr+"</tbody><tfoot><tr><td colspan='7' class='l'>TOTAL COLLECTED</td><td class='r'>"+tot.toLocaleString("en-IN")+"</td></tr></tfoot></table><div class='sign'><span>Cashier</span><span>Office In-charge</span><span>Director</span></div></body></html>");
+          w.document.write("<html><head><title>Day Book "+ledDate+"</title><meta charset='utf-8'><style>*{box-sizing:border-box}body{font-family:'Times New Roman',Georgia,serif;color:#1a1a1a;padding:22px 26px}h1{font-size:20px;text-align:center;color:#0d1b2a;margin:0}.sub{text-align:center;font-size:11.5px;color:#555;margin:3px 0 4px}.rt{text-align:center;font-size:13.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#0d1b2a;margin:10px 0 4px}table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}th,td{border:1px solid #cfcfcf;padding:5px 7px;text-align:center}th{background:#eef1f8;color:#0d1b2a}td.l,th.l{text-align:left}td.r,th.r{text-align:right}tfoot td{font-weight:700;background:#f4f6fb}.meta{font-size:11.5px;color:#333;margin-top:6px;text-align:center}.sign{margin-top:38px;display:flex;justify-content:space-between;font-size:12px;color:#333;text-align:center}.sign span{border-top:1px solid #333;padding:5px 28px 0}@media print{body{padding:10px}}</style></head><body><h1>"+SCHOOL_NAME+"</h1><div class='sub'>Session "+(window.__SESSION||"2026-27")+"</div><div class='rt'>Daily Collection Register — "+dLbl+"</div><div class='meta'>"+rows.length+" receipt"+(rows.length===1?"":"s")+" · Total <b>₹"+tot.toLocaleString("en-IN")+"</b>"+(ms?" · "+ms:"")+(dTot?" · Concessions granted ₹"+dTot.toLocaleString("en-IN"):"")+"</div><table><thead><tr><th>#</th><th class='l'>Student</th><th>Class</th><th>Adm No</th><th>Mode</th><th>Receipt No</th><th class='l'>Note</th><th class='r'>Amount ₹</th></tr></thead><tbody>"+tr+"</tbody><tfoot><tr><td colspan='7' class='l'>TOTAL COLLECTED</td><td class='r'>"+tot.toLocaleString("en-IN")+"</td></tr></tfoot></table>"+(regRows.length?("<div class='rt'>Registration fees</div><table><thead><tr><th>#</th><th class='l'>Student</th><th>Class sought</th><th>Reg No</th><th>Mode</th><th class='l'>Reference</th><th class='r'>Amount ₹</th></tr></thead><tbody>"+regRows.map((x,i)=>"<tr><td>"+(i+1)+"</td><td class='l'>"+esc(x.name)+"</td><td>"+esc(String(x.cls).replace("Class ",""))+" · "+esc(x.session)+"</td><td>"+esc(x.regNo)+"</td><td>"+esc(x.mode)+"</td><td class='l'>"+esc(x.ref)+"</td><td class='r'>"+x.amount.toLocaleString("en-IN")+"</td></tr>").join("")+"</tbody><tfoot><tr><td colspan='6' class='l'>TOTAL REGISTRATION FEES</td><td class='r'>"+regTot.toLocaleString("en-IN")+"</td></tr><tr><td colspan='6' class='l'>TOTAL RECEIVED (FEES + REGISTRATION)</td><td class='r'>"+(tot+regTot).toLocaleString("en-IN")+"</td></tr></tfoot></table>"):"")+"<div class='sign'><span>Cashier</span><span>Office In-charge</span><span>Director</span></div></body></html>");
           w.document.close();setTimeout(()=>w.print(),350);};
         return(<div style={{display:"flex",flexDirection:"column",gap:14}}>
           <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
@@ -15687,8 +15861,8 @@ td.r,th.r{text-align:right}
             {!isT&&<button onClick={()=>setLedDate(today())} className="ap-pill" style={{border:"1px solid var(--ap-line)"}}>Today</button>}
             <span style={{fontSize:12.5,color:"var(--ap-muted)"}}>{dLbl}</span>
             <span style={{marginLeft:"auto",display:"flex",gap:8}}>
-              {rows.length>0&&<Btn v="ghost" style={{padding:"8px 14px",fontSize:12.5}} onClick={csvOut}>⬇ CSV</Btn>}
-              {rows.length>0&&<Btn style={{padding:"8px 14px",fontSize:12.5}} onClick={printDay}><Icon name="print" size={15}/> Print register</Btn>}
+              {(rows.length>0||regRows.length>0)&&<Btn v="ghost" style={{padding:"8px 14px",fontSize:12.5}} onClick={csvOut}>⬇ CSV</Btn>}
+              {(rows.length>0||regRows.length>0)&&<Btn style={{padding:"8px 14px",fontSize:12.5}} onClick={printDay}><Icon name="print" size={15}/> Print register</Btn>}
             </span>
           </div>
           <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
@@ -15701,8 +15875,18 @@ td.r,th.r{text-align:right}
               <div style={{fontSize:11,fontWeight:700,letterSpacing:.5,textTransform:"uppercase",color:"var(--ap-muted)"}}>{m}</div>
               <div style={{fontSize:20,fontWeight:800,color:"var(--ap-ink)",fontFamily:"var(--ss-font)"}}>{inr(v)}</div>
             </div>))}
+            {regRows.length>0&&<div style={{background:"var(--c-fff)",border:"1px solid var(--ap-line)",borderRadius:8,padding:"13px 18px",minWidth:150}}>
+              <div style={{fontSize:11,fontWeight:700,letterSpacing:.5,textTransform:"uppercase",color:"var(--ap-muted)"}}>Registration fees</div>
+              <div style={{fontSize:20,fontWeight:800,color:"var(--ap-ink)",fontFamily:"var(--ss-font)"}}>{inr(regTot)}</div>
+              <div style={{fontSize:11.5,color:"var(--ap-faint)",marginTop:2}}>{regRows.length} famil{regRows.length===1?"y":"ies"}</div>
+            </div>}
+            {regRows.length>0&&<div style={{background:"var(--c-fff)",border:"1px solid var(--ap-line)",borderRadius:8,padding:"13px 18px",minWidth:150}}>
+              <div style={{fontSize:11,fontWeight:700,letterSpacing:.5,textTransform:"uppercase",color:"var(--ap-muted)"}}>Total received</div>
+              <div style={{fontSize:20,fontWeight:800,color:"var(--tx-grn)",fontFamily:"var(--ss-font)"}}>{inr(tot+regTot)}</div>
+              <div style={{fontSize:11.5,color:"var(--ap-faint)",marginTop:2}}>fees + registration</div>
+            </div>}
           </div>
-          <InsPanel title={"Receipts — "+dLbl} sub={rows.length?(rows.length+" receipt"+(rows.length===1?"":"s")+" · newest last"):"nothing received this day"} pad={0}>
+          <InsPanel title={"Receipts — "+dLbl} sub={rows.length?(rows.length+" receipt"+(rows.length===1?"":"s")+" · newest last"):(regRows.length?"no fee receipts this day":"nothing received this day")} pad={0}>
             {rows.length===0?<div style={{padding:"30px 20px",textAlign:"center",fontSize:13,color:"var(--ap-muted)"}}>No receipts on {ledDate}. Use ‹ › or the date box to move between days.</div>:
             <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:640}}>
               <thead><tr><th style={{...th,paddingLeft:16}}>#</th><th style={th}>Student</th><th style={th}>Class</th><th style={th}>Adm No</th><th style={th}>Mode</th><th style={th}>Receipt No</th><th style={th}>Note</th><th style={{...th,textAlign:"right",paddingRight:16}}>Amount</th>{isDirector&&<th style={th}></th>}</tr></thead>
@@ -15727,6 +15911,22 @@ td.r,th.r{text-align:right}
               {discs.map((p,i)=>(<div key={p.id||i} style={{fontSize:12.5,color:"var(--ap-ink2)"}}>{p.student||"—"} <span style={{color:"var(--ap-faint)"}}>· {String(p.cls||"").replace("Class ","")}{p.section?"-"+p.section:""}{p.note?" · "+p.note:""}</span> <b style={{color:"var(--tx-org2)"}}>{inr(Number(p.amount||0))}</b></div>))}
             </div>
           </InsPanel>}
+          {regRows.length>0&&<InsPanel title={"Registration fees — "+inr(regTot)} sub={regRows.length+" registration"+(regRows.length===1?"":"s")+" · not part of the fee collection above"} pad={0}>
+            <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:600}}>
+              <thead><tr><th style={{...th,paddingLeft:16}}>#</th><th style={th}>Student</th><th style={th}>Class sought</th><th style={th}>Reg No</th><th style={th}>Mode</th><th style={th}>Reference</th><th style={{...th,textAlign:"right",paddingRight:16}}>Amount</th></tr></thead>
+              <tbody>{regRows.map((x,i)=>(<tr key={x.id}>
+                <td style={{...td,paddingLeft:16,color:"var(--c-94)"}}>{i+1}</td>
+                <td style={{...td,fontWeight:700,color:"var(--ap-ink)"}}>{x.name||"—"}</td>
+                <td style={{...td,color:"var(--c-64)"}}>{String(x.cls).replace("Class ","")} · {x.session}</td>
+                <td style={{...td,fontFamily:"var(--ss-font)",color:"var(--c-64)"}}>{x.regNo||"—"}</td>
+                <td style={td}><span style={{background:"var(--c-f0)",borderRadius:6,padding:"2px 9px",fontSize:11.5,fontWeight:700,color:"var(--ap-ink2)"}}>{x.mode}</span></td>
+                <td style={{...td,color:"var(--ap-muted)"}}>{x.ref||""}</td>
+                <td style={{...td,textAlign:"right",paddingRight:16,fontWeight:800,color:"var(--ap-ink)",fontFamily:"var(--ss-font)"}}>{inr(x.amount)}</td>
+              </tr>))}</tbody>
+              <tfoot><tr><td colSpan={6} style={{...td,fontWeight:800,color:"var(--ap-ink)",paddingLeft:16}}>Total registration fees</td><td style={{...td,textAlign:"right",paddingRight:16,fontWeight:800,fontSize:15,color:"var(--tx-grn)",fontFamily:"var(--ss-font)"}}>{inr(regTot)}</td></tr></tfoot>
+            </table></div>
+          </InsPanel>}
+          {regElsewhere.length>0&&<div style={{fontSize:12,color:"var(--ap-muted)"}}>{regElsewhere.length} registration fee{regElsewhere.length===1?" was":"s were"} received on this day. {regElsewhere.length===1?"It is":"They are"} in the {__sessOfDate(ledDate)} Day Book, the year running on that day.</div>}
         </div>);})()}
       {sub==="defaulters"&&(()=>{
         const FILT=[["overdue","Overdue now"],["unpaid","Not paid"],["partpaid","Part-paid"],["balance","Has balance"],["all","All"]];
@@ -25294,14 +25494,14 @@ function App(){
         {tab==="testschedule"&&!isParent&&<TestSchedulePanel user={user} ttSetDB={ttSetDB} usersDB={usersDB} setTab={setTab}/>}
         {tab==="focusgroup"&&(isAdmin||isVP)&&<FocusGroupPanel usersDB={usersDB} wrongDB={wrongDB} dirDB={dirDB}/>}
         {tab==="insights"&&(isAdmin||isVP||user.coordinator===true)&&<Insights testsDB={testsDB} studentsDB={studentsDB} attendanceDB={attendanceDB} wrongDB={wrongDB} usersDB={usersDB} dirDB={dirDB} academicRosterDB={academicRosterDB}/>} 
-        {tab==="fees"&&canFees&&<Fees user={user} session={vSess} feesDB={feesDB} studentsDB={studentsDB} academicRosterDB={academicRosterDB} dirDB={dirDB} metaDB={metaDB} intentsDB={paymentIntentsDB} feeCloseDB={feeCloseDB}/>} 
+        {tab==="fees"&&canFees&&<Fees user={user} session={vSess} feesDB={feesDB} studentsDB={studentsDB} academicRosterDB={academicRosterDB} dirDB={dirDB} metaDB={metaDB} intentsDB={paymentIntentsDB} feeCloseDB={feeCloseDB} registrationsDB={registrationsDB}/>} 
         {/* sharedAttDB={null} on the next two: the App subscription is windowed to the last two months for the
             dashboards, and both of these look further back — salary is run for past months, and the register
             browses any date. They subscribe to the whole collection themselves, when opened. */}
         {tab==="salary"&&canFees&&<SalaryPanel user={user} sharedAttDB={null} sharedUsersDB={usersDB} sharedCalDB={calendarDB} sharedLeaveDB={leaveDB}/>} 
         {tab==="admission"&&(isDirector||isOffice)&&<AdmissionForm user={user} studentsDB={studentsDB} dirDB={dirDB} academicRosterDB={academicRosterDB} registrationsDB={registrationsDB} openModule={setTab}/>}
         {tab==="directory"&&(isAdmin||isOffice||user.role==="vp")&&<StudentDirectory user={user} dirDB={dirDB} testsDB={testsDB} examsDB={examsDB} studentsDB={studentsDB} attendanceDB={attendanceDB} wrongDB={wrongDB} feesDB={feesDB} canFees={canFees} academicRosterDB={academicRosterDB} studentLinksDB={studentLinksDB} jumpAdm={jumpAdm} onJumpDone={()=>setJumpAdm("")}/>}
-        {tab==="registration"&&(isDirector||isOffice||isVP)&&<Registration user={user} registrationsDB={registrationsDB} usersDB={usersDB} setTab={setTab} session={vSess}/>} 
+        {tab==="registration"&&(isDirector||isOffice||isVP)&&<Registration user={user} registrationsDB={registrationsDB} usersDB={usersDB} setTab={setTab} session={vSess} feeCloseDB={feeCloseDB}/>} 
         {tab==="admitcard"&&(isAdmin||isVP||isOffice)&&<AdmitCard user={user} dirDB={dirDB} setTab={setTab}/>}
         {tab==="exams"&&(isAdmin||isTeacher||isOffice||user.role==="vp")&&<Exams user={user} studentsDB={studentsDB} examsDB={examsDB} attendanceDB={attendanceDB} dirDB={dirDB} academicRosterDB={academicRosterDB} examClasses={(isOffice||isAdmin||user.role==="vp")?__academicClasses():getTeacherClasses(user)} reportsOnly={isOffice}/>} 
         {tab==="ai"&&isDirector&&<AIPanel testsDB={testsDB} studentsDB={studentsDB} topicsDB={topicsDB} dirDB={dirDB} feesDB={feesDB} attendanceDB={attendanceDB} usersDB={usersDB} academicRosterDB={academicRosterDB} examsDB={examsDB} canFees={canFees}/>}

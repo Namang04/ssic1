@@ -46,14 +46,14 @@ ok('...and so is the year in progress',        __regSessions([]).includes('2026-
 ok('no duplicates',                            new Set(list).size === list.length);
 
 // ── what the desk actually ships: read it out of the source, so a refactor cannot drop it ──
-ok('a new enquiry stores its session',         /Object\.assign\(\{\},f,\{regNo,session:regSess,/.test(src));
-ok('the Reg No year comes from that session',  /const _regPfx=__regPrefix\(regSess\);/.test(src));
-ok('numbering runs within the session',        /const _maxReg=sessRegs\.reduce/.test(src));
+ok('a new enquiry stores its session',         /Object\.assign\(\{\},f,\{kind:"enquiry",enqNo,session:regSess,/.test(src));
+ok('the number\'s year comes from that session', /const enqNo=__regNextNo\(sessRegs,regSess,"enquiry"\);/.test(src));
+ok('numbering runs within the session',        /if\(!r\|\|__regSession\(r\)!==sess\)return;/.test(src));
 ok('the list is scoped to the session',        /const sessRegs=useMemo\(\(\)=>regs\.filter\(r=>__regSession\(r\)===regSess\)/.test(src));
 ok('the counts are scoped too',                /const counts=\{pending:sessRegs\./.test(src));
 ok('a duplicate is judged within the session', /const dup=sessRegs\.find/.test(src));
-ok('the bulk import stamps the session',       /\{regNo:regNo,session:impSess,/.test(src));
-ok('...and numbers within it',                 /__regSession\(r\)!==impSess\)return m;/.test(src));
+ok('the bulk import stamps the session',       /\{kind:"enquiry",enqNo:enqNo,session:impSess,/.test(src));
+ok('...and numbers within it',                 /__regNextNo\(Object\.values\(registrationsDB\.data\|\|\{\}\)\.filter\(function\(r\)\{return r&&r\.name;\}\),impSess,"enquiry"\)/.test(src));
 ok('other sessions are surfaced, not hidden',  /const otherSess=useMemo/.test(src) && /Not shown here:/.test(src));
 
 console.log(`\n  ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
