@@ -108,5 +108,6 @@ ok('the desk is handed the day closes',                has(/<Registration [^>]*f
 ok('the Excel import adds enquiries',                  has(/\{kind:"enquiry",enqNo:enqNo,session:impSess,/));
 ok('the receipt prints a parent and a school copy',    has(/h\+=one\("Parent copy"\)\+`<div class="cut"><span>✂ cut here<\/span><\/div>`\+one\("School copy"\)/));
 ok('...both halves on one A4 sheet',                    has(/@page\{size:A4 portrait;margin:8mm 10mm\}/) && has(/\.copy\{position:relative;height:134mm;/));
+ok('...without the name of whoever took the money',  has(/<div class="sign"><span>Signature &amp; seal<\/span><\/div>/) && !/Received by: \$\{e\(x\.by\)\}/.test(src));
 
 console.log(`\n  ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
