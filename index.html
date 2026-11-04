@@ -5824,23 +5824,29 @@ function Registration({user, registrationsDB, usersDB, setTab, session, feeClose
   const dayClosed=d=>{var c=feeCloseDB&&feeCloseDB.data&&feeCloseDB.data[safeId(__sessOfDate(d)+"_"+d)];return !!(c&&c.status==="closed");};
   const openRegister=r=>{if(!canEdit||!r)return;setRegMsg("");setRegTarget(r);
     setRegForm({amount:String(__REG_FEE),mode:"Cash",ref:"",waive:"",dob:r.dob||"",gender:r.gender||"",father:r.father||"",mother:r.mother||"",address:r.address||"",prevSchool:r.prevSchool||""});};
+  // One A4 sheet, two identical halves: the top one goes home with the parent, the bottom one stays in the office file.
   const printRegReceipt=r=>{const x=__regFeeOf(r);if(!x)return;const w=window.open("","_blank");if(!w)return;const e=v=>esc(String(v==null?"":v));
     let h=`<html><head><title>Registration receipt ${e(r.regNo)}</title><meta charset="utf-8"><style>
-*{box-sizing:border-box}body{font-family:'Times New Roman',Georgia,serif;padding:26px 30px;color:#1a1a1a;max-width:680px;margin:0 auto;line-height:1.5}
-.hdr{text-align:center;border-bottom:2.5px solid #0d1b2a;padding-bottom:10px}.hdr h1{font-size:21px;font-weight:800;margin:0;color:#0d1b2a}.hdr .sub{font-size:11.5px;color:#555;margin-top:3px}
-.title{text-align:center;font-size:13px;font-weight:700;letter-spacing:2px;color:#0d1b2a;margin:12px 0;text-transform:uppercase}
-.row{display:flex;justify-content:space-between;gap:12px;font-size:13px;margin:5px 0}.row b{color:#0d1b2a;text-align:right}
-.box{border:1px solid #cfcfcf;border-radius:6px;padding:12px 14px;margin:12px 0}
-table{width:100%;border-collapse:collapse;font-size:13px;margin:10px 0}th,td{border:1px solid #cfcfcf;padding:6px 10px;text-align:left}th{background:#eef1f8;color:#0d1b2a}td.r,th.r{text-align:right}
-.amt{font-size:20px;font-weight:800;color:#0d1b2a}.words{font-size:12px;font-style:italic;color:#444;margin-top:4px}.note{font-size:11.5px;color:#444;margin-top:12px}
-.sign{margin-top:42px;display:flex;justify-content:space-between;font-size:12px;color:#333}.foot{margin-top:18px;font-size:10.5px;color:#999;text-align:center;border-top:1px solid #e0e0e0;padding-top:8px}
-@media print{body{padding:12px}}</style></head><body>`;
-    h+=`<div class="hdr">${window.__LOGO?`<img src="${window.__LOGO}" alt="" style="height:58px;width:58px;object-fit:contain;display:block;margin:0 auto 6px">`:""}<h1>STEPPING STONE INTER COLLEGE</h1><div class="sub">${e(BRANCH_LABEL)}, ${e(BRANCH_ADDR)}</div></div>`;
-    h+=`<div class="title">Registration Fee Receipt</div><div class="row"><span>Registration No. <b>${e(r.regNo)}</b></span><span>Date <b>${e(fmtDate(x.date))}</b></span></div>`;
-    h+=`<div class="box"><div class="row"><span>Student</span><b>${e(r.name)}</b></div><div class="row"><span>Class sought</span><b>${e(r.classSought)} · session ${e(__regSession(r))}</b></div><div class="row"><span>Father / guardian</span><b>${e(r.father||"—")}</b></div><div class="row"><span>Contact</span><b>${e(r.contact||"—")}</b></div>${r.enqNo?`<div class="row"><span>Enquiry No.</span><b>${e(r.enqNo)}</b></div>`:""}</div>`;
-    h+=`<table><tr><th>Particulars</th><th>Mode</th><th class="r">Amount</th></tr><tr><td>Registration fee</td><td>${e(x.mode)}${x.ref?" · "+e(x.ref):""}</td><td class="r">₹${x.amount.toLocaleString("en-IN")}</td></tr></table>`;
-    h+=`<div class="amt">₹${x.amount.toLocaleString("en-IN")}</div><div class="words">Rupees ${inrWords(x.amount)} Only</div><div class="note">Registration does not by itself confirm admission.</div>`;
-    h+=`<div class="sign"><span>Received by: ${e(x.by)}</span><span>Signature &amp; seal</span></div><div class="foot">Computer-generated receipt · ${e(BRANCH_LABEL)}</div></body></html>`;
+@page{size:A4 portrait;margin:8mm 10mm}*{box-sizing:border-box}html,body{margin:0;padding:0}
+body{font-family:'Times New Roman',Georgia,serif;color:#1a1a1a;line-height:1.4;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.sheet{width:190mm;margin:0 auto}.copy{position:relative;height:134mm;padding:5mm 7mm;border:1px solid #cfcfcf;border-radius:5px;overflow:hidden;break-inside:avoid;page-break-inside:avoid}
+.tag{position:absolute;top:4mm;right:5mm;font-family:Arial,sans-serif;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#0d1b2a;border:1.5px solid #0d1b2a;border-radius:3px;padding:2px 7px}
+.hdr{display:flex;align-items:center;justify-content:center;gap:10px;border-bottom:2px solid #0d1b2a;padding-bottom:6px}.hdr img{height:44px;width:44px;object-fit:contain}.hdr h1{font-size:18px;font-weight:800;margin:0;color:#0d1b2a;line-height:1.15}.hdr .sub{font-size:11px;color:#555}
+.title{text-align:center;font-size:12px;font-weight:700;letter-spacing:2px;color:#0d1b2a;margin:7px 0 5px;text-transform:uppercase}
+.row{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;margin:3px 0}.row b{color:#0d1b2a;text-align:right}
+.box{display:grid;grid-template-columns:1fr 1fr;column-gap:22px;border:1px solid #cfcfcf;border-radius:5px;padding:5px 11px;margin:7px 0}
+table{width:100%;border-collapse:collapse;font-size:12.5px;margin:7px 0}th,td{border:1px solid #cfcfcf;padding:4px 9px;text-align:left}th{background:#eef1f8;color:#0d1b2a}td.r,th.r{text-align:right}
+.amt{font-size:17px;font-weight:800;color:#0d1b2a}.words{font-size:11.5px;font-style:italic;color:#444}.note{font-size:11px;color:#444;margin-top:4px}
+.sign{position:absolute;left:7mm;right:7mm;bottom:10mm;display:flex;justify-content:space-between;font-size:11.5px;color:#333}.foot{position:absolute;left:7mm;right:7mm;bottom:3.5mm;font-size:9.5px;color:#999;text-align:center;border-top:1px solid #e0e0e0;padding-top:3px}
+.cut{position:relative;height:9mm;display:flex;align-items:center;justify-content:center}.cut:before{content:"";position:absolute;left:0;right:0;top:50%;border-top:1.5px dashed #999}.cut span{position:relative;background:#fff;padding:0 8px;font-family:Arial,sans-serif;font-size:10px;color:#777}
+</style></head><body><div class="sheet">`;
+    const one=copy=>`<section class="copy"><div class="tag">${copy}</div><div class="hdr">${window.__LOGO?`<img src="${window.__LOGO}" alt="">`:""}<div><h1>STEPPING STONE INTER COLLEGE</h1><div class="sub">${e(BRANCH_LABEL)}, ${e(BRANCH_ADDR)}</div></div></div>`+
+      `<div class="title">Registration Fee Receipt</div><div class="row"><span>Registration No. <b>${e(r.regNo)}</b></span><span>Date <b>${e(fmtDate(x.date))}</b></span></div>`+
+      `<div class="box"><div class="row"><span>Student</span><b>${e(r.name)}</b></div><div class="row"><span>Class sought</span><b>${e(r.classSought)}</b></div><div class="row"><span>Father / guardian</span><b>${e(r.father||"—")}</b></div><div class="row"><span>Session</span><b>${e(__regSession(r))}</b></div><div class="row"><span>Contact</span><b>${e(r.contact||"—")}</b></div>${r.enqNo?`<div class="row"><span>Enquiry No.</span><b>${e(r.enqNo)}</b></div>`:""}</div>`+
+      `<table><tr><th>Particulars</th><th>Mode</th><th class="r">Amount</th></tr><tr><td>Registration fee</td><td>${e(x.mode)}${x.ref?" · "+e(x.ref):""}</td><td class="r">₹${x.amount.toLocaleString("en-IN")}</td></tr></table>`+
+      `<div class="amt">₹${x.amount.toLocaleString("en-IN")}</div><div class="words">Rupees ${inrWords(x.amount)} Only</div><div class="note">Registration does not by itself confirm admission.</div>`+
+      `<div class="sign"><span>Received by: ${e(x.by)}</span><span>Signature &amp; seal</span></div><div class="foot">Computer-generated receipt · ${e(BRANCH_LABEL)}</div></section>`;
+    h+=one("Parent copy")+`<div class="cut"><span>✂ cut here</span></div>`+one("School copy")+`</div></body></html>`;
     w.document.write(h);w.document.close();setTimeout(()=>w.print(),300);};
   const doRegister=async()=>{
     const r=regTarget;if(!r||!canEdit||regBusy)return;
