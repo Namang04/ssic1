@@ -18,6 +18,7 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   await acct('surajOffice', { role: 'office', username: 'off3', branches: ['surajkund'] });
   await acct('teacher', { role: 'teacher', username: 'deepanjali' });
   await acct('parent', { role: 'parent', username: '98', admNo: '1003' });
+  await setDoc(doc(db, 'users/98'), { username: '98', role: 'parent', cls: 'Class 7', admNo: '1003' }); // a parent reaches only their child's class
   await setDoc(doc(db, 'users/deepanjali'), { username: 'deepanjali', role: 'teacher', classes: ['Class 7-A'], subjects: ['Mathematics'], teachingPairs: ['Class 7-A|Mathematics'], classTeacherOf: ['Class 7-A'] });
   await setDoc(doc(db, G + 'exams/e1'), { name: 'HY', cls: 'Class 7', published: false, reviewStatus: 'needs-review', reviewedAt: '', reviewedBy: '', marks: {} });
   await setDoc(doc(db, G + 'exams/e2'), { name: 'HY', cls: 'Class 7', published: true, marks: {} });
@@ -46,10 +47,12 @@ test('a parent never reads the directory or admissions', async () => {
   await assertFails(R('parent', G + 'studentDirectory/dir_7'));
   await assertFails(R('parent', G + 'admissions/a1'));
 });
-test('tests: a teacher writes, office does not, a parent reads', async () => {
-  await assertSucceeds(W('teacher', G + 'tests/t1'));
+test('tests: a teacher writes, office does not, a parent reads their own class only', async () => {
+  await assertSucceeds(W('teacher', G + 'tests/t1', { cls: 'Class 7', subj: 'Mathematics' }));
+  await assertSucceeds(W('teacher', G + 'tests/t9', { cls: 'Class 9', subj: 'Mathematics' }));
   await assertFails(W('office', G + 'tests/t2'));
   await assertSucceeds(R('parent', G + 'tests/t1'));
+  await assertFails(R('parent', G + 'tests/t9'));
   await assertFails(W('parent', G + 'tests/t3'));
 });
 test('exams: a teacher cannot create or delete, the VP can', async () => {
@@ -73,7 +76,9 @@ test('timetable: everyone reads, a teacher cannot edit', async () => {
 test('attendance: a teacher marks only their own class', async () => {
   await assertSucceeds(W('teacher', G + 'attendance/x1', { cls: 'Class 7', section: 'A', date: '2027-04-05', status: {} }));
   await assertFails(W('teacher', G + 'attendance/x2', { cls: 'Class 9', section: 'B', date: '2027-04-05', status: {} }));
-  await assertSucceeds(R('parent', G + 'attendance/x1'));
+  await assertSucceeds(R('parent', G + 'attendance/x1'));   // their child's class
+  await assertSucceeds(W('vp', G + 'attendance/x9', { cls: 'Class 9', section: 'B', date: '2027-04-05', status: {} }));
+  await assertFails(R('parent', G + 'attendance/x9'));      // someone else's class
 });
 test('class log: only under their own name, in their own class', async () => {
   await assertSucceeds(W('teacher', G + 'teacherLogs/l1', { teacherId: 'deepanjali', cls: 'Class 7', section: 'A', sec: 'A', subject: 'Mathematics', subj: 'Mathematics' }));

@@ -53,13 +53,14 @@ const hook = (() => { const i = src.search(/^function useFirestore\(/m);
   return src.slice(st, j + 1); })();
 ok('a window can be asked for',            /const since=opts&&opts\.since/.test(hook));
 ok('and it is a where() on the query',     /__fbWhere\(field,">=",since\)/.test(hook));
-ok('no window means the whole collection', /:ref;/.test(hook) && /src=\(since&&/.test(hook));
+ok('no window means the whole collection', /:ref;/.test(hook) && /:\(since&&window\.__fbQuery/.test(hook));
+ok('a family scope reads one class or one document', /__fbWhere\(eq\[0\],"==",eq\[1\]\)/.test(hook) && /__fbDoc\(window\.__db,collName,docId\)/.test(hook));
 ok('undated documents are named and kept', /keep=\(opts&&opts\.keep\)\|\|null/.test(hook));
 ok('they are read as single documents',    /__fbGetDoc\(window\.__fbDoc\(window\.__db,collName,id\)\)/.test(hook));
 ok('and merged under every snapshot',      /setData\(Object\.assign\(\{\},older,keepRef\.current,d\)\)/.test(hook));
 ok('a campus switch drops the old config', /keepRef\.current=\{\};rangeDocs\.current=\{\};rangeRef\.current=null;setData\(\{\}\);setup\(\)/.test(hook));
 ok('...and re-asks for the range it had',  /rangeArgs\.current&&rangeFn\.current\)rangeFn\.current\(/.test(hook));
-ok('the window is part of the dependencies', /\[collName,enabled,since,field,keepKey\]/.test(hook));
+ok('the window is part of the dependencies', /\[collName,enabled,since,field,keepKey,eqKey,docId\]/.test(hook));
 
 const staffSub = app.match(/const staffAttDB=useFirestore\("staffAttendance",[^\n]*\);/);
 ok('staff attendance is windowed at App level', !!staffSub && /since:_staffWin/.test(staffSub[0]));
@@ -87,7 +88,7 @@ ok('the month is always two digits',     /^\d{4}-\d{2}-01$/.test(__monthsBack(2)
 // Fourteen screens read attendance further back than today — percentages, trends, the register browsing an
 // older date. Rather than thread a loader through all fourteen (fourteen chances to show a quietly wrong
 // percentage), the window is lifted in ONE place the moment anything other than the dashboard is opened.
-ok('attendance is windowed at App level', /const attendanceDBraw=useFirestore\("attendance",_heavyOK,\{since:_attWin,field:"date"\}\)/.test(app));
+ok('attendance is windowed at App level', /const attendanceDBraw=useFirestore\("attendance",_heavyOK&&\(!_isStu\|\|!!_stuCls\),_isStu\?\{eq:\["cls",_stuCls\]\}:\{since:_attWin,field:"date"\}\)/.test(app));
 ok('the window is two months',            /const _attWin=__monthsBack\(1\)/.test(app));
 ok('leaving the dashboard lifts it',      /tab!=="dashboard"[\s\S]{0,160}loadRange\(__sessionStart\(vSess\),_attTodayStr\(\)\)/.test(app));
 ok('pupils and parents get it too, having no tabs', /_r==="student"\|\|_r==="parent"/.test(app.slice(app.indexOf('needsAll'), app.indexOf('needsAll') + 200)));
