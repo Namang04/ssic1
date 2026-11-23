@@ -3133,6 +3133,18 @@ function useSharedDoc(collName,docId,enabled=true){
 }
 
 // ── Audit log (best-effort, never throws) ────────────────────────────────
+// A profile (users/{id}) and its login record (accounts/{uid}) are kept separately. The rules decide access by
+// the login, the screens by the profile. When the profile has lost a key the login still carries, the session
+// takes the login's value, so a parent whose profile was emptied is still a parent with a child, never staff.
+function __fillFromLogin(prof,acct){
+  if(!prof||!acct)return prof;
+  ["role","student","cls","admNo"].forEach(function(k){
+    if(prof[k]!=null&&prof[k]!=="")return;
+    var v=acct[k];if(v==null||v===""||(k==="role"&&v==="disabled"))return;
+    prof[k]=v;
+  });
+  return prof;
+}
 function logAudit(action,collName,docId,before,after){
   try{
     if(!window.__db||!window.__fbSetDoc||!window.__fbDoc)return;
@@ -3416,12 +3428,12 @@ function Login({onLogin,usersDB}){
     const cands=(!kid&&/^\d{10}$/.test(typedKey))
       ?[typedKey,typedKey+"-2",typedKey+"_2",typedKey+"-3",typedKey+"_3",typedKey+"-4",typedKey+"_4"]:[typedKey];
     // 1) Try secure login (Firebase Authentication). 2) Fall back to legacy password check.
-    let authed=false,disabled=false,acctBranches=null,uKey=typedKey;
+    let authed=false,disabled=false,acctBranches=null,acctDoc=null,uKey=typedKey;
     if(window.__authSignIn){
       for(let ci=0;ci<cands.length;ci++){
       try{
         const cred=await window.__authSignIn(AUTH_EMAIL(cands[ci]),p);authed=true;uKey=cands[ci];
-        try{const snap=await window.__fbGetDoc(window.__fbDoc(window.__db,"accounts",cred.user.uid));const d=(snap&&snap.exists&&snap.exists())?snap.data():null;if(d&&d.role==="disabled")disabled=true;if(d&&Array.isArray(d.branches))acctBranches=d.branches;}catch(e){}
+        try{const snap=await window.__fbGetDoc(window.__fbDoc(window.__db,"accounts",cred.user.uid));const d=(snap&&snap.exists&&snap.exists())?snap.data():null;if(d&&d.role==="disabled")disabled=true;if(d&&Array.isArray(d.branches))acctBranches=d.branches;acctDoc=d;}catch(e){}
         break;                       // this candidate worked — stop trying suffixes
       }catch(e){authed=false;}
       }
@@ -3448,6 +3460,10 @@ function Login({onLogin,usersDB}){
     // Seed stays the fallback for an account that has no doc-side password yet.
     const userData=baseData?{...baseData,...(extraData||{}),username:uKey,
       password:((extraData&&extraData.password!==undefined)?extraData.password:baseData.password)}:(extraData?{...extraData,username:uKey}:null);
+    // The login record (accounts/{uid}) is what the database rules go by. A profile that has lost its role or
+    // its child link (the My Account save used to replace whole profiles with {name}) is filled from it, so the
+    // person lands on their own screens and not the staff menu. Only MISSING keys are taken.
+    __fillFromLogin(userData,acctDoc);
     // The legacy password path must respect Disable too. `disabled` above is read from the accounts doc
     // and is only set after a SUCCESSFUL Firebase sign-in, so before this a disabled teacher who knew their
     // legacy password walked straight in. The toggle now mirrors loginOff onto the users doc.
@@ -12482,7 +12498,7 @@ th{background:#0d1b2a;color:#fff;font-weight:600}td.l{text-align:left;font-weigh
 
 // ── PARENT VIEW ──
 function ParentView({user,testsDB,examsDB,studentsDB,academicRosterDB,attendanceDB,noticesDB}){
-  const{student,cls}=user;
+  const{student}=user;const cls=user.cls||""; // a profile with no class must show an empty page, not crash on safeId(undefined)
   const[pvView,setPvView]=useState("home");   // parents had no route to ChangePassword — bulk logins need one
   const[hwDay,setHwDay]=useState("");         // homework is shown ONE day at a time ("" = today / latest with work)
   const[openTestSubj,setOpenTestSubj]=useState(""); // results stay scannable; one subject's attempt history opens at a time
@@ -18122,6 +18138,38 @@ function AccountsPanel({user,usersDB,studentsDB,dirDB,academicRosterDB,canManage
     const order={admin:0,vp:1,office:2,teacher:3,parent:4,student:5};
     return Object.values(m).sort((a,b)=>(order[a.role]??9)-(order[b.role]??9)||(a.name||"").localeCompare(b.name||""));
   },[usersDB.data]);
+  // Profiles emptied by the old My Account save (fixed 2026-11-23): it wrote the whole profile from a copy that
+  // a parent, pupil or teacher cannot read, so it saved {name} alone. The login (accounts) still says who the
+  // person is, so the role, and for families the child link, are copied back from it. Only MISSING keys are
+  // written, by merge, so nothing a profile still has is touched. Seeded staff take their role from
+  // DEFAULT_USERS and never appear here. Director and VP logins are listed for a person to check, never repaired.
+  const[repairBusy,setRepairBusy]=useState(false);const[repairMsg,setRepairMsg]=useState("");
+  const stripped=useMemo(()=>{
+    const ud=usersDB.data||{},out=[];
+    Object.entries(acctByUser).forEach(([un,a])=>{
+      const u=ud[safeId(un)];if(!u)return;
+      const seed=DEFAULT_USERS[un];if((u.role!=null&&u.role!=="")||(seed&&seed.role))return;
+      const role=a.role==="disabled"?String(a.prevRole||""):String(a.role||"");if(!role)return;
+      const fix={role};if(!u.username)fix.username=un;
+      if(role==="parent"||role==="student")["student","cls","admNo"].forEach(k=>{if((u[k]==null||u[k]==="")&&a[k]!=null&&a[k]!=="")fix[k]=a[k];});
+      if(!(Array.isArray(u.branches)&&u.branches.length)&&Array.isArray(a.branches)&&a.branches.length)fix.branches=a.branches;
+      out.push({un,name:u.name||a.name||un,role,fix,byHand:role==="admin"||role==="vp"});
+    });
+    return out.sort((x,y)=>String(x.name).localeCompare(String(y.name)));
+  },[acctByUser,usersDB.data]);
+  const repairStripped=async()=>{
+    const list=stripped.filter(r=>!r.byHand);if(!list.length||repairBusy)return;
+    const staff=list.filter(r=>r.role!=="parent"&&r.role!=="student").length;
+    const ok=await window.__confirm({title:"Repair "+list.length+" profile"+(list.length===1?"":"s")+"?",body:"Each profile gets back the role"+(list.length-staff?", and for families the child link,":"")+" from its own login. Nothing else on the profile changes and no password is touched."+(staff?" "+staff+" staff profile"+(staff===1?"":"s")+" also lost their classes and subjects: set them again in Teaching Assignments.":""),confirmText:"Repair"});
+    if(!ok)return;
+    setRepairBusy(true);setRepairMsg("");let done=0;const failed=[];
+    for(const r of list){
+      try{await window.__fbUpdateDoc(window.__fbDoc(window.__db,"users",safeId(r.un)),r.fix);logAudit("profile-repair","users",r.un,{role:null},r.fix);done++;}
+      catch(e){failed.push(r.name+" ("+((e&&e.code)||"write failed")+")");}
+    }
+    setRepairMsg("✓ Repaired "+done+" profile"+(done===1?"":"s")+(failed.length?" · could not repair: "+failed.join(", "):"")+". They will see their own screens at their next sign-in.");
+    setRepairBusy(false);
+  };
   const taken=u=>!!DEFAULT_USERS[u]||!!(usersDB.data&&usersDB.data[safeId(u)])||!!acctAllByUser[u];
 
   const addUser=async()=>{
@@ -18292,6 +18340,24 @@ function AccountsPanel({user,usersDB,studentsDB,dirDB,academicRosterDB,canManage
           <KPI label="No login yet" val={kpiNoLogin} color={kpiNoLogin?"var(--tx-org2)":"var(--tx-grn2)"} active={statusFilter==="nologin"} onClick={()=>setStatusFilter(statusFilter==="nologin"?"all":"nologin")}/>
           <KPI label="Disabled" val={kpiDisabled} color={kpiDisabled?"var(--tx-red)":"var(--ap-muted)"} active={statusFilter==="disabled"} onClick={()=>setStatusFilter(statusFilter==="disabled"?"all":"disabled")}/>
         </div>
+        {/* Profiles emptied by the old My Account save — repair from the login */}
+        {_isDirector&&(stripped.length>0||repairMsg)&&<div style={{...INS_CARD,padding:14,marginBottom:14,border:"1px solid var(--bd-red)",background:"var(--bg-red)"}}>
+          {stripped.length>0&&<>
+          <div style={{fontWeight:700,fontSize:13,color:"var(--tx-red)",marginBottom:4}}>{stripped.length} profile{stripped.length===1?" has":"s have"} lost {stripped.length===1?"its":"their"} role</div>
+          <div style={{fontSize:12,color:"var(--ap-ink2)",lineHeight:1.5,marginBottom:10}}>Saving My Account used to empty a parent's or teacher's profile, so their next sign-in opened the staff menu. The login still knows who they are; Repair copies the role{stripped.some(r=>r.role==="parent")?" and the child link":""} back from it.</div>
+          <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10}}>
+            {stripped.slice(0,20).map(r=>(
+              <div key={r.un} style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap",borderTop:"0.5px solid var(--bd-red)",paddingTop:6,fontSize:12.5}}>
+                <span style={{flex:1,minWidth:140,fontWeight:600,color:"var(--ap-ink)"}}>{r.name}</span>
+                <span style={{color:"var(--ap-muted)"}}>{r.byHand?"login is "+r.role+": check by hand":"→ "+r.role+(r.fix.student?" of "+r.fix.student+(r.fix.cls?" ("+r.fix.cls+")":""):"")+(r.role!=="parent"&&r.role!=="student"?" · classes need re-entering":"")}</span>
+              </div>
+            ))}
+            {stripped.length>20&&<div style={{fontSize:11.5,color:"var(--ap-muted)"}}>…and {stripped.length-20} more.</div>}
+          </div>
+          {stripped.some(r=>!r.byHand)&&<Btn onClick={repairStripped} disabled={repairBusy}>{repairBusy?"Repairing…":"Repair "+stripped.filter(r=>!r.byHand).length+" profile"+(stripped.filter(r=>!r.byHand).length===1?"":"s")}</Btn>}
+          </>}
+          {repairMsg&&<div style={{fontSize:12.5,fontWeight:600,color:"var(--tx-grn)",marginTop:stripped.length?10:0}}>{repairMsg}</div>}
+        </div>}
         {/* Staff who can't sign in yet — one-tap give-login */}
         {noLoginStaff.length>0&&<div style={{...INS_CARD,padding:14,marginBottom:14,border:"1px solid var(--bd-amb)",background:"var(--bg-amb)"}}>
           <div style={{fontWeight:700,fontSize:13,color:"var(--tx-org2)",marginBottom:10}}>{noLoginStaff.length} staff member{noLoginStaff.length>1?"s":""} can't sign in yet</div>
@@ -20113,14 +20179,21 @@ function AccountSettings({user,usersDB,onUpdate}){
     // Update the secure (Firebase Auth) password when signed in securely; keep legacy copy in sync for the transition.
     if(newPass){try{await window.__authUpdatePassword(newPass);}catch(e){if(e&&e.code==="auth/requires-recent-login"){setErr("Please sign out and back in, then change your password.");return;}}}
     // Never store the password. Firebase Auth holds it; this document is readable by anyone who can read the
-    // users collection. The old line kept a "legacy copy in sync", which is exactly the exposure the secure
-    // reset was built to remove — and because this is a whole-document write, dropping the key also clears any
-    // copy left from before.
-    const{password:_dropPw,...restStored}=stored;
-    const updated={...restStored,name:canRename?(name||stored.name):(stored.name||user.name)};
-    try{await usersDB.set(user.username,updated);}
-    catch(e){setErr("Could not save — "+((e&&e.message)||"try again"));return;}
-    onUpdate({...user,name:updated.name,password:undefined});
+    // users collection, so the save deletes any plaintext copy left from before.
+    // Write ONLY the fields this screen owns. This used to be a whole-document write built from usersDB.data,
+    // but a parent, pupil or teacher cannot LIST the users collection, so for them that copy is empty: saving
+    // replaced their profile with {name} alone, wiping the role and the child link, and their next sign-in
+    // fell through to the Director/VP menu. updateDoc merges, so everything else on the profile stays.
+    const newName=canRename?(name||stored.name||user.name):(stored.name||user.name);
+    const fields=Object.assign({password:window.__fbDeleteField()},canRename?{name:newName}:{});
+    try{await window.__fbUpdateDoc(window.__fbDoc(window.__db,"users",safeId(user.username)),fields);}
+    catch(e){
+      // No profile document yet (a seeded account that never saved one): only a rename has anything to keep.
+      if(!(e&&e.code==="not-found")){setErr("Could not save — "+((e&&e.message)||"try again"));return;}
+      if(canRename){try{await window.__fbSetDoc(window.__fbDoc(window.__db,"users",safeId(user.username)),{username:user.username,name:newName,role:user.role},{merge:true});}
+        catch(e2){setErr("Could not save — "+((e2&&e2.message)||"try again"));return;}}
+    }
+    onUpdate({...user,name:newName,password:undefined});
     setSaved(true);setNewPass("");setConfirmPass("");setCurrentPass("");
     setTimeout(()=>setSaved(false),3000);
   };
@@ -25024,6 +25097,7 @@ function App(){
           try{const us=await window.__fbGetDoc(window.__fbDoc(window.__db,"users",safeId(uKey)));if(us&&us.exists&&us.exists())extra=us.data();}catch(e){}
           const baseData=DEFAULT_USERS[uKey];
           const built=baseData?{...baseData,...(extra||{}),username:uKey}:(extra?{...extra,username:uKey}:{username:uKey,role:acc.role,name:acc.name});
+          __fillFromLogin(built,acc); // same as the sign-in form: a profile that lost its role takes the login's
           if(cancelled||userRef.current){ finish(); return; }
           const r=built.role;
           setTab(r==="parent"?"parent":r==="student"?"student":"dashboard");
@@ -25219,6 +25293,17 @@ function App(){
     return __ttUncoveredCount(ttDB.data,l,new Date(_todayD+"T00:00:00"))>0;
   }).length;
   if(isStudent) return <StudentPortal user={user} onLogout={doLogout} testsDB={testsDB} examsDB={examsDB} studentsDB={studentsDB} attendanceDB={attendanceDB} wrongDB={wrongDB} usersDB={usersDB} conceptNotesDB={conceptNotesDB} noticesDB={noticesDB} calendarDB={calendarDB}/>;
+  // The last branch of NAV_GROUPS below is the Director/VP workspace, so a role the app does not recognise used
+  // to land there: a parent whose profile had lost its role opened as "Vice Principal". Unknown means no access.
+  if(!(isParent||isOffice||isTeacher||isAdmin||user.role==="vp")) return(
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:16,background:"var(--c-f5)"}}>
+      <div style={{maxWidth:400,width:"100%",background:"var(--c-fff)",border:"1px solid var(--ap-line)",borderRadius:10,padding:"24px 22px",textAlign:"center",fontFamily:"var(--ss-font)"}}>
+        <img src={LOGO} alt="" style={{width:56,height:56,objectFit:"contain",marginBottom:10}}/>
+        <div style={{fontWeight:700,fontSize:16,color:"var(--ap-ink)",marginBottom:6}}>This login is not set up yet</div>
+        <div style={{fontSize:13,color:"var(--ap-muted)",lineHeight:1.55,marginBottom:18}}>Your account has no role on the school portal, so there is nothing to show. Please contact the school office.</div>
+        <button onClick={doLogout} className="ss-press" style={{background:"var(--btn-pri-bg)",color:"var(--btn-pri-tx)",border:"none",borderRadius:6,padding:"10px 18px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"var(--ss-font)"}}>Sign out</button>
+      </div>
+    </div>);
   // ── Role workspaces, not a feature inventory. Each group describes a job the person is trying to finish. ──
   const NAV_GROUPS = isParent ? [
     {id:"parent-grp", label:"My Child Today", single:"parent"},
@@ -25751,16 +25836,13 @@ function ChangePassword({user,onBack}){
     try{
       if(window.__authUpdatePassword){
         await window.__authUpdatePassword(newP);
-        if(window.__db){try{await window.__fbSetDoc(window.__fbDoc(window.__db,"users",safeId(user.username)),{
-          // pwdTemp MUST be cleared here. It was being carried straight through by the `...user` spread, so a
-          // parent who had already set their own password kept seeing "Please change your password" forever —
-          // and the printed login sheet kept claiming their password was still the child's date of birth.
-          // Do NOT store the password. It used to be written here in plain text, readable by anyone with
-          // access to the users collection — and it was only ever needed for the legacy sign-in path that the
-          // Cloud Function has now replaced. Firebase already holds the real password. This is a whole-document
-          // write, so simply OMITTING the key drops any copy left over from before: changing your password now
-          // also cleans up your own record.
-          ...(function(){const{password:_drop,...rest}=user;return rest;})(), pwdTemp:false
+        if(window.__db){try{await window.__fbUpdateDoc(window.__fbDoc(window.__db,"users",safeId(user.username)),{
+          // pwdTemp MUST be cleared here, or a parent who has set their own password keeps seeing "Please change
+          // your password" and the printed login sheet keeps claiming it is still the child's date of birth.
+          // Do NOT store the password: Firebase already holds it, and deleteField clears any plaintext copy left
+          // from before. This was a whole-document write of the session user; updateDoc touches these two fields
+          // only, so a profile can never be replaced by an incomplete copy of itself.
+          password:window.__fbDeleteField(), pwdTemp:false
         });}catch(e2){/* legacy sync is best-effort — the Auth password above is what login checks */}}
         try{if(user)user.pwdTemp=false;}catch(e3){}   // hide the nudge immediately, without waiting for a re-login
         setMsg("✓ Password changed successfully! Use your new password next time you log in.");
