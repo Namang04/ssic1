@@ -3011,6 +3011,10 @@ function useBranchConfig(){
 //                  named here and read as single documents.
 function useFirestore(collName,enabled=true,opts){
   const since=opts&&opts.since, field=(opts&&opts.field)||"date", keep=(opts&&opts.keep)||null;
+  // Scoped reads for family accounts (24 Nov 2026): the rules no longer let a parent or student list a whole
+  // collection, so their screens subscribe to ONE class (eq:[field,value]) or ONE document (docId).
+  const eq=(opts&&Array.isArray(opts.eq))?opts.eq:null, docId=(opts&&opts.docId)||"";
+  const eqKey=eq?(String(eq[0])+"="+String(eq[1])):"";
   const keepKey=(keep||[]).join(",");
   const[data,setData]=useState({});
   const[loading,setLoading]=useState(true);
@@ -3035,8 +3039,15 @@ function useFirestore(collName,enabled=true,opts){
           .then(rows=>{if(g!==storeGen.current)return;const k={};rows.forEach(r=>{if(r)k[r[0]]=r[1];});keepRef.current=k;
             setData(prev=>Object.assign({},k,prev));});
       }
+      if(docId){
+        unsubRef.current=window.__fbOnSnapshot(window.__fbDoc(window.__db,collName,docId),sn=>{
+          const d={};if(sn&&sn.exists&&sn.exists())d[docId]=sn.data();setData(d);setLoading(false);
+        },err=>{setLoading(false);});
+        return;
+      }
       const ref=window.__fbCollection(window.__db,collName);
-      const src=(since&&window.__fbQuery&&window.__fbWhere)?window.__fbQuery(ref,window.__fbWhere(field,">=",since)):ref;
+      const src=(eq&&window.__fbQuery&&window.__fbWhere)?window.__fbQuery(ref,window.__fbWhere(eq[0],"==",eq[1]))
+        :(since&&window.__fbQuery&&window.__fbWhere)?window.__fbQuery(ref,window.__fbWhere(field,">=",since)):ref;
       unsubRef.current=window.__fbOnSnapshot(src,snap=>{
         // Every live update replaces the data, and it only carries the window. Without the older stretch added back,
         // one attendance save anywhere dropped every month before the window from every open screen.
@@ -3053,10 +3064,11 @@ function useFirestore(collName,enabled=true,opts){
     const onBranch=()=>{storeGen.current++;keepRef.current={};rangeDocs.current={};rangeRef.current=null;setData({});setup();if(rangeArgs.current&&rangeFn.current)rangeFn.current(rangeArgs.current[0],rangeArgs.current[1]);};
     window.addEventListener("branchchange",onBranch);
     return()=>{window.removeEventListener("branchchange",onBranch);if(unsubRef.current)unsubRef.current();};
-  },[collName,enabled,since,field,keepKey]);
+  },[collName,enabled,since,field,keepKey,eqKey,docId]);
   // Pull in an older stretch that the live window does not cover, once, and merge it under the live data.
   // A second call for a range already covered does nothing, so screens can ask freely.
   const loadRange=useCallback(async(from,to)=>{
+    if(eqKey||docId)return;                                             // a scoped read already holds its whole slice
     if(!from||!window.__db||!window.__fbGetDocs||!window.__fbQuery||!window.__fbWhere)return;
     rangeArgs.current=[from,to];
     if(rangeRef.current&&rangeRef.current<=from)return;                 // already have this far back
@@ -3070,7 +3082,7 @@ function useFirestore(collName,enabled=true,opts){
       rangeDocs.current=Object.assign({},rangeDocs.current,d);
       setData(prev=>Object.assign({},d,prev));                          // the live window wins on overlap
     }catch(e){if(g===storeGen.current)rangeRef.current=null;}            // a failure must not block a retry
-  },[collName,field]);
+  },[collName,field,eqKey,docId]);
   rangeFn.current=loadRange;
 
   // Every write goes through here, so the recovery lives here too: one retry on a shut-down client, and a
@@ -17213,6 +17225,50 @@ service cloud.firestore {
     function ownsUserDoc(id) {
       return id != '' && (id == myUserDocId() || id == 'prog_' + myUserDocId());
     }
+    // ── Family scoping (23 Nov 2026) ─────────────────────────────────────────
+    // Parents and students used to read whole-school tests, attendance, rosters (with parent phone numbers)
+    // and student lists because those rules only asked signedIn(). A family account now reaches ONLY its own
+    // child's class. The class comes from the caller's own users profile, which is what the app shows them;
+    // the users write rule below stops a family account from changing that field.
+    // Written with let-bindings and ONE accounts read so the per-branch blocks stay inside Firestore's
+    // 1000-expression budget (calling isAny() and role() repeatedly here exhausted it on campus collections).
+    function myAcct() {
+      return signedIn() && exists(/databases/$(database)/documents/accounts/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/accounts/$(request.auth.uid)).data
+        : {};
+    }
+    function isStaffRole() { return myAcct().get('role', '') in ['admin','vp','office','teacher']; }
+    function isFamilyRole() { return myAcct().get('role', '') in ['parent','student']; }
+    // The family member's class ('' for everyone else). Read from their own users profile: that is the class
+    // the app shows them, and the users write rule below stops a family account from changing it.
+    function familyCls() {
+      let a = myAcct();
+      let uid = string(a.get('username', '')).replace('[^a-zA-Z0-9]', '_');
+      return (a.get('role', '') in ['parent','student']) && uid != ''
+          && exists(/databases/$(database)/documents/users/$(uid))
+        ? string(get(/databases/$(database)/documents/users/$(uid)).data.get('cls', ''))
+        : '';
+    }
+    // A class document (students / academicRoster) is keyed by safeId(cls).
+    function familyClassId(id) {
+      let c = familyCls();
+      return c != '' && id == c.replace('[^a-zA-Z0-9]', '_');
+    }
+    // A class-tagged record (tests / attendance) carries the class in its cls field.
+    function familyClassDoc(d) {
+      let c = familyCls();
+      return c != '' && d.cls == c;
+    }
+    // The unprefixed collections are Greencity's. A family on another campus reaches its own "<campus>_" copies.
+    function familyGreencity() { return myAcct().get('branches', ['greencity']).hasAny(['greencity']); }
+    function familyOwnPhoto(id) {
+      let a = myAcct();
+      return (a.get('role', '') in ['parent','student']) && a.get('admNo', null) != null && id == string(a.get('admNo', ''));
+    }
+    function familyOwnWrong(d) {
+      let a = myAcct();
+      return (a.get('role', '') in ['parent','student']) && a.get('username', '') != '' && d.username == a.get('username', '');
+    }
     // Class-teacher authority comes from the caller's own users profile. Coordinators deliberately span every
     // section; a regular teacher reaches only the exact Class N-section values assigned in classTeacherOf.
     function isCoordinatorRole() {
@@ -17432,22 +17488,22 @@ service cloud.firestore {
     match /studentDirectory/{id} { allow read: if isAny(['admin','vp','office']) && inGreencity(); allow write: if isAny(['admin','office']) && inGreencity(); }
 
     // Academic data — any signed-in user reads; only staff write
-    match /tests/{id}             { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
+    match /tests/{id}             { allow read: if isStaffRole() || (familyClassDoc(resource.data) && familyGreencity()); allow write: if isAny(['admin','vp','teacher']); }
     match /topics/{id}            { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
     match /syllabus/{id}          { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
     // Copy checking: staff only. Deliberately NOT signedIn() on read - parents must not see which pupils'
     // copies are outstanding, so this is narrower than the syllabus rule directly above.
     match /copyChecks/{id}        { allow read, write: if isAny(['admin','vp','teacher']); }
     match /attendance/{id} {
-      allow read: if signedIn();
+      allow read: if isStaffRole() || (familyClassDoc(resource.data) && familyGreencity());
       allow create: if isAny(['admin','vp']) || (isAny(['teacher']) && (isCoordinatorRole() || ownsClassSection(request.resource.data)));
       allow update: if isAny(['admin','vp']) || (isAny(['teacher']) && (isCoordinatorRole() || (ownsClassSection(resource.data) && ownsClassSection(request.resource.data))));
       allow delete: if isAny(['admin','vp']);
     }
-    match /students/{id}          { allow read: if signedIn(); allow write: if isAny(['admin','vp','office','teacher']); }
+    match /students/{id}          { allow read: if isStaffRole() || (familyClassId(id) && familyGreencity()); allow write: if isAny(['admin','vp','office','teacher']); }
 
     // Student photos — one small JPEG per admission no. All staff may upload; any signed-in user reads.
-    match /studentPhotos/{id}     { allow read: if signedIn(); allow write: if isAny(['admin','vp','office','teacher']); }
+    match /studentPhotos/{id}     { allow read: if isStaffRole() || (familyOwnPhoto(id) && familyGreencity()); allow write: if isAny(['admin','vp','office','teacher']); }
     // Sign-in helper: maps a parent's mobile -> the children linked to it, so a parent with more than one child
     // can pick which child BEFORE typing that child's date of birth. Read is necessarily public (the parent is
     // not signed in yet), so each entry carries the MINIMUM to recognise a child: first name + class only —
@@ -17459,10 +17515,10 @@ service cloud.firestore {
     // Academic roster (admission no. + name + section + parent phone) — all staff read; Director/Office sync it.
     // Deliberately broadly readable: this is the PII-free roster teachers/VP use instead of studentDirectory.
     // Parent phone is included so class teachers can Call/WhatsApp absentees; Aadhaar/address are NOT here.
-    match /academicRoster/{id}    { allow read: if signedIn(); allow write: if isAny(['admin','vp','office']); }
+    match /academicRoster/{id}    { allow read: if isStaffRole() || (familyClassId(id) && familyGreencity()); allow write: if isAny(['admin','vp','office']); }
 
     // Test-name → admission-no. links for legacy marks — staff read; markers write
-    match /studentLinks/{id}      { allow read: if signedIn(); allow write: if isAny(['admin','vp','office','teacher']); }
+    match /studentLinks/{id}      { allow read: if isStaffRole(); allow write: if isAny(['admin','vp','office','teacher']); }
 
     // App config (current session etc.) — everyone signed-in reads; director/VP writes
     match /meta/{id}              { allow read: if signedIn(); allow write: if isAny(['admin','vp']); }
@@ -17527,7 +17583,7 @@ service cloud.firestore {
     }
     match /calendar/{id}          { allow read: if signedIn(); allow write: if isAny(['admin','vp']); }
     match /lessonPlans/{id} {
-      allow read: if signedIn();
+      allow read: if isStaffRole();
       allow create: if isAny(['admin','vp']) || (isAny(['teacher']) && request.resource.data.teacherId == myUsername() && ownsTeachingPair(request.resource.data));
       allow update: if isAny(['admin','vp']) || (isAny(['teacher']) && resource.data.teacherId == myUsername() && request.resource.data.teacherId == myUsername() && ownsTeachingPair(request.resource.data));
       allow delete: if isAny(['admin','vp']) || (isAny(['teacher']) && resource.data.teacherId == myUsername());
@@ -17539,7 +17595,7 @@ service cloud.firestore {
       allow delete: if isAny(['admin','vp']) || (isAny(['teacher']) && resource.data.teacherId == myUsername());
     }
     match /leaves/{id} {
-      allow read: if signedIn();
+      allow read: if isStaffRole();
       allow create: if isAny(['admin','vp']) || (isAny(['teacher']) && request.resource.data.teacherId == myUsername() && request.resource.data.status == 'pending');
       allow update: if isAny(['admin','vp']) || (isAny(['teacher'])
         && resource.data.teacherId == myUsername() && request.resource.data.teacherId == myUsername()
@@ -17550,11 +17606,11 @@ service cloud.firestore {
     match /conceptNotes/{id}      { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher']); }
     // Staff attendance. A SELF check-in must carry serverAt == request.time (the real server clock), so a teacher
     // can't forge an on-time mark by changing their phone — even by hand. Office/director/biometric writes are exempt.
-    match /staffAttendance/{id}   { allow read: if signedIn(); allow write: if isAny(['admin','vp','teacher','office']) && (!('source' in request.resource.data) || request.resource.data.source != 'self' || request.resource.data.serverAt == request.time); }
+    match /staffAttendance/{id}   { allow read: if isStaffRole(); allow write: if isAny(['admin','vp','teacher','office']) && (!('source' in request.resource.data) || request.resource.data.source != 'self' || request.resource.data.serverAt == request.time); }
 
     // Practice mistakes — students log their own; staff manage
     match /wrongAnswers/{id} {
-      allow read: if signedIn();
+      allow read: if isStaffRole() || familyOwnWrong(resource.data);
       allow create: if signedIn();
       allow update, delete: if isAny(['admin','vp','teacher']);
     }
@@ -17619,7 +17675,16 @@ service cloud.firestore {
             && request.resource.data.get('role','teacher') == 'teacher')
         || (!id.matches('.*__subjects') && !id.matches('.*__classTeachers')
             && signedIn() && ownsUserDoc(id)
-            && request.resource.data.get('role', role()) == role());
+            && request.resource.data.get('role', role()) == role()
+            && (!isFamilyRole() || familyKeepsIdentity()));
+    }
+
+    // A family account may edit its own profile (phone, password flag) but never the fields that decide which
+    // class and child it can see.
+    function familyKeepsIdentity() {
+      return resource == null
+        ? !request.resource.data.keys().hasAny(['cls','admNo','childAdmNo','student','section','branches','coordinator'])
+        : !request.resource.data.diff(resource.data).affectedKeys().hasAny(['cls','admNo','childAdmNo','student','section','branches','coordinator']);
     }
 
     // ── (5b) PER-BRANCH DATA — "<branch>_<base>" collections (Phase 2, Option B) ──────────────
@@ -17653,8 +17718,12 @@ service cloud.firestore {
       return role() == 'admin' || myBranches().hasAny([sessBranch(c)])
         || (sessBranch(c) == 'greencity' && myBranches().hasAny(['all']));
     }
-    function sessRead(b) {
-      return (b in ['tests','topics','syllabus','students','academicRoster','timetables','timetableSettings','notices','lessonPlans','teacherLogs','attendance','wrongAnswers'] && signedIn())
+    function sessRead(b, id) {
+      return (b in ['topics','syllabus','timetables','timetableSettings','notices','teacherLogs'] && signedIn())
+        || (b in ['tests','students','academicRoster','lessonPlans','attendance','wrongAnswers'] && isStaffRole())
+        || (b in ['students','academicRoster'] && familyClassId(id))
+        || (b in ['tests','attendance'] && familyClassDoc(resource.data))
+        || (b == 'wrongAnswers' && familyOwnWrong(resource.data))
         || (b == 'studentDirectory' && isAny(['admin','vp','office']))
         || (b == 'admissions' && isAny(['admin','office']))
         || (b == 'copyChecks' && isAny(['admin','vp','teacher']))
@@ -17720,7 +17789,7 @@ service cloud.firestore {
         || (b == 'wrongAnswers' && isAny(['admin','vp','teacher']));
     }
     match /{sess}/{sessId} {
-      allow read:   if sessBase(sess) != '' && signedIn() && inSession(sess) && sessRead(sessBase(sess));
+      allow read:   if sessBase(sess) != '' && signedIn() && inSession(sess) && sessRead(sessBase(sess), sessId);
       allow create: if sessBase(sess) != '' && signedIn() && inSession(sess) && sessCreate(sessBase(sess));
       allow update: if sessBase(sess) != '' && signedIn() && inSession(sess) && sessUpdate(sessBase(sess));
       allow delete: if sessBase(sess) != '' && signedIn() && inSession(sess) && sessDelete(sessBase(sess));
@@ -17769,15 +17838,19 @@ service cloud.firestore {
     // Academic / operational / workflow for a branch — that branch's staff read; appropriate roles write
     match /{bc2}/{id2} {
       allow read: if signedIn() && inBranch(bc2)
-        && ((baseOf(bc2) in ['students','academicRoster','tests','topics','syllabus','studentLinks','studentPhotos','timetables','timetableSettings','notices','lessonPlans','teacherLogs','leaves','wrongAnswers'])
-          || ((baseOf(bc2) in ['exams','discipline','registrations','admissions']) && isAny(['admin','vp','office','teacher'])));
+        && ((baseOf(bc2) in ['topics','syllabus','timetables','timetableSettings','notices','teacherLogs'])
+          || ((baseOf(bc2) in ['students','academicRoster','tests','studentLinks','studentPhotos','lessonPlans','leaves','wrongAnswers','exams','discipline','registrations','admissions']) && isStaffRole())
+          || ((baseOf(bc2) in ['students','academicRoster']) && familyClassId(id2))
+          || (baseOf(bc2) == 'tests' && familyClassDoc(resource.data))
+          || (baseOf(bc2) == 'studentPhotos' && familyOwnPhoto(id2))
+          || (baseOf(bc2) == 'wrongAnswers' && familyOwnWrong(resource.data)));
       allow write: if signedIn() && inBranch(bc2)
         && (baseOf(bc2) in ['students','academicRoster','exams','tests','topics','syllabus','studentLinks','studentPhotos','timetables','timetableSettings','notices','registrations','admissions'])
         && isAny(['admin','vp','office','teacher']);
     }
     // Attendance ownership and parent absence-note privacy stay identical on every campus.
     match /{bcat}/{idat} {
-      allow read: if signedIn() && inBranch(bcat) && baseOf(bcat) == 'attendance';
+      allow read: if signedIn() && inBranch(bcat) && baseOf(bcat) == 'attendance' && (isStaffRole() || familyClassDoc(resource.data));
       allow create: if signedIn() && inBranch(bcat) && baseOf(bcat) == 'attendance'
         && (isAny(['admin','vp']) || (isAny(['teacher']) && (isCoordinatorRole() || ownsClassSection(request.resource.data))));
       allow update: if signedIn() && inBranch(bcat) && baseOf(bcat) == 'attendance'
@@ -17841,13 +17914,13 @@ service cloud.firestore {
     }
     // Per-branch staff attendance — same server-time anti-spoof guard as Greencity (a SELF check-in must carry serverAt==request.time).
     match /{bcsa}/{idsa} {
-      allow read: if signedIn() && inBranch(bcsa) && baseOf(bcsa) == 'staffAttendance';
+      allow read: if signedIn() && inBranch(bcsa) && baseOf(bcsa) == 'staffAttendance' && isStaffRole();
       allow write: if signedIn() && inBranch(bcsa) && baseOf(bcsa) == 'staffAttendance' && isAny(['admin','vp','teacher','office'])
         && (!('source' in request.resource.data) || request.resource.data.source != 'self' || request.resource.data.serverAt == request.time);
     }
     // Per-branch practice mistakes — any signed-in branch user (incl. students) creates their own; staff manage.
     match /{bcw}/{idw} {
-      allow read: if signedIn() && inBranch(bcw) && baseOf(bcw) == 'wrongAnswers';
+      allow read: if signedIn() && inBranch(bcw) && baseOf(bcw) == 'wrongAnswers' && (isStaffRole() || familyOwnWrong(resource.data));
       allow create: if signedIn() && inBranch(bcw) && baseOf(bcw) == 'wrongAnswers';
       allow update, delete: if signedIn() && inBranch(bcw) && baseOf(bcw) == 'wrongAnswers' && isAny(['admin','vp','teacher']);
     }
@@ -25115,7 +25188,9 @@ function App(){
   // bills one read per document per session, so 600 parents downloading every class's register blew the
   // Firestore free quota. ParentView fetches just its own child's class instead (scoped query below).
   const _heavyOK=!!user&&user.role!=="parent";
-  const testsDBraw=useFirestore("tests",_heavyOK);
+  // A student reads only their own class (the rules refuse anything wider). No class on the profile = nothing.
+  const _isStu=!!user&&user.role==="student", _stuCls=_isStu?String(user.cls||""):"";
+  const testsDBraw=useFirestore("tests",_heavyOK&&(!_isStu||!!_stuCls),_isStu?{eq:["cls",_stuCls]}:undefined);
   // ── Sign-in cost ──────────────────────────────────────────────────────────────────────────────────────
   // Reads were running at ~815k a day against a 50k free allowance, because signing in downloaded whole
   // collections that only one screen ever looks at. These four are needed by particular tabs and by nothing on
@@ -25127,17 +25202,17 @@ function App(){
   const topicsDB=useFirestore("topics", _curric&&_onTab("topics","copies","syllabus","testcenter","enter","ai")); // curriculum workspaces only — office, parent and student screens never consume this full collection
   const syllabusDB=useFirestore("syllabus", _curric&&_onTab("syllabus","copies","testcenter"));
   const copyChecksDB=useFirestore("copyChecks", _curric&&_onTab("copies","syllabus","testcenter"));
-  const studentsDB=useFirestore("students",!!user&&user.role!=="parent"); // ParentView reads exactly one class document
+  const studentsDB=useFirestore("students",!!user&&user.role!=="parent"&&(!_isStu||!!_stuCls),_isStu?{docId:safeId(_stuCls)}:undefined); // ParentView reads exactly one class document
   // Attendance grows every school day and every dashboard reads ONE day of it, so a sign-in starts with a
   // two-month window. The moment any other screen is opened the rest of the session is pulled in one go (see
   // the effect below), so nothing that works out a percentage or a trend ever sees a short history. Doing it
   // in one place beats threading a loader through the fourteen screens that read back.
   const _attWin=__monthsBack(1);
-  const attendanceDBraw=useFirestore("attendance",_heavyOK,{since:_attWin,field:"date"});
+  const attendanceDBraw=useFirestore("attendance",_heavyOK&&(!_isStu||!!_stuCls),_isStu?{eq:["cls",_stuCls]}:{since:_attWin,field:"date"});
   const usersDB=useFirestore("users", !!user&&["admin","office","vp"].includes(user.role)); // every read branch of the users rule needs signedIn(), and only these roles may LIST the collection — the others were opening a query that is always denied, then silently falling back to the seeded stub
   // A student never reaches the tabbed shell — StudentPortal is returned before it — so a tab gate would
   // leave their practice history empty. They keep their subscription; staff load it with the screen.
-  const wrongDB=useFirestore("wrongAnswers", !!user&&user.role!=="parent"&&(user.role==="student"||_onTab("admin","directory","focusgroup","insights","profile")));
+  const wrongDB=useFirestore("wrongAnswers", !!user&&user.role!=="parent"&&(user.role==="student"||_onTab("admin","directory","focusgroup","insights","profile")),(user&&user.role==="student")?{eq:["username",user.username]}:undefined);
   const feesDBraw=useFirestore("fees", !!user&&((user.role==="admin"&&user.fees!==false)||user.role==="office"));
   const feeCloseDB=useFirestore("feeDayCloses", !!user&&((user.role==="admin"&&user.fees!==false)||user.role==="office"));
   const paymentIntentsDB=useFirestore("paymentIntents", !!user&&((user.role==="admin"&&user.fees!==false)||user.role==="office")); // one shared subscription powers office Home + Fees verification
@@ -25162,7 +25237,7 @@ function App(){
   const dirDB=useFirestore("studentDirectory", !!user&&["admin","vp","office"].includes(user.role)); /* rules limit the full-PII record to admin/VP/office — teachers get their rosters from academicRoster */
   /* ParentView resolves the child's section from one targeted class document by admission number; staff and
      students retain the shared roster listener needed by their broader workflows. */
-  const academicRosterDB=useFirestore("academicRoster", !!user&&user.role!=="parent"); // parents subscribe to one class document inside ParentView
+  const academicRosterDB=useFirestore("academicRoster", !!user&&user.role!=="parent"&&user.role!=="student"); // families never list the roster (it carries parent phone numbers) // parents subscribe to one class document inside ParentView
   const studentLinksDB=useFirestore("studentLinks", !!user&&user.role!=="parent"&&user.role!=="student"); // legacy test-name → admission-no. links (staff tools only)
   const metaDB=useFirestore("meta"); // app config — current session etc.
   // Populate the synchronous per-branch config cache so module code (termWeights / subject resolver / remedial) can read it.
